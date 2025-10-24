@@ -23,22 +23,26 @@ type program struct {
 
 // Start is called when the service starts.
 func (p *program) Start(_ service.Service) error {
-	// Initialize agent
-	var err error
-	p.agent, err = agent.NewAgent(p.args)
-	if err != nil {
-		return fmt.Errorf("failed to create agent: %w", err)
-	}
-
-	// Start agent in background
+	// Start agent initialization and execution in background
+	// This allows the service to respond quickly to Windows Service Manager
 	p.done = make(chan bool, 1)
 	go p.run()
 
 	return nil
 }
 
-// run executes the agent.
+// run executes the agent (initialization + start).
 func (p *program) run() {
+	// Initialize agent (may take time due to DB connection attempts)
+	var err error
+	p.agent, err = agent.NewAgent(p.args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create agent: %v\n", err)
+		p.done <- true
+		return
+	}
+
+	// Start agent
 	if err := p.agent.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Agent error: %v\n", err)
 	}
