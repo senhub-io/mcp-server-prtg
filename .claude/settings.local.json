@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(psql:*)",
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(make build:*)",
+      "Read(//Users/matthieu/go/**)",
+      "Bash(make fmt:*)",
+      "Bash(make vet:*)",
+      "Bash(make test:*)",
+      "Bash(go mod graph:*)",
+      "Bash(go list:*)",
+      "Bash(tree:*)",
+      "Bash(make help:*)",
+      "Bash(make version-info:*)",
+      "Bash(make install-tools:*)",
+      "Bash(make:*)",
+      "Bash(go install:*)",
+      "Bash(git log:*)",
+      "Bash(~/go/bin/golangci-lint run:*)",
+      "Bash(~/go/bin/goimports:*)",
+      "Bash(/Users/matthieu/go/bin/golangci-lint run:*)",
+      "Bash(/Users/matthieu/go/bin/goimports:*)",
+      "Bash(cat:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

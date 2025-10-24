@@ -1,0 +1,307 @@
+# Configuration golangci-lint pour MCP Server PRTG
+# Version: 1.0.0
+# Documentation: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  skip-dirs:
+    - vendor
+    - build
+    - dist
+  skip-files:
+    - ".*_test\\.go$"  # Skip test files for some linters
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+
+linters-settings:
+  # Errcheck: checks for unchecked errors
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (*database/sql.Rows).Close
+      - (*github.com/lib/pq.Conn).Close
+
+  # Govet: examines Go source code and reports suspicious constructs
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Can be too strict for readability
+
+  # Gofmt: checks whether code was gofmt-ed
+  gofmt:
+    simplify: true
+
+  # Goimports: checks import statements are formatted correctly
+  goimports:
+    local-prefixes: github.com/matthieu/mcp-server-prtg
+
+  # Gocritic: provides diagnostics that check for bugs, performance, and style issues
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - dupImport
+      - ifElseChain
+      - octalLiteral
+      - whyNoLint
+      - wrapperFunc
+
+  # Cyclop: calculates cyclomatic complexities of functions
+  cyclop:
+    max-complexity: 15
+    package-average: 10.0
+
+  # Gocyclo: computes and checks the cyclomatic complexity of functions
+  gocyclo:
+    min-complexity: 15
+
+  # Dupl: detects code clones
+  dupl:
+    threshold: 150
+
+  # Funlen: detects long functions
+  funlen:
+    lines: 100
+    statements: 50
+
+  # Goconst: finds repeated strings that could be replaced by a constant
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+    ignore-tests: true
+
+  # Gosec: inspects source code for security problems
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104  # Errors unhandled (covered by errcheck)
+    config:
+      global:
+        nosec: false
+        audit: true
+
+  # Lll: reports long lines
+  lll:
+    line-length: 140
+    tab-width: 4
+
+  # Misspell: finds commonly misspelled English words in comments
+  misspell:
+    locale: US
+    ignore-words:
+      - prtg
+      - senhub
+
+  # Nakedret: finds naked returns in functions greater than a specified function length
+  nakedret:
+    max-func-lines: 30
+
+  # Nolintlint: reports ill-formed or insufficient nolint directives
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+
+  # Revive: fast, configurable, extensible, flexible, and beautiful linter for Go
+  revive:
+    ignore-generated-header: true
+    severity: warning
+    confidence: 0.8
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  # Staticcheck: advanced Go linter
+  staticcheck:
+    checks: ["all"]
+
+  # Stylecheck: replacement for golint
+  stylecheck:
+    checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022"]
+    dot-import-whitelist:
+      - fmt
+    initialisms: ["ACL", "API", "ASCII", "CPU", "CSS", "DNS", "EOF", "GUID", "HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "QPS", "RAM", "RPC", "SLA", "SMTP", "SQL", "SSH", "TCP", "TLS", "TTL", "UDP", "UI", "GID", "UID", "UUID", "URI", "URL", "UTF8", "VM", "XML", "XMPP", "XSRF", "XSS", "MCP", "PRTG"]
+    http-status-code-whitelist: ["200", "400", "404", "500"]
+
+  # Unused: checks for unused constants, variables, functions and types
+  unused:
+    check-exported: false
+
+  # Whitespace: detects leading and trailing whitespace
+  whitespace:
+    multi-if: false
+    multi-func: false
+
+linters:
+  enable:
+    # Defaults
+    - errcheck       # Checking for unchecked errors
+    - gosimple       # Simplify code
+    - govet          # Vet examines Go source code
+    - ineffassign    # Detects ineffectual assignments
+    - staticcheck    # Advanced linter
+    - typecheck      # Type checks
+    - unused         # Checks for unused code
+
+    # Additional recommended
+    - bodyclose      # Checks HTTP response body is closed
+    - dogsled        # Checks for too many blank identifiers
+    - dupl           # Code clone detection
+    - errname        # Checks error name conventions
+    - exhaustive     # Checks exhaustiveness of enum switch statements
+    - exportloopref  # Checks for pointers to enclosing loop variables
+    - funlen         # Detects long functions
+    - gochecknoglobals  # Checks that no global variables exist
+    - gochecknoinits    # Checks that no init functions exist
+    - goconst        # Finds repeated strings
+    - gocritic       # Opinionated Go linter
+    - gocyclo        # Cyclomatic complexity
+    - godot          # Check comment sentences end in periods
+    - gofmt          # Gofmt checks whether code was gofmt-ed
+    - goimports      # Goimports does everything gofmt does plus import ordering
+    - gomnd          # Detects magic numbers
+    - goprintffuncname  # Checks printf-like functions are named correctly
+    - gosec          # Security problems
+    - lll            # Reports long lines
+    - misspell       # Finds commonly misspelled words
+    - nakedret       # Naked returns checker
+    - nestif         # Reports deeply nested if statements
+    - noctx          # Finds sending http request without context.Context
+    - nolintlint     # Reports ill-formed or insufficient nolint directives
+    - prealloc       # Finds slice declarations that could be preallocated
+    - predeclared    # Finds code that shadows predeclared identifiers
+    - revive         # Fast linter
+    - rowserrcheck   # Checks whether Err of rows is checked
+    - stylecheck     # Stylecheck is a replacement for golint
+    - tparallel      # Detects inappropriate usage of t.Parallel()
+    - unconvert      # Unnecessary type conversions
+    - unparam        # Reports unused function parameters
+    - whitespace     # Detects leading/trailing whitespace
+    - wsl            # Whitespace linter
+
+  disable:
+    - cyclop         # Too strict for this project
+    - exhaustivestruct  # Too verbose
+    - exhaustruct    # Too strict
+    - forbidigo      # Not needed
+    - forcetypeassert   # Covered by errcheck
+    - gci            # Conflicts with goimports
+    - gofumpt        # Conflicts with gofmt
+    - goheader       # No required header
+    - gomoddirectives   # Not applicable
+    - gomodguard     # Not needed
+    - grouper        # Optional
+    - ifshort        # Deprecated
+    - importas       # Not needed
+    - interfacebloat # Too strict
+    - ireturn        # Too strict for this use case
+    - maintidx       # Too strict
+    - makezero       # Optional
+    - nlreturn       # Too strict
+    - nilerr         # Optional
+    - nilnil         # Optional
+    - nonamedreturns # We allow named returns
+    - paralleltest   # Not applicable yet (no tests)
+    - tagliatelle    # JSON naming is fine
+    - testpackage    # Optional
+    - thelper        # Not applicable yet
+    - varnamelen     # Can be too strict
+    - wrapcheck      # Too strict for error wrapping
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+        - goconst
+        - gochecknoglobals
+
+    # Exclude known linters from partially hard-vendored code
+    - path: internal/types/models.go
+      linters:
+        - gomnd  # Magic numbers OK in models
+
+    # Exclude handlers from some checks (they handle external input)
+    - path: internal/handlers/
+      linters:
+        - cyclop
+        - gocyclo
+
+    # Exclude database layer from some checks
+    - path: internal/database/queries.go
+      linters:
+        - funlen  # Long query functions are OK
+        - gocyclo # Complex queries are expected
+
+    # Allow globals in main.go
+    - path: cmd/server/main.go
+      linters:
+        - gochecknoglobals
+
+    # Allow init functions in main packages
+    - path: cmd/
+      linters:
+        - gochecknoinits
+
+  # Maximum issues count per one linter
+  max-issues-per-linter: 50
+
+  # Maximum count of issues with the same text
+  max-same-issues: 3
+
+  # Show only new issues
+  new: false
+
+  # Fix found issues (if it's supported by the linter)
+  fix: false
+
+severity:
+  # Default value is empty string
+  default-severity: error
+
+  # Rules to override severity
+  rules:
+    - linters:
+        - dupl
+      severity: info
+    - linters:
+        - gomnd
+      severity: warning
