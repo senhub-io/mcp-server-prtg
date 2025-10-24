@@ -135,8 +135,8 @@ func ensureConfiguration(args *cliArgs.ParsedArgs) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	// Create temporary logger for config generation
-	tempLogger := logger.NewLogger(args)
+	// Create silent logger for config generation (no console output)
+	tempLogger := logger.NewSilentLogger()
 
 	// Create configuration (will generate default if not exists)
 	config, err := configuration.NewConfiguration(args, tempLogger)
