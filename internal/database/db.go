@@ -61,11 +61,10 @@ func (db *DB) Conn() *sql.DB {
 	return db.conn
 }
 
-// Query executes a query with context timeout
+// Query executes a query using the provided context
+// IMPORTANT: The context must remain valid while scanning rows.
+// The caller is responsible for context lifetime management.
 func (db *DB) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	db.logger.Debug().
 		Str("query", query).
 		Interface("args", args).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -190,10 +191,26 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 		args.Limit = 50
 	}
 
-	sensors, err := h.db.GetSensors(ctx, args.DeviceName, args.SensorName, args.Status, args.Tags, args.Limit)
+	h.logger.Debug().
+		Str("device_name", args.DeviceName).
+		Str("sensor_name", args.SensorName).
+		Interface("status", args.Status).
+		Str("tags", args.Tags).
+		Int("limit", args.Limit).
+		Msg("calling db.GetSensors")
+
+	// Create a new context with longer timeout to avoid cancellation
+	// The parent context from MCP might be cancelled too early
+	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sensors, err := h.db.GetSensors(dbCtx, args.DeviceName, args.SensorName, args.Status, args.Tags, args.Limit)
 	if err != nil {
+		h.logger.Error().Err(err).Msg("db.GetSensors failed")
 		return nil, fmt.Errorf("failed to get sensors: %w", err)
 	}
+
+	h.logger.Debug().Int("count", len(sensors)).Msg("db.GetSensors returned")
 
 	return formatResult(sensors, len(sensors))
 }
