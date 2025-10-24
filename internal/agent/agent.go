@@ -44,10 +44,22 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
 
 	// Initialize database (optional - server can start without database)
 	dbLogger := logger.NewModuleLogger(baseLogger, logger.ModuleDatabase)
-	db, err := database.New(config.GetDatabaseConnectionString(), dbLogger.Logger)
+	connStr := config.GetDatabaseConnectionString()
+
+	// Log connection attempt (with masked password)
+	moduleLogger.Debug().
+		Str("host", config.GetDatabaseHost()).
+		Int("port", config.GetDatabasePort()).
+		Str("database", config.GetDatabaseName()).
+		Str("user", config.GetDatabaseUser()).
+		Str("sslmode", config.GetDatabaseSSLMode()).
+		Msg("Attempting database connection")
+
+	db, err := database.New(connStr, dbLogger.Logger)
 	if err != nil {
 		moduleLogger.Warn().
 			Err(err).
+			Str("sslmode", config.GetDatabaseSSLMode()).
 			Msg("Failed to initialize database - server will start but tools will not work")
 		db = nil
 	} else {
