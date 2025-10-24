@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"time"
 
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
 	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/matthieu/mcp-server-prtg/internal/handlers"
 	"github.com/matthieu/mcp-server-prtg/internal/server"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
-	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 // Agent represents the main application orchestrator.

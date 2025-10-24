@@ -49,14 +49,14 @@ type ConfigData struct {
 
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
-	APIKey       string `yaml:"api_key"`        // API Key (Bearer token)
+	APIKey       string `yaml:"api_key"` // API Key (Bearer token)
 	BindAddress  string `yaml:"bind_address"`
 	Port         int    `yaml:"port"`
 	EnableTLS    bool   `yaml:"enable_tls"`
 	CertFile     string `yaml:"cert_file"`
 	KeyFile      string `yaml:"key_file"`
-	ReadTimeout  int    `yaml:"read_timeout"`   // seconds
-	WriteTimeout int    `yaml:"write_timeout"`  // seconds
+	ReadTimeout  int    `yaml:"read_timeout"`  // seconds
+	WriteTimeout int    `yaml:"write_timeout"` // seconds
 }
 
 // DatabaseConfig holds database connection settings.
@@ -264,8 +264,8 @@ func (c *Configuration) generateTLSCertificates() error {
 		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 	})
 
-	// Write certificate file (0644 - readable by all)
-	if err := os.WriteFile(c.data.Server.CertFile, certPEM, 0644); err != nil {
+	// Write certificate file (0600 - secure permissions)
+	if err := os.WriteFile(c.data.Server.CertFile, certPEM, 0600); err != nil {
 		return fmt.Errorf("failed to write certificate: %w", err)
 	}
 
