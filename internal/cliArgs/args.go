@@ -39,17 +39,30 @@ type ParsedArgs struct {
 
 // Parse parses command-line arguments.
 func Parse() *ParsedArgs {
-	var args ParsedArgs
-	arg.MustParse(&args)
-	return &args
+	return ParseWithVersion("mcp-server-prtg v1.0.0 (dev)")
+}
+
+// ParseWithVersion parses command-line arguments with a custom version string.
+func ParseWithVersion(version string) *ParsedArgs {
+	args := &argsWithVersion{
+		version: version,
+	}
+	arg.MustParse(args)
+	return &args.ParsedArgs
+}
+
+// argsWithVersion wraps ParsedArgs with a version string.
+type argsWithVersion struct {
+	ParsedArgs
+	version string
 }
 
 // Description returns the program description.
-func (ParsedArgs) Description() string {
+func (a *argsWithVersion) Description() string {
 	return "MCP Server for PRTG monitoring data - provides remote access to PRTG PostgreSQL database via MCP protocol over SSE transport"
 }
 
 // Version returns the version information.
-func (ParsedArgs) Version() string {
-	return "mcp-server-prtg v1.0.0"
+func (a *argsWithVersion) Version() string {
+	return a.version
 }
