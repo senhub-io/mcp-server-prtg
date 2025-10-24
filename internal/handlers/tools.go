@@ -1,0 +1,364 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+	"github.com/matthieu/mcp-server-prtg/internal/database"
+)
+
+// ToolHandler handles MCP tool requests
+type ToolHandler struct {
+	db     *database.DB
+	logger *slog.Logger
+}
+
+// NewToolHandler creates a new tool handler
+func NewToolHandler(db *database.DB, logger *slog.Logger) *ToolHandler {
+	return &ToolHandler{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// RegisterTools registers all available tools with the MCP server
+func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
+	// Tool 1: prtg_get_sensors
+	s.AddTool(mcp.Tool{
+		Name: "prtg_get_sensors",
+		Description: "Retrieve PRTG sensors with optional filters (device name, sensor name, status, tags). " +
+			"Returns current sensor status and metadata.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"device_name": map[string]string{
+					"type":        "string",
+					"description": "Filter by device name (partial match, case-insensitive)",
+				},
+				"sensor_name": map[string]string{
+					"type":        "string",
+					"description": "Filter by sensor name (partial match, case-insensitive)",
+				},
+				"status": map[string]interface{}{
+					"type":        "integer",
+					"description": "Filter by status (3=Up, 4=Warning, 5=Down, 7=Paused)",
+				},
+				"tags": map[string]string{
+					"type":        "string",
+					"description": "Filter by tag name (partial match)",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results (default: 50)",
+					"default":     50,
+				},
+			},
+		},
+	}, h.handleGetSensors)
+
+	// Tool 2: prtg_get_sensor_status
+	s.AddTool(mcp.Tool{
+		Name: "prtg_get_sensor_status",
+		Description: "Get detailed current status of a specific sensor by ID. " +
+			"Returns current values, uptime, downtime, and status information.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"sensor_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "The sensor ID to query",
+				},
+			},
+			Required: []string{"sensor_id"},
+		},
+	}, h.handleGetSensorStatus)
+
+	// Tool 3: prtg_get_alerts
+	s.AddTool(mcp.Tool{
+		Name:        "prtg_get_alerts",
+		Description: "Retrieve sensors in alert state (not Up). Returns sensors with warnings, errors, or down status.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"hours": map[string]interface{}{
+					"type":        "integer",
+					"description": "Only include alerts from the last N hours (0 = all)",
+					"default":     24,
+				},
+				"status": map[string]interface{}{
+					"type":        "integer",
+					"description": "Filter by specific status (4=Warning, 5=Down)",
+				},
+				"device_name": map[string]string{
+					"type":        "string",
+					"description": "Filter by device name",
+				},
+			},
+		},
+	}, h.handleGetAlerts)
+
+	// Tool 4: prtg_device_overview
+	s.AddTool(mcp.Tool{
+		Name:        "prtg_device_overview",
+		Description: "Get a complete overview of a device including all its sensors and statistics (up/down/warning counts).",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"device_name": map[string]string{
+					"type":        "string",
+					"description": "Device name to query (partial match)",
+				},
+			},
+			Required: []string{"device_name"},
+		},
+	}, h.handleDeviceOverview)
+
+	// Tool 5: prtg_top_sensors
+	s.AddTool(mcp.Tool{
+		Name:        "prtg_top_sensors",
+		Description: "Get top sensors ranked by various metrics (uptime, downtime, or alerts).",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"metric": map[string]interface{}{
+					"type":        "string",
+					"description": "Metric to rank by: 'uptime', 'downtime', or 'alerts'",
+					"enum":        []string{"uptime", "downtime", "alerts"},
+					"default":     "downtime",
+				},
+				"sensor_type": map[string]string{
+					"type":        "string",
+					"description": "Filter by sensor type (e.g., 'ping', 'http')",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of results to return (default: 10)",
+					"default":     10,
+				},
+				"hours": map[string]interface{}{
+					"type":        "integer",
+					"description": "Time window in hours (default: 24)",
+					"default":     24,
+				},
+			},
+		},
+	}, h.handleTopSensors)
+
+	// Tool 6: prtg_query_sql
+	s.AddTool(mcp.Tool{
+		Name:        "prtg_query_sql",
+		Description: "Execute a custom SQL query on the PRTG database (SELECT only). Use for advanced queries not covered by other tools.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"query": map[string]string{
+					"type":        "string",
+					"description": "SQL SELECT query to execute",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results (default: 100)",
+					"default":     100,
+				},
+			},
+			Required: []string{"query"},
+		},
+	}, h.handleCustomQuery)
+}
+
+// handleGetSensors handles the prtg_get_sensors tool
+func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info("handling prtg_get_sensors", "arguments", request.Params.Arguments)
+
+	var args struct {
+		DeviceName string `json:"device_name"`
+		SensorName string `json:"sensor_name"`
+		Status     *int   `json:"status"`
+		Tags       string `json:"tags"`
+		Limit      int    `json:"limit"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.Limit <= 0 {
+		args.Limit = 50
+	}
+
+	sensors, err := h.db.GetSensors(ctx, args.DeviceName, args.SensorName, args.Status, args.Tags, args.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sensors: %w", err)
+	}
+
+	return formatResult(sensors, len(sensors))
+}
+
+// handleGetSensorStatus handles the prtg_get_sensor_status tool
+func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info("handling prtg_get_sensor_status", "arguments", request.Params.Arguments)
+
+	var args struct {
+		SensorID int `json:"sensor_id"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.SensorID <= 0 {
+		return nil, fmt.Errorf("sensor_id must be greater than 0")
+	}
+
+	sensor, err := h.db.GetSensorByID(ctx, args.SensorID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sensor: %w", err)
+	}
+
+	return formatResult(sensor, 1)
+}
+
+// handleGetAlerts handles the prtg_get_alerts tool
+func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info("handling prtg_get_alerts", "arguments", request.Params.Arguments)
+
+	var args struct {
+		Hours      int    `json:"hours"`
+		Status     *int   `json:"status"`
+		DeviceName string `json:"device_name"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.Hours == 0 {
+		args.Hours = 24
+	}
+
+	sensors, err := h.db.GetAlerts(ctx, args.Hours, args.Status, args.DeviceName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get alerts: %w", err)
+	}
+
+	return formatResult(sensors, len(sensors))
+}
+
+// handleDeviceOverview handles the prtg_device_overview tool
+func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info("handling prtg_device_overview", "arguments", request.Params.Arguments)
+
+	var args struct {
+		DeviceName string `json:"device_name"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.DeviceName == "" {
+		return nil, fmt.Errorf("device_name is required")
+	}
+
+	overview, err := h.db.GetDeviceOverview(ctx, args.DeviceName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get device overview: %w", err)
+	}
+
+	return formatResult(overview, overview.TotalSensors)
+}
+
+// handleTopSensors handles the prtg_top_sensors tool
+func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info("handling prtg_top_sensors", "arguments", request.Params.Arguments)
+
+	var args struct {
+		Metric     string `json:"metric"`
+		SensorType string `json:"sensor_type"`
+		Limit      int    `json:"limit"`
+		Hours      int    `json:"hours"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.Metric == "" {
+		args.Metric = "downtime"
+	}
+
+	if args.Limit <= 0 {
+		args.Limit = 10
+	}
+
+	if args.Hours <= 0 {
+		args.Hours = 24
+	}
+
+	sensors, err := h.db.GetTopSensors(ctx, args.Metric, args.SensorType, args.Limit, args.Hours)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get top sensors: %w", err)
+	}
+
+	return formatResult(sensors, len(sensors))
+}
+
+// handleCustomQuery handles the prtg_query_sql tool
+func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info("handling prtg_query_sql", "arguments", request.Params.Arguments)
+
+	var args struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.Query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+
+	if args.Limit <= 0 {
+		args.Limit = 100
+	}
+
+	results, err := h.db.ExecuteCustomQuery(ctx, args.Query, args.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	return formatResult(results, len(results))
+}
+
+// parseArguments parses tool arguments from interface{} to target struct
+func parseArguments(args, target interface{}) error {
+	data, err := json.Marshal(args)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(data, target)
+}
+
+// formatResult formats the response data as MCP tool result
+func formatResult(data interface{}, count int) (*mcp.CallToolResult, error) {
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	return &mcp.CallToolResult{
+		Content: []interface{}{
+			mcp.TextContent{
+				Type: "text",
+				Text: fmt.Sprintf("Found %d result(s):\n\n%s", count, string(jsonData)),
+			},
+		},
+	}, nil
+}

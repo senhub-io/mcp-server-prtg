@@ -1,0 +1,14 @@
+# PRTG MCP Server Configuration Example
+# Copy this file to config.yaml and adjust values as needed
+# Environment variables take precedence over this file
+
+database:
+  host: localhost
+  port: 5432
+  name: prtg_data_exporter
+  user: prtg_reader
+  password: your_password_here  # Or set PRTG_DB_PASSWORD env variable
+  sslmode: disable              # Options: disable, require, verify-ca, verify-full
+
+log:
+  level: info                   # Options: debug, info, warn, error
