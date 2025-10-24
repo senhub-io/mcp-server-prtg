@@ -17,7 +17,7 @@ type Logger = zerolog.Logger
 
 // Module log level registry for selective debugging.
 var (
-	moduleLogLevels   = make(map[string]zerolog.Level)
+	moduleLogLevels    = make(map[string]zerolog.Level)
 	activeDebugModules = make(map[string]bool)
 	selectiveDebugMode = false
 	moduleLock         sync.RWMutex
@@ -64,7 +64,7 @@ func NewLogger(args *cliArgs.ParsedArgs) *Logger {
 }
 
 // buildDevelopmentLogger creates a logger for development/console mode.
-func buildDevelopmentLogger(args *cliArgs.ParsedArgs, level zerolog.Level) *Logger {
+func buildDevelopmentLogger(_ *cliArgs.ParsedArgs, level zerolog.Level) *Logger {
 	// Console writer with colors
 	consoleWriter := zerolog.ConsoleWriter{
 		Out:        os.Stderr,
@@ -98,10 +98,10 @@ func buildProductionLogger(args *cliArgs.ParsedArgs, level zerolog.Level) *Logge
 	// Configure log rotation
 	logRotator := &lumberjack.Logger{
 		Filename:   args.LogFile,
-		MaxSize:    10,    // Megabytes
-		MaxBackups: 5,     // Number of backups
-		MaxAge:     30,    // Days
-		Compress:   true,  // Enable compression
+		MaxSize:    10,   // Megabytes
+		MaxBackups: 5,    // Number of backups
+		MaxAge:     30,   // Days
+		Compress:   true, // Enable compression
 	}
 
 	// Multiple outputs

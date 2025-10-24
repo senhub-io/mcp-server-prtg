@@ -22,7 +22,7 @@ type program struct {
 }
 
 // Start is called when the service starts.
-func (p *program) Start(s service.Service) error {
+func (p *program) Start(_ service.Service) error {
 	// Initialize agent
 	var err error
 	p.agent, err = agent.NewAgent(p.args)
@@ -46,7 +46,7 @@ func (p *program) run() {
 }
 
 // Stop is called when the service stops.
-func (p *program) Stop(s service.Service) error {
+func (p *program) Stop(_ service.Service) error {
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -99,16 +99,6 @@ func stopService(args *cliArgs.ParsedArgs) error {
 	}
 
 	return svc.Stop()
-}
-
-// runService runs the service (blocking).
-func runService(args *cliArgs.ParsedArgs) error {
-	svc, err := createService(args)
-	if err != nil {
-		return err
-	}
-
-	return svc.Run()
 }
 
 // runConsole runs the agent in console mode (non-service).
@@ -170,11 +160,11 @@ func createService(args *cliArgs.ParsedArgs) (service.Service, error) {
 
 	// Service configuration
 	svcConfig := &service.Config{
-		Name:        args.ServiceName,
-		DisplayName: "MCP Server PRTG",
-		Description: "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
-		Executable:  executablePath,
-		Arguments:   serviceArgs,
+		Name:             args.ServiceName,
+		DisplayName:      "MCP Server PRTG",
+		Description:      "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
+		Executable:       executablePath,
+		Arguments:        serviceArgs,
 		WorkingDirectory: workingDir,
 		Option: service.KeyValue{
 			"LogOutput":             true,

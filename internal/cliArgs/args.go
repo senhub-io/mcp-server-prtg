@@ -11,12 +11,12 @@ type ParsedArgs struct {
 	ConfigPath string `arg:"--config,-c" help:"Path to configuration file" default:"./config.yaml"`
 
 	// Server settings
-	Port            int    `arg:"--port,-p" help:"Server port" default:"8443"`
-	BindAddress     string `arg:"--bind" help:"Bind address" default:"0.0.0.0"`
-	EnableHTTPS     bool   `arg:"--https" help:"Enable HTTPS" default:"true"`
-	CertFile        string `arg:"--cert" help:"Path to TLS certificate file"`
-	KeyFile         string `arg:"--key" help:"Path to TLS private key file"`
-	AuthKey         string `arg:"--api-key" help:"API key for authentication"`
+	Port        int    `arg:"--port,-p" help:"Server port" default:"8443"`
+	BindAddress string `arg:"--bind" help:"Bind address" default:"0.0.0.0"`
+	EnableHTTPS bool   `arg:"--https" help:"Enable HTTPS" default:"true"`
+	CertFile    string `arg:"--cert" help:"Path to TLS certificate file"`
+	KeyFile     string `arg:"--key" help:"Path to TLS private key file"`
+	AuthKey     string `arg:"--api-key" help:"API key for authentication"`
 
 	// Database settings
 	DBHost     string `arg:"--db-host" help:"Database host" env:"PRTG_DB_HOST"`
