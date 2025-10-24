@@ -33,6 +33,13 @@ const (
 	ModuleService       = "service"
 )
 
+// NewSilentLogger creates a logger that discards all output (for quiet operations).
+func NewSilentLogger() *Logger {
+	// Create logger that writes to discard writer
+	logger := zerolog.New(io.Discard).Level(zerolog.Disabled)
+	return &logger
+}
+
 // NewLogger creates a new logger instance based on CLI arguments.
 func NewLogger(args *cliArgs.ParsedArgs) *Logger {
 	// Determine log level
