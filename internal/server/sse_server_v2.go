@@ -63,8 +63,10 @@ func (s *SSEServerV2) Start(_ context.Context) error {
 		Bool("tls", s.config.IsTLSEnabled()).
 		Msg("Starting MCP Server with SSE transport (v2)")
 
-	// Create internal SSE server (no auth, localhost only)
-	s.sseServer = server.NewSSEServer(s.mcpServer, fmt.Sprintf("http://%s", s.internalAddr))
+	// Create internal SSE server with public base URL
+	// The SSE server will return this URL in endpoint events
+	publicMessageURL := fmt.Sprintf("%s/message", s.baseURL)
+	s.sseServer = server.NewSSEServer(s.mcpServer, publicMessageURL)
 
 	// Start internal SSE server in background
 	go func() {
