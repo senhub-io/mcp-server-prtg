@@ -91,13 +91,27 @@ func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, sta
 		args = append(args, limit)
 	}
 
+	db.logger.Debug().
+		Str("query", query).
+		Interface("args", args).
+		Msg("executing GetSensors query")
+
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
+		db.logger.Error().Err(err).Str("query", query).Msg("query failed")
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
 	defer rows.Close()
 
-	return scanSensors(rows)
+	db.logger.Debug().Msg("query executed successfully, scanning rows")
+	sensors, err := scanSensors(rows)
+	if err != nil {
+		db.logger.Error().Err(err).Msg("scanSensors failed")
+		return nil, err
+	}
+
+	db.logger.Debug().Int("sensors_count", len(sensors)).Msg("GetSensors completed")
+	return sensors, nil
 }
 
 // GetSensorByID retrieves a single sensor by ID

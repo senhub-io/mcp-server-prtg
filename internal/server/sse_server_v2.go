@@ -32,17 +32,14 @@ type SSEServerV2 struct {
 func NewSSEServerV2(mcpServer *server.MCPServer, db *database.DB, config *configuration.Configuration, baseLogger *logger.Logger) *SSEServerV2 {
 	logger := logger.NewModuleLogger(baseLogger, logger.ModuleServer)
 
-	// Determine base URL for SSE
-	protocol := "http"
-	if config.IsTLSEnabled() {
-		protocol = "https"
-	}
-
-	externalAddr := config.GetServerAddress()
-	baseURL := fmt.Sprintf("%s://%s", protocol, externalAddr)
+	// Get public URL for SSE endpoint (uses public_url from config if set)
+	baseURL := config.GetPublicURL()
 
 	// Internal SSE server runs on a different port (no auth, localhost only)
 	internalAddr := "127.0.0.1:18443"
+
+	// External address for binding
+	externalAddr := config.GetServerAddress()
 
 	return &SSEServerV2{
 		mcpServer:    mcpServer,
@@ -64,9 +61,8 @@ func (s *SSEServerV2) Start(_ context.Context) error {
 		Msg("Starting MCP Server with SSE transport (v2)")
 
 	// Create internal SSE server with public base URL
-	// The SSE server will return this URL in endpoint events
-	publicMessageURL := fmt.Sprintf("%s/message", s.baseURL)
-	s.sseServer = server.NewSSEServer(s.mcpServer, publicMessageURL)
+	// The SSE server will append /message to this URL automatically
+	s.sseServer = server.NewSSEServer(s.mcpServer, s.baseURL)
 
 	// Start internal SSE server in background
 	go func() {
