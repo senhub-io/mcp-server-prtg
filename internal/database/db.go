@@ -99,3 +99,15 @@ func (db *DB) Exec(ctx context.Context, query string, args ...interface{}) (sql.
 
 	return db.conn.ExecContext(ctx, query, args...)
 }
+
+// Health checks the database connection health
+func (db *DB) Health(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	if err := db.conn.PingContext(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
+	return nil
+}
