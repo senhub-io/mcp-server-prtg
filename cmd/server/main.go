@@ -1,88 +1,93 @@
 package main
 
 import (
-	"context"
-	"flag"
 	"fmt"
-	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
+	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/config"
-	"github.com/matthieu/mcp-server-prtg/internal/server"
+	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
+)
+
+const (
+	cmdRun       = "run"
+	cmdInstall   = "install"
+	cmdUninstall = "uninstall"
+	cmdStart     = "start"
+	cmdStop      = "stop"
+	cmdStatus    = "status"
+	cmdConfig    = "config"
 )
 
 func main() {
-	// Parse command-line flags
-	configPath := flag.String("config", "", "Path to configuration file (optional)")
-	flag.Parse()
+	// Parse CLI arguments
+	args := cliArgs.Parse()
 
-	// Load configuration
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+	// Execute command
+	if err := executeCommand(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Setup logger
-	logger := setupLogger(cfg.Log.Level)
-
-	// Create server
-	srv, err := server.New(cfg, logger)
-	if err != nil {
-		logger.Error("failed to create server", "error", err)
-		os.Exit(1)
-	}
-	defer srv.Close()
-
-	// Setup signal handling
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-sigChan
-		logger.Info("received shutdown signal")
-		cancel()
-	}()
-
-	// Start server
-	logger.Info("PRTG MCP Server starting")
-
-	if err := srv.Start(ctx); err != nil {
-		logger.Error("server error", "error", err)
-		// Don't use os.Exit here to allow defers to run
-		return
-	}
-
-	logger.Info("PRTG MCP Server stopped")
 }
 
-// setupLogger configures the structured logger
-func setupLogger(level string) *slog.Logger {
-	var logLevel slog.Level
+// executeCommand executes the specified command.
+func executeCommand(args *cliArgs.ParsedArgs) error {
+	switch args.Command {
+	case cmdRun, "":
+		// Run in console mode (default command)
+		return runConsole(args)
 
-	switch level {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "info":
-		logLevel = slog.LevelInfo
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
+	case cmdInstall:
+		fmt.Println("Installing MCP Server PRTG as system service...")
+		if err := installService(args); err != nil {
+			return fmt.Errorf("failed to install service: %w", err)
+		}
+		fmt.Println("✓ Service installed successfully")
+		fmt.Printf("  Use '%s start' to start the service\n", os.Args[0])
+		return nil
+
+	case cmdUninstall:
+		fmt.Println("Uninstalling MCP Server PRTG service...")
+		if err := uninstallService(args); err != nil {
+			return fmt.Errorf("failed to uninstall service: %w", err)
+		}
+		fmt.Println("✓ Service uninstalled successfully")
+		return nil
+
+	case cmdStart:
+		fmt.Println("Starting MCP Server PRTG service...")
+		if err := startService(args); err != nil {
+			return fmt.Errorf("failed to start service: %w", err)
+		}
+		fmt.Println("✓ Service started successfully")
+		// Wait a bit and check status
+		time.Sleep(2 * time.Second)
+		return getServiceStatus(args)
+
+	case cmdStop:
+		fmt.Println("Stopping MCP Server PRTG service...")
+		if err := stopService(args); err != nil {
+			return fmt.Errorf("failed to stop service: %w", err)
+		}
+		fmt.Println("✓ Service stopped successfully")
+		return nil
+
+	case cmdStatus:
+		return getServiceStatus(args)
+
+	case cmdConfig:
+		return handleConfigCommand(args)
+
 	default:
-		logLevel = slog.LevelInfo
+		return fmt.Errorf("unknown command: %s\n\nAvailable commands: run, install, uninstall, start, stop, status, config", args.Command)
 	}
+}
 
-	opts := &slog.HandlerOptions{
-		Level: logLevel,
-	}
-
-	handler := slog.NewJSONHandler(os.Stderr, opts)
-
-	return slog.New(handler)
+// handleConfigCommand handles config-related commands.
+func handleConfigCommand(args *cliArgs.ParsedArgs) error {
+	fmt.Println("Configuration management")
+	fmt.Printf("  Config file: %s\n", args.ConfigPath)
+	fmt.Println("\nTo generate a new configuration file, run:")
+	fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
+	fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")
+	return nil
 }
