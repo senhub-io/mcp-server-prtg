@@ -9,23 +9,23 @@ import (
 	"net/url"
 	"time"
 
+	server "github.com/mark3labs/mcp-go/server"
 	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
-	server "github.com/mark3labs/mcp-go/server"
 )
 
 // SSEServerV2 wraps the MCP SSE server with authentication and TLS.
 type SSEServerV2 struct {
-	mcpServer     *server.MCPServer
-	sseServer     *server.SSEServer
-	proxyServer   *http.Server
-	config        *configuration.Configuration
-	logger        *logger.ModuleLogger
-	db            *database.DB
-	baseURL       string
-	internalAddr  string
-	externalAddr  string
+	mcpServer    *server.MCPServer
+	sseServer    *server.SSEServer
+	proxyServer  *http.Server
+	config       *configuration.Configuration
+	logger       *logger.ModuleLogger
+	db           *database.DB
+	baseURL      string
+	internalAddr string
+	externalAddr string
 }
 
 // NewSSEServerV2 creates a new SSE-based MCP server with authentication proxy.
@@ -56,7 +56,7 @@ func NewSSEServerV2(mcpServer *server.MCPServer, db *database.DB, config *config
 }
 
 // Start starts the SSE server with authentication proxy.
-func (s *SSEServerV2) Start(ctx context.Context) error {
+func (s *SSEServerV2) Start(_ context.Context) error {
 	s.logger.Info().
 		Str("external_address", s.externalAddr).
 		Str("internal_address", s.internalAddr).
@@ -220,7 +220,7 @@ func (s *SSEServerV2) createAuthMiddleware() func(http.HandlerFunc) http.Handler
 }
 
 // handleHealth handles health check requests.
-func (s *SSEServerV2) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *SSEServerV2) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"status":"healthy","timestamp":"%s"}`, time.Now().Format(time.RFC3339))
