@@ -321,6 +321,31 @@ func (c *Configuration) GetDatabaseConnectionString() string {
 	)
 }
 
+// GetDatabaseHost returns the database host.
+func (c *Configuration) GetDatabaseHost() string {
+	return c.data.Database.Host
+}
+
+// GetDatabasePort returns the database port.
+func (c *Configuration) GetDatabasePort() int {
+	return c.data.Database.Port
+}
+
+// GetDatabaseName returns the database name.
+func (c *Configuration) GetDatabaseName() string {
+	return c.data.Database.Name
+}
+
+// GetDatabaseUser returns the database user.
+func (c *Configuration) GetDatabaseUser() string {
+	return c.data.Database.User
+}
+
+// GetDatabaseSSLMode returns the database SSL mode.
+func (c *Configuration) GetDatabaseSSLMode() string {
+	return c.data.Database.SSLMode
+}
+
 // IsTLSEnabled returns whether TLS is enabled.
 func (c *Configuration) IsTLSEnabled() bool {
 	return c.data.Server.EnableTLS
