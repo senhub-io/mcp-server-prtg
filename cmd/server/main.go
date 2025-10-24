@@ -8,6 +8,14 @@ import (
 	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
 )
 
+// Build-time variables injected via ldflags.
+var (
+	Version    = "v1.0.0"     // Injected via -X flag at build time
+	CommitHash = "unknown"    // Injected via -X flag at build time
+	BuildTime  = "unknown"    // Injected via -X flag at build time
+	GoVersion  = "unknown"    // Injected via -X flag at build time
+)
+
 const (
 	cmdRun       = "run"
 	cmdInstall   = "install"
@@ -19,8 +27,8 @@ const (
 )
 
 func main() {
-	// Parse CLI arguments
-	args := cliArgs.Parse()
+	// Parse CLI arguments with version info
+	args := cliArgs.ParseWithVersion(getVersionString())
 
 	// Execute command
 	if err := executeCommand(args); err != nil {
@@ -31,9 +39,14 @@ func main() {
 
 // executeCommand executes the specified command.
 func executeCommand(args *cliArgs.ParsedArgs) error {
+	// If no command provided, show help
+	if args.Command == "" {
+		return showHelp()
+	}
+
 	switch args.Command {
-	case cmdRun, "":
-		// Run in console mode (default command)
+	case cmdRun:
+		// Run in console mode
 		return runConsole(args)
 
 	case cmdInstall:
@@ -89,5 +102,41 @@ func handleConfigCommand(args *cliArgs.ParsedArgs) error {
 	fmt.Println("\nTo generate a new configuration file, run:")
 	fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
 	fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")
+	return nil
+}
+
+// getVersionString returns the full version string.
+func getVersionString() string {
+	return fmt.Sprintf("mcp-server-prtg %s (commit: %s, built: %s, %s)",
+		Version, CommitHash, BuildTime, GoVersion)
+}
+
+// showHelp displays usage information.
+func showHelp() error {
+	fmt.Printf("MCP Server PRTG - %s\n\n", getVersionString())
+	fmt.Println("USAGE:")
+	fmt.Printf("  %s <command> [options]\n\n", os.Args[0])
+	fmt.Println("COMMANDS:")
+	fmt.Println("  run         Run the server in console mode (foreground)")
+	fmt.Println("  install     Install as system service")
+	fmt.Println("  uninstall   Uninstall system service")
+	fmt.Println("  start       Start the system service")
+	fmt.Println("  stop        Stop the system service")
+	fmt.Println("  status      Show service status")
+	fmt.Println("  config      Show configuration information")
+	fmt.Println()
+	fmt.Println("OPTIONS:")
+	fmt.Println("  --config PATH       Path to configuration file (default: ./config.yaml)")
+	fmt.Println("  --db-password PASS  Database password (or set PRTG_DB_PASSWORD)")
+	fmt.Println("  --verbose, -v       Enable verbose logging")
+	fmt.Println("  --version           Show version information")
+	fmt.Println("  --help, -h          Show this help message")
+	fmt.Println()
+	fmt.Println("EXAMPLES:")
+	fmt.Printf("  %s run --config /etc/mcp-server-prtg/config.yaml\n", os.Args[0])
+	fmt.Printf("  %s install --config /etc/mcp-server-prtg/config.yaml\n", os.Args[0])
+	fmt.Printf("  %s start\n", os.Args[0])
+	fmt.Println()
+	fmt.Println("For more information, see: https://github.com/matthieu/mcp-server-prtg")
 	return nil
 }

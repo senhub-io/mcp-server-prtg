@@ -8,8 +8,8 @@ DARWIN_ARM64=$(BUILD_DIR)/$(EXECUTABLE)_darwin_arm64
 VERSION=$(shell git describe --tags --always --abbrev=0 2>/dev/null || echo "v1.0.0")
 COMMIT_HASH=$(shell git describe --tags --always --long --dirty 2>/dev/null || echo "unknown")
 
-# Package to set version variable
-PACKAGE=github.com/matthieu/mcp-server-prtg/cmd/server
+# Package to set version variable (use 'main' for main package)
+PACKAGE=main
 
 BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell go version | cut -d' ' -f3)
