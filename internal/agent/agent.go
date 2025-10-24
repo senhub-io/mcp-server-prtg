@@ -19,7 +19,7 @@ type Agent struct {
 	config    *configuration.Configuration
 	logger    *logger.Logger
 	db        *database.DB
-	sseServer *server.SSEServer
+	sseServer *server.SSEServerV2
 	args      *cliArgs.ParsedArgs
 }
 
@@ -42,14 +42,17 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
 		Str("api_key_preview", maskKey(config.GetAPIKey())).
 		Msg("Configuration loaded")
 
-	// Initialize database
+	// Initialize database (optional - server can start without database)
 	dbLogger := logger.NewModuleLogger(baseLogger, logger.ModuleDatabase)
 	db, err := database.New(config.GetDatabaseConnectionString(), dbLogger.Logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize database: %w", err)
+		moduleLogger.Warn().
+			Err(err).
+			Msg("Failed to initialize database - server will start but tools will not work")
+		db = nil
+	} else {
+		moduleLogger.Info().Msg("Database connection established")
 	}
-
-	moduleLogger.Info().Msg("Database connection established")
 
 	// Create MCP server
 	mcpServer := mcpserver.NewMCPServer(
@@ -65,8 +68,8 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
 		Int("tools_count", 6).
 		Msg("MCP tools registered")
 
-	// Create SSE server
-	sseServer := server.NewSSEServer(mcpServer, config, baseLogger)
+	// Create SSE server (v2 with proxy architecture)
+	sseServer := server.NewSSEServerV2(mcpServer, db, config, baseLogger)
 
 	return &Agent{
 		config:    config,

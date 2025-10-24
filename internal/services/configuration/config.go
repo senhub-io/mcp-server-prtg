@@ -41,28 +41,22 @@ type Configuration struct {
 
 // ConfigData represents the YAML configuration structure.
 type ConfigData struct {
-	ConfigVersion int           `yaml:"config_version"`
-	Agent         AgentConfig   `yaml:"agent"`
-	Server        ServerConfig  `yaml:"server"`
+	ConfigVersion int            `yaml:"config_version"`
+	Server        ServerConfig   `yaml:"server"`
 	Database      DatabaseConfig `yaml:"database"`
 	Logging       LoggingConfig  `yaml:"logging"`
 }
 
-// AgentConfig holds agent-specific configuration.
-type AgentConfig struct {
-	Key       string `yaml:"key"`        // API Key (UUID)
-	Generated bool   `yaml:"generated"`  // True if key was auto-generated
-}
-
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
-	BindAddress string `yaml:"bind_address"`
-	Port        int    `yaml:"port"`
-	EnableTLS   bool   `yaml:"enable_tls"`
-	CertFile    string `yaml:"cert_file"`
-	KeyFile     string `yaml:"key_file"`
-	ReadTimeout int    `yaml:"read_timeout"`    // seconds
-	WriteTimeout int   `yaml:"write_timeout"`   // seconds
+	APIKey       string `yaml:"api_key"`        // API Key (Bearer token)
+	BindAddress  string `yaml:"bind_address"`
+	Port         int    `yaml:"port"`
+	EnableTLS    bool   `yaml:"enable_tls"`
+	CertFile     string `yaml:"cert_file"`
+	KeyFile      string `yaml:"key_file"`
+	ReadTimeout  int    `yaml:"read_timeout"`   // seconds
+	WriteTimeout int    `yaml:"write_timeout"`  // seconds
 }
 
 // DatabaseConfig holds database connection settings.
@@ -142,7 +136,6 @@ func (c *Configuration) loadConfiguration() error {
 func (c *Configuration) createDefaultConfiguration() error {
 	// Generate API key if not provided
 	apiKey := c.args.AuthKey
-	generated := false
 
 	if apiKey == "" {
 		var err error
@@ -150,18 +143,14 @@ func (c *Configuration) createDefaultConfiguration() error {
 		if err != nil {
 			return fmt.Errorf("failed to generate API key: %w", err)
 		}
-		generated = true
-		c.logger.Info().Msg("Generated new API key")
+		c.logger.Info().Msg("Generated new API key (Bearer token)")
 	}
 
 	// Create default config
 	c.data = ConfigData{
 		ConfigVersion: CurrentConfigVersion,
-		Agent: AgentConfig{
-			Key:       apiKey,
-			Generated: generated,
-		},
 		Server: ServerConfig{
+			APIKey:       apiKey,
 			BindAddress:  getOrDefault(c.args.BindAddress, "0.0.0.0"),
 			Port:         getOrDefaultInt(c.args.Port, 8443),
 			EnableTLS:    c.args.EnableHTTPS,
@@ -310,9 +299,9 @@ func generateUUIDKey() (string, error) {
 
 // Get methods for accessing configuration.
 
-// GetAPIKey returns the API key.
+// GetAPIKey returns the API key (Bearer token).
 func (c *Configuration) GetAPIKey() string {
-	return c.data.Agent.Key
+	return c.data.Server.APIKey
 }
 
 // GetServerAddress returns the full server address.

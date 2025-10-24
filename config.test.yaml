@@ -1,0 +1,27 @@
+config_version: 1
+
+server:
+  api_key: "test-api-key-12345678-1234-1234-1234-123456789abc"
+  bind_address: "127.0.0.1"
+  port: 8443
+  enable_tls: false  # Désactiver TLS pour les tests
+  cert_file: "./certs/server.crt"
+  key_file: "./certs/server.key"
+  read_timeout: 10
+  write_timeout: 10
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "prtg_data_exporter"
+  user: "prtg_reader"
+  password: "test_password"
+  sslmode: "disable"
+
+logging:
+  level: "debug"
+  file: "./logs/mcp-server-prtg-test.log"
+  max_size_mb: 10
+  max_backups: 2
+  max_age_days: 7
+  compress: false
