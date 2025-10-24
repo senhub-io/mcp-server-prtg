@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"time"
+
+	"github.com/rs/zerolog"
 
 	// PostgreSQL driver.
 	_ "github.com/lib/pq"
@@ -14,11 +15,11 @@ import (
 // DB wraps the database connection and provides query methods
 type DB struct {
 	conn   *sql.DB
-	logger *slog.Logger
+	logger *zerolog.Logger
 }
 
 // New creates a new database connection with proper pool settings
-func New(connStr string, logger *slog.Logger) (*DB, error) {
+func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 	conn, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -38,7 +39,7 @@ func New(connStr string, logger *slog.Logger) (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	logger.Info("database connection established")
+	logger.Info().Msg("database connection established")
 
 	return &DB{
 		conn:   conn,
@@ -65,7 +66,10 @@ func (db *DB) Query(ctx context.Context, query string, args ...interface{}) (*sq
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	db.logger.Debug("executing query", "query", query, "args", args)
+	db.logger.Debug().
+		Str("query", query).
+		Interface("args", args).
+		Msg("executing query")
 
 	return db.conn.QueryContext(ctx, query, args...)
 }
@@ -75,7 +79,10 @@ func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) *
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	db.logger.Debug("executing query row", "query", query, "args", args)
+	db.logger.Debug().
+		Str("query", query).
+		Interface("args", args).
+		Msg("executing query row")
 
 	return db.conn.QueryRowContext(ctx, query, args...)
 }
@@ -85,7 +92,10 @@ func (db *DB) Exec(ctx context.Context, query string, args ...interface{}) (sql.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	db.logger.Debug("executing statement", "query", query, "args", args)
+	db.logger.Debug().
+		Str("query", query).
+		Interface("args", args).
+		Msg("executing statement")
 
 	return db.conn.ExecContext(ctx, query, args...)
 }

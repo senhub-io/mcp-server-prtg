@@ -4,21 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/matthieu/mcp-server-prtg/internal/database"
+	"github.com/rs/zerolog"
 )
 
 // ToolHandler handles MCP tool requests
 type ToolHandler struct {
 	db     *database.DB
-	logger *slog.Logger
+	logger *zerolog.Logger
 }
 
 // NewToolHandler creates a new tool handler
-func NewToolHandler(db *database.DB, logger *slog.Logger) *ToolHandler {
+func NewToolHandler(db *database.DB, logger *zerolog.Logger) *ToolHandler {
 	return &ToolHandler{
 		db:     db,
 		logger: logger,
@@ -172,7 +172,7 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 
 // handleGetSensors handles the prtg_get_sensors tool
 func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	h.logger.Info("handling prtg_get_sensors", "arguments", request.Params.Arguments)
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_sensors")
 
 	var args struct {
 		DeviceName string `json:"device_name"`
@@ -200,7 +200,7 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 
 // handleGetSensorStatus handles the prtg_get_sensor_status tool
 func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	h.logger.Info("handling prtg_get_sensor_status", "arguments", request.Params.Arguments)
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_sensor_status")
 
 	var args struct {
 		SensorID int `json:"sensor_id"`
@@ -224,7 +224,7 @@ func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.Cal
 
 // handleGetAlerts handles the prtg_get_alerts tool
 func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	h.logger.Info("handling prtg_get_alerts", "arguments", request.Params.Arguments)
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_alerts")
 
 	var args struct {
 		Hours      int    `json:"hours"`
@@ -250,7 +250,7 @@ func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolR
 
 // handleDeviceOverview handles the prtg_device_overview tool
 func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	h.logger.Info("handling prtg_device_overview", "arguments", request.Params.Arguments)
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_device_overview")
 
 	var args struct {
 		DeviceName string `json:"device_name"`
@@ -274,7 +274,7 @@ func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.Call
 
 // handleTopSensors handles the prtg_top_sensors tool
 func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	h.logger.Info("handling prtg_top_sensors", "arguments", request.Params.Arguments)
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_top_sensors")
 
 	var args struct {
 		Metric     string `json:"metric"`
@@ -309,7 +309,7 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 
 // handleCustomQuery handles the prtg_query_sql tool
 func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	h.logger.Info("handling prtg_query_sql", "arguments", request.Params.Arguments)
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_query_sql")
 
 	var args struct {
 		Query string `json:"query"`

@@ -25,7 +25,13 @@
       "Bash(/Users/matthieu/go/bin/goimports:*)",
       "Bash(cat:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git tag:*)",
+      "Read(//Users/matthieu/Documents/GitHub/senhub-agent/**)",
+      "Bash(go get:*)",
+      "Bash(go build:*)",
+      "Bash(./build/mcp-server-prtg:*)"
     ],
     "deny": [],
     "ask": []
