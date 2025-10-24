@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
+	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
+	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
 )
 
 // Build-time variables injected via ldflags.
@@ -51,10 +54,17 @@ func executeCommand(args *cliArgs.ParsedArgs) error {
 
 	case cmdInstall:
 		fmt.Println("Installing MCP Server PRTG as system service...")
+
+		// Ensure configuration exists before installing service
+		if err := ensureConfiguration(args); err != nil {
+			return fmt.Errorf("failed to create configuration: %w", err)
+		}
+
 		if err := installService(args); err != nil {
 			return fmt.Errorf("failed to install service: %w", err)
 		}
 		fmt.Println("✓ Service installed successfully")
+		fmt.Printf("  Configuration: %s\n", args.ConfigPath)
 		fmt.Printf("  Use '%s start' to start the service\n", os.Args[0])
 		return nil
 
@@ -109,6 +119,41 @@ func handleConfigCommand(args *cliArgs.ParsedArgs) error {
 func getVersionString() string {
 	return fmt.Sprintf("mcp-server-prtg %s (commit: %s, built: %s, %s)",
 		Version, CommitHash, BuildTime, GoVersion)
+}
+
+// ensureConfiguration creates configuration file if it doesn't exist.
+func ensureConfiguration(args *cliArgs.ParsedArgs) error {
+	// Check if config file already exists
+	if _, err := os.Stat(args.ConfigPath); err == nil {
+		fmt.Printf("  Configuration file already exists: %s\n", args.ConfigPath)
+		return nil
+	}
+
+	// Create directory for config file if needed
+	configDir := filepath.Dir(args.ConfigPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Create temporary logger for config generation
+	tempLogger := logger.NewLogger(args)
+
+	// Create configuration (will generate default if not exists)
+	config, err := configuration.NewConfiguration(args, tempLogger)
+	if err != nil {
+		return fmt.Errorf("failed to create configuration: %w", err)
+	}
+
+	// Shutdown config to close file watcher
+	_ = config.Shutdown(nil)
+
+	fmt.Printf("  ✓ Configuration file created: %s\n", args.ConfigPath)
+	fmt.Printf("  ✓ API Key generated (see config file)\n")
+	if config.IsTLSEnabled() {
+		fmt.Printf("  ✓ TLS certificates generated\n")
+	}
+
+	return nil
 }
 
 // showHelp displays usage information.
