@@ -215,6 +215,26 @@ func (c *Configuration) saveConfiguration() error {
 
 // generateTLSCertificates generates self-signed TLS certificate and key.
 func (c *Configuration) generateTLSCertificates() error {
+	// Check if certificates already exist - don't overwrite them
+	certExists := false
+	keyExists := false
+
+	if _, err := os.Stat(c.data.Server.CertFile); err == nil {
+		certExists = true
+	}
+	if _, err := os.Stat(c.data.Server.KeyFile); err == nil {
+		keyExists = true
+	}
+
+	// If both certificate files exist, don't regenerate (user may have provided their own)
+	if certExists && keyExists {
+		c.logger.Info().
+			Str("cert", c.data.Server.CertFile).
+			Str("key", c.data.Server.KeyFile).
+			Msg("TLS certificates already exist, skipping generation")
+		return nil
+	}
+
 	c.logger.Info().Msg("Generating self-signed TLS certificates")
 
 	// Create certs directory
