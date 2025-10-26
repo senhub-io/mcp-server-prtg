@@ -121,12 +121,13 @@ func (s *SSEServerV2) startAuthProxy() error {
 	mux.HandleFunc("/status", s.createAuthMiddleware()(s.handleStatus))
 
 	// Create HTTP server
+	// For SSE, we need long/no timeouts as connections stay open
 	s.proxyServer = &http.Server{
 		Addr:         s.externalAddr,
 		Handler:      mux,
-		ReadTimeout:  s.config.GetReadTimeout(),
-		WriteTimeout: s.config.GetWriteTimeout(),
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  0, // No read timeout for SSE
+		WriteTimeout: 0, // No write timeout for SSE (long-lived connections)
+		IdleTimeout:  0, // No idle timeout for SSE (connections stay open)
 	}
 
 	// Start server (with or without TLS)

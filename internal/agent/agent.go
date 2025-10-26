@@ -16,11 +16,12 @@ import (
 
 // Agent represents the main application orchestrator.
 type Agent struct {
-	config    *configuration.Configuration
-	logger    *logger.Logger
-	db        *database.DB
-	sseServer *server.SSEServerV2
-	args      *cliArgs.ParsedArgs
+	config     *configuration.Configuration
+	logger     *logger.Logger
+	db         *database.DB
+	sseServer  *server.SSEServerV2
+	args       *cliArgs.ParsedArgs
+	shutdownCh chan struct{} // Channel to signal shutdown
 }
 
 // NewAgent creates a new agent instance.
@@ -84,11 +85,12 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
 	sseServer := server.NewSSEServerV2(mcpServer, db, config, baseLogger)
 
 	return &Agent{
-		config:    config,
-		logger:    baseLogger,
-		db:        db,
-		sseServer: sseServer,
-		args:      args,
+		config:     config,
+		logger:     baseLogger,
+		db:         db,
+		sseServer:  sseServer,
+		args:       args,
+		shutdownCh: make(chan struct{}),
 	}, nil
 }
 
@@ -103,14 +105,25 @@ func (a *Agent) Start() error {
 		return fmt.Errorf("failed to start SSE server: %w", err)
 	}
 
-	// Block forever (server runs in goroutine)
-	select {}
+	// Wait for shutdown signal (server runs in goroutine)
+	<-a.shutdownCh
+	moduleLogger.Info().Msg("Shutdown signal received, agent stopping")
+
+	return nil
 }
 
 // Shutdown gracefully shuts down the agent.
 func (a *Agent) Shutdown(ctx context.Context) error {
 	moduleLogger := logger.NewModuleLogger(a.logger, "agent")
 	moduleLogger.Info().Msg("Shutting down agent")
+
+	// Signal shutdown to Start() (close channel only once)
+	select {
+	case <-a.shutdownCh:
+		// Already closed
+	default:
+		close(a.shutdownCh)
+	}
 
 	// Create shutdown context with timeout
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

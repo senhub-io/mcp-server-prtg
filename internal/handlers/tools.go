@@ -151,14 +151,21 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 
 	// Tool 6: prtg_query_sql
 	s.AddTool(mcp.Tool{
-		Name:        "prtg_query_sql",
-		Description: "Execute a custom SQL query on the PRTG database (SELECT only). Use for advanced queries not covered by other tools.",
+		Name: "prtg_query_sql",
+		Description: "Execute a custom SQL query on the PRTG database (SELECT only). Use for advanced queries not covered by other tools.\n\n" +
+			"IMPORTANT - Table Schema:\n" +
+			"- prtg_sensor: id, name, sensor_type, prtg_device_id, status, priority, message, last_check_utc, full_path\n" +
+			"- prtg_device: id, name\n" +
+			"- prtg_sensor_path: sensor_id, path\n" +
+			"- prtg_tag: id, name\n" +
+			"- prtg_sensor_tag: prtg_sensor_id, prtg_tag_id\n\n" +
+			"Use these EXACT table names in your queries. Status codes: 3=Up, 4=Warning, 5=Down, 7=Paused, 13=Unknown",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"query": map[string]string{
 					"type":        "string",
-					"description": "SQL SELECT query to execute",
+					"description": "SQL SELECT query to execute (use table names: prtg_sensor, prtg_device, etc.)",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
@@ -188,7 +195,7 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 	}
 
 	if args.Limit <= 0 {
-		args.Limit = 50
+		args.Limit = 1000  // Default to reasonable limit, user can override
 	}
 
 	h.logger.Debug().
@@ -212,7 +219,26 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 
 	h.logger.Debug().Int("count", len(sensors)).Msg("db.GetSensors returned")
 
-	return formatResult(sensors, len(sensors))
+	result, err := formatResult(sensors, len(sensors))
+	if err != nil {
+		h.logger.Error().Err(err).Msg("formatResult failed")
+		return nil, err
+	}
+
+	// Calculate response size
+	responseSize := 0
+	if len(result.Content) > 0 {
+		if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+			responseSize = len(textContent.Text)
+		}
+	}
+
+	h.logger.Info().
+		Int("sensors_count", len(sensors)).
+		Int("response_size_bytes", responseSize).
+		Msg("returning result to MCP client")
+
+	return result, nil
 }
 
 // handleGetSensorStatus handles the prtg_get_sensor_status tool
@@ -231,7 +257,11 @@ func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.Cal
 		return nil, fmt.Errorf("sensor_id must be greater than 0")
 	}
 
-	sensor, err := h.db.GetSensorByID(ctx, args.SensorID)
+	// Create a new context with longer timeout
+	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sensor, err := h.db.GetSensorByID(dbCtx, args.SensorID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sensor: %w", err)
 	}
@@ -257,7 +287,11 @@ func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolR
 		args.Hours = 24
 	}
 
-	sensors, err := h.db.GetAlerts(ctx, args.Hours, args.Status, args.DeviceName)
+	// Create a new context with longer timeout
+	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sensors, err := h.db.GetAlerts(dbCtx, args.Hours, args.Status, args.DeviceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get alerts: %w", err)
 	}
@@ -281,7 +315,11 @@ func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.Call
 		return nil, fmt.Errorf("device_name is required")
 	}
 
-	overview, err := h.db.GetDeviceOverview(ctx, args.DeviceName)
+	// Create a new context with longer timeout
+	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	overview, err := h.db.GetDeviceOverview(dbCtx, args.DeviceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get device overview: %w", err)
 	}
@@ -316,7 +354,11 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 		args.Hours = 24
 	}
 
-	sensors, err := h.db.GetTopSensors(ctx, args.Metric, args.SensorType, args.Limit, args.Hours)
+	// Create a new context with longer timeout
+	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sensors, err := h.db.GetTopSensors(dbCtx, args.Metric, args.SensorType, args.Limit, args.Hours)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get top sensors: %w", err)
 	}
@@ -345,10 +387,22 @@ func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToo
 		args.Limit = 100
 	}
 
-	results, err := h.db.ExecuteCustomQuery(ctx, args.Query, args.Limit)
+	h.logger.Debug().
+		Str("query", args.Query).
+		Int("limit", args.Limit).
+		Msg("calling db.ExecuteCustomQuery")
+
+	// Create a new context with longer timeout to avoid cancellation
+	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	results, err := h.db.ExecuteCustomQuery(dbCtx, args.Query, args.Limit)
 	if err != nil {
+		h.logger.Error().Err(err).Msg("db.ExecuteCustomQuery failed")
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
+
+	h.logger.Debug().Int("result_count", len(results)).Msg("db.ExecuteCustomQuery returned")
 
 	return formatResult(results, len(results))
 }
