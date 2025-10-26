@@ -123,6 +123,15 @@ If not specified, the server will construct a URL from `bind_address` and `port`
 
 **Recommendation:** Always use `true` in production. TLS encrypts all communication including API keys.
 
+**IMPORTANT - mcp-proxy Limitation:**
+- mcp-proxy does **NOT** support the `--insecure` flag for bypassing SSL certificate verification
+- When using self-signed certificates with mcp-proxy, you have three options:
+  1. **Use HTTP instead** (set `enable_tls: false`) - Recommended for development
+  2. **Use trusted CA certificates** (Let's Encrypt, etc.) - Required for production
+  3. **Add self-signed certificate to system trust store** - Advanced option
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#certificate-verification-failed-with-mcp-proxy) for detailed instructions.
+
 ### cert_file
 
 **Type:** `string`

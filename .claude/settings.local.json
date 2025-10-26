@@ -52,7 +52,18 @@
       "Bash(timeout 2 curl:*)",
       "Bash(pip3 search:*)",
       "WebSearch",
-      "Read(//Users/matthieu/Library/Application Support/Claude/**)"
+      "Read(//Users/matthieu/Library/Application Support/Claude/**)",
+      "Read(//Users/matthieu/Library/Logs/Claude/**)",
+      "Bash(time curl -k -N -H \"Authorization: Bearer 3a4e8cb4-1066-4b18-85f5-4f46ecefc4d1\" http://dash999.hibouvision.com:8443/sse)",
+      "Bash(time host:*)",
+      "Bash(\"http://dash999.hibouvision.com:8443/message?sessionId=test-session\")",
+      "WebFetch(domain:github.com)",
+      "Bash(brew install:*)",
+      "Bash(/opt/homebrew/bin/python3.11 -m pip install:*)",
+      "Bash(mcp-proxy http://dash999.hibouvision.com:8443/sse --headers Authorization \"Bearer 3a4e8cb4-1066-4b18-85f5-4f46ecefc4d1\")",
+      "Bash(find . -type f ( -name \"*.md\" -o -name \"*.go\" ) ! -path \"./.git/*\" -exec sed -i '' )",
+      "Bash({} +)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

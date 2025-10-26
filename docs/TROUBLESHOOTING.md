@@ -587,41 +587,120 @@ Check logs for specific authentication failure reason.
 
 ## TLS/Certificate Issues
 
-### Certificate Verification Failed
+### Certificate Verification Failed with mcp-proxy
 
 #### Symptom
-Error: `certificate verify failed` or `x509: certificate signed by unknown authority`
+Error when using HTTPS with self-signed certificates:
+```
+httpcore.ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate
+```
+
+Or mcp-proxy error:
+```
+mcp-proxy: error: unrecognized arguments: --insecure
+```
+
+#### Root Cause
+
+**IMPORTANT:** mcp-proxy does **NOT** support the `--insecure` flag and has no built-in option to bypass SSL certificate verification. This is a known limitation of mcp-proxy.
 
 #### Solutions
 
-**For Development (Self-Signed Certificates):**
+**Option 1: Use HTTP Instead of HTTPS (Recommended for Development)**
 
-Add `--insecure` flag to mcp-proxy:
+Disable TLS in server configuration and use HTTP:
+
+1. Edit `config.yaml`:
+```yaml
+server:
+  enable_tls: false  # Disable TLS
+  port: 8443
+```
+
+2. Restart the server:
+```bash
+./mcp-server-prtg restart
+```
+
+3. Update MCP Client configuration to use `http://`:
 ```json
 {
-  "args": [
-    "https://localhost:8443/sse",
-    "--headers",
-    "Authorization",
-    "Bearer your-api-key",
-    "--insecure"
-  ]
+  "mcpServers": {
+    "prtg": {
+      "command": "mcp-proxy",
+      "args": [
+        "http://localhost:8443/sse",
+        "--headers",
+        "Authorization",
+        "Bearer your-api-key"
+      ]
+    }
+  }
 }
 ```
 
-Or with curl:
-```bash
-curl -k https://localhost:8443/health
-```
+**Note:** Even with HTTP, your API key authentication is still secure via the Bearer token.
 
-**For Production (Trusted Certificates):**
+**Option 2: Use Trusted CA Certificates (Production)**
 
-Use certificates from a trusted CA (Let's Encrypt, etc.):
+For production environments, use certificates from a trusted Certificate Authority:
+
 ```yaml
 server:
   enable_tls: true
   cert_file: "/etc/letsencrypt/live/domain.com/fullchain.pem"
   key_file: "/etc/letsencrypt/live/domain.com/privkey.pem"
+```
+
+Then use HTTPS:
+```json
+{
+  "args": [
+    "https://your-domain.com:8443/sse",
+    "--headers",
+    "Authorization",
+    "Bearer your-api-key"
+  ]
+}
+```
+
+**Option 3: Add Self-Signed Certificate to System Trust Store (Advanced)**
+
+You can configure your operating system to trust the self-signed certificate:
+
+**macOS:**
+```bash
+# Export server certificate
+openssl s_client -connect localhost:8443 -showcerts < /dev/null 2>/dev/null | \
+  openssl x509 -outform PEM > server.crt
+
+# Add to system keychain
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain server.crt
+```
+
+**Linux:**
+```bash
+# Copy certificate to trusted store
+sudo cp certs/server.crt /usr/local/share/ca-certificates/mcp-server-prtg.crt
+sudo update-ca-certificates
+```
+
+**Windows:**
+```powershell
+# Import certificate to Trusted Root
+Import-Certificate -FilePath "certs\server.crt" -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+After adding the certificate to the system trust store, restart your MCP Client.
+
+**Testing with curl:**
+
+```bash
+# HTTP (no SSL)
+curl http://localhost:8443/health
+
+# HTTPS with self-signed cert (bypass verification for testing)
+curl -k https://localhost:8443/health
 ```
 
 ### Certificate Expired
