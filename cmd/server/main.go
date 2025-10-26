@@ -49,8 +49,8 @@ func executeCommand(args *cliArgs.ParsedArgs) error {
 
 	switch args.Command {
 	case cmdRun:
-		// Run in console mode
-		return runConsole(args)
+		// Run via service framework (handles both console and service mode)
+		return runService(args)
 
 	case cmdInstall:
 		fmt.Println("Installing MCP Server PRTG as system service...")
@@ -173,9 +173,11 @@ func showHelp() error {
 	fmt.Println("OPTIONS:")
 	fmt.Println("  --config PATH       Path to configuration file (default: ./config.yaml)")
 	fmt.Println("  --db-password PASS  Database password (or set PRTG_DB_PASSWORD)")
-	fmt.Println("  --verbose, -v       Enable verbose logging")
 	fmt.Println("  --version           Show version information")
 	fmt.Println("  --help, -h          Show this help message")
+	fmt.Println()
+	fmt.Println("NOTE:")
+	fmt.Println("  Log level is controlled via config.yaml (log_level: debug|info|warn|error)")
 	fmt.Println()
 	fmt.Println("EXAMPLES:")
 	fmt.Printf("  %s run --config /etc/mcp-server-prtg/config.yaml\n", os.Args[0])

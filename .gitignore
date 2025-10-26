@@ -30,8 +30,13 @@ dist/
 *~
 
 # Config files with sensitive data
-configs/config.yaml
+config.yaml
+configs/
 *.env
+
+# Generated files and directories
+logs/
+certs/
 
 # OS
 .DS_Store
