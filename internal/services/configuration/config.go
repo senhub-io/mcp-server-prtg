@@ -215,7 +215,19 @@ func (c *Configuration) createDefaultConfiguration() error {
 
 // saveConfiguration saves configuration to YAML file.
 func (c *Configuration) saveConfiguration() error {
-	yamlData, err := yaml.Marshal(&c.data)
+	// For Windows paths, we need to generate YAML manually to ensure proper quoting
+	// The yaml.Marshal doesn't add quotes around strings with backslashes
+	var yamlData []byte
+	var err error
+
+	if filepath.Separator == '\\' {
+		// On Windows, generate YAML manually with quoted paths
+		yamlData, err = c.generateWindowsYAML()
+	} else {
+		// On Unix, use standard marshaller
+		yamlData, err = yaml.Marshal(&c.data)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
@@ -236,6 +248,37 @@ func (c *Configuration) saveConfiguration() error {
 		Msg("Configuration saved successfully")
 
 	return nil
+}
+
+// generateWindowsYAML generates YAML with properly quoted Windows paths.
+func (c *Configuration) generateWindowsYAML() ([]byte, error) {
+	// Use yaml.Marshal for most fields, but manually format cert paths with quotes
+	yamlData, err := yaml.Marshal(&c.data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Replace unquoted Windows paths with quoted ones
+	// This ensures YAML parsers correctly interpret backslashes
+	yamlStr := string(yamlData)
+
+	// Quote cert_file if it contains backslashes and isn't already quoted
+	certFile := c.data.Server.CertFile
+	if strings.Contains(certFile, "\\") && !strings.HasPrefix(certFile, "\"") {
+		yamlStr = strings.ReplaceAll(yamlStr,
+			fmt.Sprintf("cert_file: %s", certFile),
+			fmt.Sprintf("cert_file: \"%s\"", certFile))
+	}
+
+	// Quote key_file if it contains backslashes and isn't already quoted
+	keyFile := c.data.Server.KeyFile
+	if strings.Contains(keyFile, "\\") && !strings.HasPrefix(keyFile, "\"") {
+		yamlStr = strings.ReplaceAll(yamlStr,
+			fmt.Sprintf("key_file: %s", keyFile),
+			fmt.Sprintf("key_file: \"%s\"", keyFile))
+	}
+
+	return []byte(yamlStr), nil
 }
 
 // generateTLSCertificates generates self-signed TLS certificate and key.
