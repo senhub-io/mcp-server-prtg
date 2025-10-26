@@ -98,7 +98,7 @@ logging:
        "prtg": {
          "command": "mcp-proxy",
          "args": [
-           "https://your-server:8443/sse",
+           "http://your-server:8443/sse",
            "--headers",
            "Authorization",
            "Bearer your-api-key"
@@ -109,6 +109,8 @@ logging:
    ```
 
 3. Restart MCP Client
+
+**Note on HTTPS/TLS:** mcp-proxy does not support the `--insecure` flag for self-signed certificates. For development, use HTTP as shown above. For production, either use trusted CA certificates or add the self-signed certificate to your system trust store. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#certificate-verification-failed-with-mcp-proxy) for details.
 
 **See:** [docs/USAGE.md](docs/USAGE.md) for usage examples
 
