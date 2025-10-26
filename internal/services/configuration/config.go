@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -158,8 +159,13 @@ func (c *Configuration) createDefaultConfiguration() error {
 	defaultCertFile := filepath.Join(exeDir, "certs", "server.crt")
 	defaultKeyFile := filepath.Join(exeDir, "certs", "server.key")
 
-	// Keep native path separators (backslashes on Windows)
-	// The YAML marshaller will automatically escape them when needed
+	// On Windows, double backslashes for YAML compatibility
+	// Windows accepts both C:\\path and C:/path but YAML needs escaped backslashes
+	if filepath.Separator == '\\' {
+		defaultCertFile = strings.ReplaceAll(defaultCertFile, "\\", "\\\\")
+		defaultKeyFile = strings.ReplaceAll(defaultKeyFile, "\\", "\\\\")
+	}
+
 	c.logger.Debug().
 		Str("exe_dir", exeDir).
 		Str("cert_file", defaultCertFile).
@@ -176,8 +182,8 @@ func (c *Configuration) createDefaultConfiguration() error {
 			EnableTLS:    c.args.EnableHTTPS,
 			CertFile:     getOrDefault(c.args.CertFile, defaultCertFile),
 			KeyFile:      getOrDefault(c.args.KeyFile, defaultKeyFile),
-			ReadTimeout:  10,
-			WriteTimeout: 10,
+			ReadTimeout:  0, // No timeout for SSE connections
+			WriteTimeout: 0, // No timeout for SSE connections
 		},
 		Database: DatabaseConfig{
 			Host:     getOrDefault(c.args.DBHost, "localhost"),
