@@ -147,6 +147,23 @@ func (c *Configuration) createDefaultConfiguration() error {
 		c.logger.Info().Msg("Generated new API key (Bearer token)")
 	}
 
+	// Get absolute paths for certificates (relative to executable directory)
+	// This ensures paths work correctly when running as a Windows service
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	exeDir := filepath.Dir(exePath)
+
+	defaultCertFile := filepath.Join(exeDir, "certs", "server.crt")
+	defaultKeyFile := filepath.Join(exeDir, "certs", "server.key")
+
+	c.logger.Debug().
+		Str("exe_dir", exeDir).
+		Str("cert_file", defaultCertFile).
+		Str("key_file", defaultKeyFile).
+		Msg("Using executable directory for certificate paths")
+
 	// Create default config
 	c.data = ConfigData{
 		ConfigVersion: CurrentConfigVersion,
@@ -155,8 +172,8 @@ func (c *Configuration) createDefaultConfiguration() error {
 			BindAddress:  getOrDefault(c.args.BindAddress, "0.0.0.0"),
 			Port:         getOrDefaultInt(c.args.Port, 8443),
 			EnableTLS:    c.args.EnableHTTPS,
-			CertFile:     getOrDefault(c.args.CertFile, "./certs/server.crt"),
-			KeyFile:      getOrDefault(c.args.KeyFile, "./certs/server.key"),
+			CertFile:     getOrDefault(c.args.CertFile, defaultCertFile),
+			KeyFile:      getOrDefault(c.args.KeyFile, defaultKeyFile),
 			ReadTimeout:  10,
 			WriteTimeout: 10,
 		},
