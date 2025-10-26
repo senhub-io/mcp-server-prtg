@@ -63,7 +63,8 @@
       "Bash(mcp-proxy http://dash999.hibouvision.com:8443/sse --headers Authorization \"Bearer 3a4e8cb4-1066-4b18-85f5-4f46ecefc4d1\")",
       "Bash(find . -type f ( -name \"*.md\" -o -name \"*.go\" ) ! -path \"./.git/*\" -exec sed -i '' )",
       "Bash({} +)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(ssh:*)"
     ],
     "deny": [],
     "ask": []
