@@ -158,6 +158,10 @@ func (c *Configuration) createDefaultConfiguration() error {
 	defaultCertFile := filepath.Join(exeDir, "certs", "server.crt")
 	defaultKeyFile := filepath.Join(exeDir, "certs", "server.key")
 
+	// Convert to forward slashes for YAML compatibility (works on Windows too)
+	defaultCertFile = filepath.ToSlash(defaultCertFile)
+	defaultKeyFile = filepath.ToSlash(defaultKeyFile)
+
 	c.logger.Debug().
 		Str("exe_dir", exeDir).
 		Str("cert_file", defaultCertFile).
