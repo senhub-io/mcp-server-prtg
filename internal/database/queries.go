@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/matthieu/mcp-server-prtg/internal/types"
 )
 
 // GetSensors retrieves sensors with optional filters
 func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, status *int, tags string, limit int) ([]types.Sensor, error) {
+	// Simplified query without tags subquery for performance
 	query := `
 		SELECT
 			s.id,
@@ -29,14 +31,7 @@ func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, sta
 			s.uptime_since_seconds,
 			s.downtime_since_seconds,
 			sp.path AS full_path,
-			COALESCE(
-				(SELECT string_agg(t.name, ',')
-				 FROM prtg_sensor_tag st
-				 JOIN prtg_tag t ON st.prtg_tag_id = t.id
-				 WHERE st.prtg_sensor_id = s.id
-				 AND st.prtg_server_address_id = s.prtg_server_address_id),
-				''
-			) AS tags
+			'' AS tags
 		FROM prtg_sensor s
 		INNER JOIN prtg_device d ON s.prtg_device_id = d.id
 			AND s.prtg_server_address_id = d.prtg_server_address_id
@@ -69,19 +64,9 @@ func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, sta
 		argPos++
 	}
 
-	if tags != "" {
-		// Filter by tags using EXISTS clause
-		query += fmt.Sprintf(` AND EXISTS (
-			SELECT 1 FROM prtg_sensor_tag st
-			JOIN prtg_tag t ON st.prtg_tag_id = t.id
-			WHERE st.prtg_sensor_id = s.id
-			AND st.prtg_server_address_id = s.prtg_server_address_id
-			AND t.name ILIKE $%d
-		)`, argPos)
-
-		args = append(args, "%"+tags+"%")
-		argPos++
-	}
+	// Tags filter temporarily disabled for performance
+	// TODO: Re-enable with proper indexing
+	_ = tags
 
 	query += " ORDER BY s.name"
 
@@ -96,21 +81,37 @@ func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, sta
 		Interface("args", args).
 		Msg("executing GetSensors query")
 
+	startTime := time.Now()
 	rows, err := db.Query(ctx, query, args...)
+	queryDuration := time.Since(startTime)
+
 	if err != nil {
-		db.logger.Error().Err(err).Str("query", query).Msg("query failed")
+		db.logger.Error().
+			Err(err).
+			Dur("duration_ms", queryDuration).
+			Str("query", query).
+			Msg("query failed")
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
 	defer rows.Close()
 
-	db.logger.Debug().Msg("query executed successfully, scanning rows")
+	db.logger.Info().Dur("query_duration_ms", queryDuration).Msg("query executed, scanning rows")
+
+	scanStart := time.Now()
 	sensors, err := scanSensors(rows)
+	scanDuration := time.Since(scanStart)
+
 	if err != nil {
-		db.logger.Error().Err(err).Msg("scanSensors failed")
+		db.logger.Error().Err(err).Dur("scan_duration_ms", scanDuration).Msg("scanSensors failed")
 		return nil, err
 	}
 
-	db.logger.Debug().Int("sensors_count", len(sensors)).Msg("GetSensors completed")
+	db.logger.Info().
+		Int("sensors_count", len(sensors)).
+		Dur("query_ms", queryDuration).
+		Dur("scan_ms", scanDuration).
+		Dur("total_ms", time.Since(startTime)).
+		Msg("GetSensors completed")
 	return sensors, nil
 }
 

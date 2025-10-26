@@ -42,25 +42,9 @@ func NewSilentLogger() *Logger {
 
 // NewLogger creates a new logger instance based on CLI arguments.
 func NewLogger(args *cliArgs.ParsedArgs) *Logger {
-	// Determine log level
-	var level zerolog.Level
-	if args.Verbose {
-		level = zerolog.DebugLevel
-		if len(args.DebugModules) > 0 {
-			// Selective debug mode
-			selectiveDebugMode = true
-			for _, module := range args.DebugModules {
-				SetModuleLogLevel(module, zerolog.DebugLevel)
-				activeDebugModules[module] = true
-			}
-		} else {
-			// Full verbose mode
-			zerolog.SetGlobalLevel(zerolog.DebugLevel)
-		}
-	} else {
-		level = parseLogLevel(args.LogLevel)
-		zerolog.SetGlobalLevel(level)
-	}
+	// Determine log level from configuration
+	level := parseLogLevel(args.LogLevel)
+	zerolog.SetGlobalLevel(level)
 
 	// Build logger based on environment
 	if service.Interactive() {
