@@ -64,7 +64,10 @@
       "Bash(find . -type f ( -name \"*.md\" -o -name \"*.go\" ) ! -path \"./.git/*\" -exec sed -i '' )",
       "Bash({} +)",
       "Bash(git restore:*)",
-      "Bash(ssh:*)"
+      "Bash(ssh:*)",
+      "Bash(openssl x509:*)",
+      "Bash(timeout:*)",
+      "Bash(mcp-proxy:*)"
     ],
     "deny": [],
     "ask": []
