@@ -307,7 +307,7 @@ Response:
 ```json
 {
   "status": "running",
-  "version": "v2.0.0-alpha",
+  "version": "1.0.2-beta",
   "transport": "sse",
   "tls_enabled": true,
   "base_url": "https://localhost:8443",

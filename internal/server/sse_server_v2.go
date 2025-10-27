@@ -13,6 +13,7 @@ import (
 	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
+	"github.com/matthieu/mcp-server-prtg/internal/version"
 )
 
 // SSEServerV2 wraps the MCP SSE server with authentication and TLS.
@@ -249,7 +250,7 @@ func (s *SSEServerV2) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	status := fmt.Sprintf(`{
 		"status":"running",
-		"version":"v2.0.0-alpha",
+		"version":"%s",
 		"transport":"sse",
 		"tls_enabled":%t,
 		"base_url":"%s",
@@ -259,7 +260,7 @@ func (s *SSEServerV2) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"error":"%s"
 		},
 		"timestamp":"%s"
-	}`, s.config.IsTLSEnabled(), s.baseURL, dbStatus, dbError, time.Now().Format(time.RFC3339))
+	}`, version.Get(), s.config.IsTLSEnabled(), s.baseURL, dbStatus, dbError, time.Now().Format(time.RFC3339))
 
 	fmt.Fprint(w, status)
 }
