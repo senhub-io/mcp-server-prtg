@@ -74,7 +74,7 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
 	)
 
 	// Register MCP tools
-	toolHandler := handlers.NewToolHandler(db, baseLogger)
+	toolHandler := handlers.NewToolHandler(db, config, baseLogger)
 	toolHandler.RegisterTools(mcpServer)
 
 	moduleLogger.Info().

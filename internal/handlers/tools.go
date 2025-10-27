@@ -12,16 +12,23 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Config is an interface for accessing configuration settings
+type Config interface {
+	AllowCustomQueries() bool
+}
+
 // ToolHandler handles MCP tool requests
 type ToolHandler struct {
 	db     *database.DB
+	config Config
 	logger *zerolog.Logger
 }
 
 // NewToolHandler creates a new tool handler
-func NewToolHandler(db *database.DB, logger *zerolog.Logger) *ToolHandler {
+func NewToolHandler(db *database.DB, config Config, logger *zerolog.Logger) *ToolHandler {
 	return &ToolHandler{
 		db:     db,
+		config: config,
 		logger: logger,
 	}
 }
@@ -369,6 +376,12 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 // handleCustomQuery handles the prtg_query_sql tool
 func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_query_sql")
+
+	// SECURITY: Check if custom queries are allowed (disabled by default for security)
+	if !h.config.AllowCustomQueries() {
+		h.logger.Warn().Msg("Custom SQL queries are disabled in configuration (allow_custom_queries: false)")
+		return nil, fmt.Errorf("custom SQL queries are disabled for security reasons - set 'allow_custom_queries: true' in config.yaml to enable (not recommended in production)")
+	}
 
 	var args struct {
 		Query string `json:"query"`
