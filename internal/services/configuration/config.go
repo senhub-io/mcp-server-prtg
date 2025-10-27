@@ -50,15 +50,16 @@ type ConfigData struct {
 
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
-	APIKey       string `yaml:"api_key"`        // API Key (Bearer token)
-	BindAddress  string `yaml:"bind_address"`   // Address to bind to (e.g., 0.0.0.0)
-	Port         int    `yaml:"port"`           // Port to listen on
-	PublicURL    string `yaml:"public_url"`     // Public URL for SSE endpoint (optional, e.g., https://dash999.hibouvision.com:8443)
-	EnableTLS    bool   `yaml:"enable_tls"`     // Enable HTTPS
-	CertFile     string `yaml:"cert_file"`      // TLS certificate file
-	KeyFile      string `yaml:"key_file"`       // TLS private key file
-	ReadTimeout  int    `yaml:"read_timeout"`   // Read timeout in seconds
-	WriteTimeout int    `yaml:"write_timeout"`  // Write timeout in seconds
+	APIKey             string `yaml:"api_key"`              // API Key (Bearer token)
+	BindAddress        string `yaml:"bind_address"`         // Address to bind to (e.g., 0.0.0.0)
+	Port               int    `yaml:"port"`                 // Port to listen on
+	PublicURL          string `yaml:"public_url"`           // Public URL for SSE endpoint (optional, e.g., https://dash999.hibouvision.com:8443)
+	EnableTLS          bool   `yaml:"enable_tls"`           // Enable HTTPS
+	CertFile           string `yaml:"cert_file"`            // TLS certificate file
+	KeyFile            string `yaml:"key_file"`             // TLS private key file
+	ReadTimeout        int    `yaml:"read_timeout"`         // Read timeout in seconds
+	WriteTimeout       int    `yaml:"write_timeout"`        // Write timeout in seconds
+	AllowCustomQueries bool   `yaml:"allow_custom_queries"` // Allow custom SQL queries (prtg_query_sql tool) - DISABLE in production for security
 }
 
 // DatabaseConfig holds database connection settings.
@@ -176,14 +177,15 @@ func (c *Configuration) createDefaultConfiguration() error {
 	c.data = ConfigData{
 		ConfigVersion: CurrentConfigVersion,
 		Server: ServerConfig{
-			APIKey:       apiKey,
-			BindAddress:  getOrDefault(c.args.BindAddress, "0.0.0.0"),
-			Port:         getOrDefaultInt(c.args.Port, 8443),
-			EnableTLS:    c.args.EnableHTTPS,
-			CertFile:     getOrDefault(c.args.CertFile, defaultCertFile),
-			KeyFile:      getOrDefault(c.args.KeyFile, defaultKeyFile),
-			ReadTimeout:  0, // No timeout for SSE connections
-			WriteTimeout: 0, // No timeout for SSE connections
+			APIKey:             apiKey,
+			BindAddress:        getOrDefault(c.args.BindAddress, "0.0.0.0"),
+			Port:               getOrDefaultInt(c.args.Port, 8443),
+			EnableTLS:          c.args.EnableHTTPS,
+			CertFile:           getOrDefault(c.args.CertFile, defaultCertFile),
+			KeyFile:            getOrDefault(c.args.KeyFile, defaultKeyFile),
+			ReadTimeout:        0,     // No timeout for SSE connections
+			WriteTimeout:       0,     // No timeout for SSE connections
+			AllowCustomQueries: false, // SECURITY: Disable custom SQL queries by default - enable only in dev/test
 		},
 		Database: DatabaseConfig{
 			Host:     getOrDefault(c.args.DBHost, "localhost"),
@@ -473,6 +475,12 @@ func (c *Configuration) GetReadTimeout() time.Duration {
 // GetWriteTimeout returns the server write timeout.
 func (c *Configuration) GetWriteTimeout() time.Duration {
 	return time.Duration(c.data.Server.WriteTimeout) * time.Second
+}
+
+// AllowCustomQueries returns whether custom SQL queries are allowed.
+// SECURITY: This should be false in production environments to prevent SQL injection risks.
+func (c *Configuration) AllowCustomQueries() bool {
+	return c.data.Server.AllowCustomQueries
 }
 
 // Helper functions.
