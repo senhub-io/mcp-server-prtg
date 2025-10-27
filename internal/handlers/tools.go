@@ -202,7 +202,7 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 	}
 
 	if args.Limit <= 0 {
-		args.Limit = 1000  // Default to reasonable limit, user can override
+		args.Limit = 1000 // Default to reasonable limit, user can override
 	}
 
 	h.logger.Debug().
@@ -264,8 +264,8 @@ func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.Cal
 		return nil, fmt.Errorf("sensor_id must be greater than 0")
 	}
 
-	// Create a new context with longer timeout
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Add timeout to parent context (preserves cancellation chain)
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	sensor, err := h.db.GetSensorByID(dbCtx, args.SensorID)
@@ -294,8 +294,8 @@ func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolR
 		args.Hours = 24
 	}
 
-	// Create a new context with longer timeout
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Add timeout to parent context (preserves cancellation chain)
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	sensors, err := h.db.GetAlerts(dbCtx, args.Hours, args.Status, args.DeviceName)
@@ -322,8 +322,8 @@ func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.Call
 		return nil, fmt.Errorf("device_name is required")
 	}
 
-	// Create a new context with longer timeout
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Add timeout to parent context (preserves cancellation chain)
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	overview, err := h.db.GetDeviceOverview(dbCtx, args.DeviceName)
@@ -361,8 +361,8 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 		args.Hours = 24
 	}
 
-	// Create a new context with longer timeout
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Add timeout to parent context (preserves cancellation chain)
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	sensors, err := h.db.GetTopSensors(dbCtx, args.Metric, args.SensorType, args.Limit, args.Hours)
@@ -405,8 +405,8 @@ func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToo
 		Int("limit", args.Limit).
 		Msg("calling db.ExecuteCustomQuery")
 
-	// Create a new context with longer timeout to avoid cancellation
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Add timeout to parent context (preserves cancellation chain)
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	results, err := h.db.ExecuteCustomQuery(dbCtx, args.Query, args.Limit)
