@@ -25,10 +25,12 @@ func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Configure connection pool
-	conn.SetMaxOpenConns(25)
-	conn.SetMaxIdleConns(5)
-	conn.SetConnMaxLifetime(5 * time.Minute)
+	// Configure connection pool with optimized settings
+	// Higher limits for better concurrency while maintaining resource efficiency
+	conn.SetMaxOpenConns(50)                  // Increased from 25 for better concurrency
+	conn.SetMaxIdleConns(10)                  // 20% of MaxOpen (recommended ratio)
+	conn.SetConnMaxLifetime(15 * time.Minute) // Longer lifetime to avoid frequent reconnections
+	conn.SetConnMaxIdleTime(5 * time.Minute)  // Close idle connections after 5 minutes to free resources
 
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -38,6 +38,9 @@ type Configuration struct {
 
 	// Callbacks
 	onChangeCallbacks []func()
+
+	// Shutdown signal for graceful goroutine termination
+	shutdownCh chan struct{}
 }
 
 // ConfigData represents the YAML configuration structure.
@@ -514,6 +517,7 @@ func (c *Configuration) initWatcher() error {
 	}
 
 	c.watcher = watcher
+	c.shutdownCh = make(chan struct{})
 
 	// Start watching in background
 	go c.watchConfigFile()
@@ -527,6 +531,11 @@ func (c *Configuration) initWatcher() error {
 func (c *Configuration) watchConfigFile() {
 	for {
 		select {
+		case <-c.shutdownCh:
+			// Graceful shutdown - exit goroutine immediately
+			c.logger.Debug().Msg("Config file watcher shutting down")
+			return
+
 		case event, ok := <-c.watcher.Events:
 			if !ok {
 				return
@@ -560,8 +569,19 @@ func (c *Configuration) OnConfigChanged(callback func()) {
 	c.onChangeCallbacks = append(c.onChangeCallbacks, callback)
 }
 
-// Shutdown stops the configuration manager.
+// Shutdown stops the configuration manager gracefully.
 func (c *Configuration) Shutdown(_ context.Context) error {
+	// Signal the watcher goroutine to exit (close only once)
+	if c.shutdownCh != nil {
+		select {
+		case <-c.shutdownCh:
+			// Already closed
+		default:
+			close(c.shutdownCh)
+		}
+	}
+
+	// Close the file watcher
 	if c.watcher != nil {
 		return c.watcher.Close()
 	}
