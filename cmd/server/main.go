@@ -9,6 +9,7 @@ import (
 	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
+	"github.com/matthieu/mcp-server-prtg/internal/version"
 )
 
 // Build-time variables injected via ldflags.
@@ -30,6 +31,9 @@ const (
 )
 
 func main() {
+	// Initialize application version
+	version.Set(Version)
+
 	// Parse CLI arguments with version info
 	args := cliArgs.ParseWithVersion(getVersionString())
 
