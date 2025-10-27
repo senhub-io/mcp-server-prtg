@@ -46,6 +46,7 @@ server:
   key_file: "./certs/server.key"
   read_timeout: 10
   write_timeout: 10
+  allow_custom_queries: false  # SECURITY: Disable custom SQL queries (default)
 
 database:
   host: "localhost"
@@ -157,6 +158,35 @@ Automatically generated on first run if `enable_tls` is true and no key exists.
 **Description:** HTTP timeouts for regular endpoints.
 
 **Note:** SSE endpoints use infinite timeouts (0) to maintain long-lived connections.
+
+### allow_custom_queries
+
+**Type:** `boolean`
+**Default:** `false`
+**Description:** Enable or disable the `prtg_query_sql` tool for custom SQL queries.
+
+**⚠️ SECURITY WARNING:**
+- **Default is `false` (DISABLED)** for security reasons
+- Enabling this feature allows execution of arbitrary SELECT queries on your database
+- **NEVER enable in production environments** unless absolutely necessary
+- Even with protections (SELECT-only, blacklist), SQL injection risks exist
+- Only enable for development/testing in controlled environments
+
+**Protections in place:**
+- Only SELECT queries allowed (INSERT, UPDATE, DELETE, DROP blocked)
+- Query result limit enforced (max 1000 rows)
+- Dangerous keywords blacklisted (`DROP`, `DELETE`, `UPDATE`, etc.)
+- Query timeout (30 seconds)
+
+**Example:**
+```yaml
+server:
+  allow_custom_queries: false  # DISABLE in production (default)
+  # allow_custom_queries: true  # ONLY for dev/test
+```
+
+**Migration Note:**
+If you're upgrading from an older version, this field defaults to `false` automatically. No manual configuration changes are required - existing configurations will work with the tool disabled.
 
 ## Database Configuration
 
@@ -437,6 +467,7 @@ server:
   bind_address: "127.0.0.1"
   port: 8443
   enable_tls: false
+  allow_custom_queries: false  # SECURITY: Keep disabled even in dev
 database:
   host: "localhost"
   port: 5432
@@ -463,6 +494,7 @@ server:
   key_file: "/etc/ssl/private/server.key"
   read_timeout: 10
   write_timeout: 10
+  allow_custom_queries: false  # SECURITY: NEVER enable in production
 database:
   host: "pgsql.internal.example.com"
   port: 5432
@@ -490,6 +522,7 @@ server:
   enable_tls: true
   cert_file: "/certs/server.crt"
   key_file: "/certs/server.key"
+  allow_custom_queries: false  # SECURITY: Keep disabled
 database:
   host: "postgres"  # Docker service name
   port: 5432
