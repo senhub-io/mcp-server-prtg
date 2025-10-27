@@ -122,6 +122,7 @@ type SSEServerV2 struct {
 	baseURL      string
 	internalAddr string
 	externalAddr string
+	shutdownCh   chan struct{} // Channel for graceful shutdown of background tasks
 }
 
 // NewSSEServerV2 creates a new SSE-based MCP server with authentication proxy.
@@ -146,6 +147,7 @@ func NewSSEServerV2(mcpServer *server.MCPServer, db *database.DB, config *config
 		baseURL:      baseURL,
 		internalAddr: internalAddr,
 		externalAddr: externalAddr,
+		shutdownCh:   make(chan struct{}),
 	}
 }
 
@@ -171,6 +173,9 @@ func (s *SSEServerV2) Start(_ context.Context) error {
 
 	// Wait a bit for internal server to start
 	time.Sleep(500 * time.Millisecond)
+
+	// Start rate limiter cleanup goroutine
+	go s.cleanupRateLimiterPeriodically()
 
 	// Create authentication proxy
 	if err := s.startAuthProxy(); err != nil {
@@ -409,9 +414,36 @@ func (s *SSEServerV2) handleStatus(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, status)
 }
 
+// cleanupRateLimiterPeriodically runs periodic cleanup of the rate limiter map to prevent memory leaks.
+func (s *SSEServerV2) cleanupRateLimiterPeriodically() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	s.logger.Debug().Msg("Rate limiter cleanup goroutine started")
+
+	for {
+		select {
+		case <-ticker.C:
+			s.rateLimiter.cleanup()
+			s.logger.Debug().Msg("Rate limiter cleanup completed")
+		case <-s.shutdownCh:
+			s.logger.Debug().Msg("Rate limiter cleanup goroutine shutting down")
+			return
+		}
+	}
+}
+
 // Shutdown gracefully shuts down the server.
 func (s *SSEServerV2) Shutdown(ctx context.Context) error {
 	s.logger.Info().Msg("Shutting down SSE server")
+
+	// Signal background goroutines to stop
+	select {
+	case <-s.shutdownCh:
+		// Already closed
+	default:
+		close(s.shutdownCh)
+	}
 
 	var firstErr error
 
