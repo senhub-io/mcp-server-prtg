@@ -21,9 +21,9 @@ import (
 
 // authAttempt tracks authentication attempts for rate limiting
 type authAttempt struct {
-	count      int
-	firstTry   time.Time
-	lastTry    time.Time
+	count       int
+	firstTry    time.Time
+	lastTry     time.Time
 	lockedUntil time.Time
 }
 
@@ -42,7 +42,7 @@ type authRateLimiter struct {
 func newAuthRateLimiter() *authRateLimiter {
 	return &authRateLimiter{
 		attempts:    make(map[string]*authAttempt),
-		maxAttempts: 5,              // 5 attempts max
+		maxAttempts: 5,               // 5 attempts max
 		window:      1 * time.Minute, // per minute
 		lockoutTime: 5 * time.Minute, // locked for 5 minutes after max attempts
 	}
@@ -222,11 +222,11 @@ func (s *SSEServerV2) startAuthProxy() error {
 	s.proxyServer = &http.Server{
 		Addr:              s.externalAddr,
 		Handler:           mux,
-		ReadTimeout:       0,                    // No read timeout for SSE (connections stay open)
-		WriteTimeout:      0,                    // No write timeout for SSE (long-lived streaming)
-		IdleTimeout:       5 * time.Minute,      // Close inactive connections after 5 minutes
-		ReadHeaderTimeout: 10 * time.Second,     // Protection against slow-loris attacks
-		MaxHeaderBytes:    1 << 20,              // 1MB max header size (prevent memory exhaustion)
+		ReadTimeout:       0,                // No read timeout for SSE (connections stay open)
+		WriteTimeout:      0,                // No write timeout for SSE (long-lived streaming)
+		IdleTimeout:       5 * time.Minute,  // Close inactive connections after 5 minutes
+		ReadHeaderTimeout: 10 * time.Second, // Protection against slow-loris attacks
+		MaxHeaderBytes:    1 << 20,          // 1MB max header size (prevent memory exhaustion)
 	}
 
 	// Start server (with or without TLS)
