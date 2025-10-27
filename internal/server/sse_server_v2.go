@@ -121,14 +121,16 @@ func (s *SSEServerV2) startAuthProxy() error {
 	// Status endpoint (auth required)
 	mux.HandleFunc("/status", s.createAuthMiddleware()(s.handleStatus))
 
-	// Create HTTP server
-	// For SSE, we need long/no timeouts as connections stay open
+	// Create HTTP server with optimized timeouts for SSE
+	// SSE connections are long-lived, but we still need protection against resource exhaustion
 	s.proxyServer = &http.Server{
-		Addr:         s.externalAddr,
-		Handler:      mux,
-		ReadTimeout:  0, // No read timeout for SSE
-		WriteTimeout: 0, // No write timeout for SSE (long-lived connections)
-		IdleTimeout:  0, // No idle timeout for SSE (connections stay open)
+		Addr:              s.externalAddr,
+		Handler:           mux,
+		ReadTimeout:       0,                    // No read timeout for SSE (connections stay open)
+		WriteTimeout:      0,                    // No write timeout for SSE (long-lived streaming)
+		IdleTimeout:       5 * time.Minute,      // Close inactive connections after 5 minutes
+		ReadHeaderTimeout: 10 * time.Second,     // Protection against slow-loris attacks
+		MaxHeaderBytes:    1 << 20,              // 1MB max header size (prevent memory exhaustion)
 	}
 
 	// Start server (with or without TLS)
