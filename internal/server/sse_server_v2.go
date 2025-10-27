@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	server "github.com/mark3labs/mcp-go/server"
@@ -16,6 +19,97 @@ import (
 	"github.com/matthieu/mcp-server-prtg/internal/version"
 )
 
+// authAttempt tracks authentication attempts for rate limiting
+type authAttempt struct {
+	count      int
+	firstTry   time.Time
+	lastTry    time.Time
+	lockedUntil time.Time
+}
+
+// authRateLimiter manages rate limiting for authentication attempts per IP
+type authRateLimiter struct {
+	attempts map[string]*authAttempt
+	mu       sync.RWMutex
+
+	// Configuration
+	maxAttempts int           // Max attempts before lockout
+	window      time.Duration // Time window for counting attempts
+	lockoutTime time.Duration // How long to lock out after max attempts
+}
+
+// newAuthRateLimiter creates a new rate limiter with default settings
+func newAuthRateLimiter() *authRateLimiter {
+	return &authRateLimiter{
+		attempts:    make(map[string]*authAttempt),
+		maxAttempts: 5,              // 5 attempts max
+		window:      1 * time.Minute, // per minute
+		lockoutTime: 5 * time.Minute, // locked for 5 minutes after max attempts
+	}
+}
+
+// checkAndRecord checks if an IP is rate limited and records the attempt
+// Returns true if the request should be allowed, false if rate limited
+func (rl *authRateLimiter) checkAndRecord(ip string, success bool) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+
+	// Get or create attempt record
+	attempt, exists := rl.attempts[ip]
+	if !exists {
+		attempt = &authAttempt{
+			count:    0,
+			firstTry: now,
+		}
+		rl.attempts[ip] = attempt
+	}
+
+	// Check if IP is currently locked out
+	if now.Before(attempt.lockedUntil) {
+		return false // Still locked out
+	}
+
+	// If successful auth, reset the counter
+	if success {
+		delete(rl.attempts, ip)
+		return true
+	}
+
+	// Reset counter if window has expired
+	if now.Sub(attempt.firstTry) > rl.window {
+		attempt.count = 0
+		attempt.firstTry = now
+	}
+
+	// Increment counter
+	attempt.count++
+	attempt.lastTry = now
+
+	// Check if max attempts exceeded
+	if attempt.count > rl.maxAttempts {
+		attempt.lockedUntil = now.Add(rl.lockoutTime)
+		return false // Lock out this IP
+	}
+
+	return true // Allow attempt
+}
+
+// cleanup removes old entries (optional, called periodically)
+func (rl *authRateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	for ip, attempt := range rl.attempts {
+		// Remove entries older than lockout time
+		if now.Sub(attempt.lastTry) > rl.lockoutTime {
+			delete(rl.attempts, ip)
+		}
+	}
+}
+
 // SSEServerV2 wraps the MCP SSE server with authentication and TLS.
 type SSEServerV2 struct {
 	mcpServer    *server.MCPServer
@@ -24,6 +118,7 @@ type SSEServerV2 struct {
 	config       *configuration.Configuration
 	logger       *logger.ModuleLogger
 	db           *database.DB
+	rateLimiter  *authRateLimiter
 	baseURL      string
 	internalAddr string
 	externalAddr string
@@ -47,6 +142,7 @@ func NewSSEServerV2(mcpServer *server.MCPServer, db *database.DB, config *config
 		config:       config,
 		logger:       logger,
 		db:           db,
+		rateLimiter:  newAuthRateLimiter(),
 		baseURL:      baseURL,
 		internalAddr: internalAddr,
 		externalAddr: externalAddr,
@@ -172,12 +268,53 @@ func (s *SSEServerV2) startProxyServer() {
 	}
 }
 
-// createAuthMiddleware creates authentication middleware using Bearer token.
+// getClientIP extracts the real client IP from the request
+// Handles X-Forwarded-For and X-Real-IP headers for proxy situations
+func getClientIP(r *http.Request) string {
+	// Try X-Real-IP first (single IP from trusted proxy)
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+
+	// Try X-Forwarded-For (can be a list)
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		// Take the first IP (client IP)
+		if idx := strings.Index(forwarded, ","); idx != -1 {
+			return strings.TrimSpace(forwarded[:idx])
+		}
+		return strings.TrimSpace(forwarded)
+	}
+
+	// Fall back to RemoteAddr
+	// RemoteAddr is in format "IP:port", extract just the IP
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+
+	return r.RemoteAddr
+}
+
+// createAuthMiddleware creates authentication middleware using Bearer token with rate limiting.
 func (s *SSEServerV2) createAuthMiddleware() func(http.HandlerFunc) http.HandlerFunc {
 	expectedToken := s.config.GetAPIKey()
 
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			// Extract client IP for rate limiting
+			clientIP := getClientIP(r)
+
+			// Check rate limit BEFORE validating token (prevent brute-force)
+			if !s.rateLimiter.checkAndRecord(clientIP, false) {
+				s.logger.Warn().
+					Str("client_ip", clientIP).
+					Str("path", r.URL.Path).
+					Msg("Rate limit exceeded - IP temporarily blocked")
+
+				w.Header().Set("Retry-After", "300") // 5 minutes
+				http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
+				return
+			}
+
 			// Extract Bearer token from Authorization header
 			authHeader := r.Header.Get("Authorization")
 			var providedToken string
@@ -197,7 +334,9 @@ func (s *SSEServerV2) createAuthMiddleware() func(http.HandlerFunc) http.Handler
 
 			// Validate token
 			if providedToken != expectedToken {
+				// Record failed attempt (already counted in checkAndRecord above)
 				s.logger.Warn().
+					Str("client_ip", clientIP).
 					Str("remote_addr", r.RemoteAddr).
 					Str("path", r.URL.Path).
 					Str("method", r.Method).
@@ -209,8 +348,11 @@ func (s *SSEServerV2) createAuthMiddleware() func(http.HandlerFunc) http.Handler
 				return
 			}
 
-			// Token valid, continue
+			// Token valid - record successful authentication and reset counter
+			s.rateLimiter.checkAndRecord(clientIP, true)
+
 			s.logger.Debug().
+				Str("client_ip", clientIP).
 				Str("remote_addr", r.RemoteAddr).
 				Str("path", r.URL.Path).
 				Str("method", r.Method).
