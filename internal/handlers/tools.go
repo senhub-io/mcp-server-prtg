@@ -213,9 +213,9 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 		Int("limit", args.Limit).
 		Msg("calling db.GetSensors")
 
-	// Create a new context with longer timeout to avoid cancellation
-	// The parent context from MCP might be cancelled too early
-	dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Add timeout to parent context (preserves cancellation chain)
+	// This allows client cancellation while providing reasonable timeout for DB operations
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	sensors, err := h.db.GetSensors(dbCtx, args.DeviceName, args.SensorName, args.Status, args.Tags, args.Limit)
