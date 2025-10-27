@@ -1,0 +1,115 @@
+name: Main Release
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  create_release:
+    # Only run when PR is merged, not when closed without merging
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag and create production version
+        id: get_tag
+        run: |
+          # Get the latest tag (will be a beta tag from dev)
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-beta")
+          echo "Latest tag found: $LATEST_TAG"
+
+          # Remove -beta suffix to create production version
+          # Example: 2.0.1-beta -> 2.0.1
+          PROD_TAG=${LATEST_TAG%-beta}
+
+          echo "Production version: $PROD_TAG"
+          echo "TAG=$PROD_TAG" >> $GITHUB_ENV
+
+          # Create the production tag if it doesn't exist
+          if ! git tag -l | grep -q "^$PROD_TAG$"; then
+            git config user.name "GitHub Actions Bot"
+            git config user.email "actions@github.com"
+            git tag $PROD_TAG
+            git push origin $PROD_TAG
+            echo "Created and pushed new tag: $PROD_TAG"
+          else
+            echo "Tag $PROD_TAG already exists"
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21.x'
+
+      - name: Build binaries
+        run: |
+          # Create dist directory
+          mkdir -p dist
+
+          # Get build information
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          CURRENT_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
+          GO_VERSION=$(go version | cut -d' ' -f3)
+
+          # Set ldflags
+          LDFLAGS="-s -w \
+          -X 'main.Version=$TAG' \
+          -X 'main.CommitHash=$CURRENT_COMMIT' \
+          -X 'main.BuildTime=$CURRENT_DATE' \
+          -X 'main.GoVersion=$GO_VERSION'"
+
+          echo "Building production version: $TAG"
+          echo "Using ldflags: $LDFLAGS"
+
+          # Build for each platform
+          echo "Building for Linux amd64"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_linux_amd64 ./cmd/server
+
+          echo "Building for Linux arm64"
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_linux_arm64 ./cmd/server
+
+          echo "Building for Windows amd64"
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_windows_amd64.exe ./cmd/server
+
+          echo "Building for macOS amd64"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_darwin_amd64 ./cmd/server
+
+          echo "Building for macOS arm64"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_darwin_arm64 ./cmd/server
+
+          # Create ZIP archives
+          cd dist
+          zip mcp-server-prtg_linux_amd64.zip mcp-server-prtg_linux_amd64
+          zip mcp-server-prtg_linux_arm64.zip mcp-server-prtg_linux_arm64
+          zip mcp-server-prtg_windows_amd64.zip mcp-server-prtg_windows_amd64.exe
+          zip mcp-server-prtg_darwin_amd64.zip mcp-server-prtg_darwin_amd64
+          zip mcp-server-prtg_darwin_arm64.zip mcp-server-prtg_darwin_arm64
+          cd ..
+
+          # List contents
+          echo "Contents of dist directory:"
+          ls -lh dist
+
+          # Test version info
+          echo "Testing version info in Linux binary:"
+          chmod +x dist/mcp-server-prtg_linux_amd64
+          dist/mcp-server-prtg_linux_amd64 --version || true
+
+      - name: Create Production Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Release ${{ env.TAG }}
+          files: |
+            dist/*.zip
+            dist/mcp-server-prtg_linux_amd64
+            dist/mcp-server-prtg_linux_arm64
+            dist/mcp-server-prtg_windows_amd64.exe
+            dist/mcp-server-prtg_darwin_amd64
+            dist/mcp-server-prtg_darwin_arm64
+          generate_release_notes: true
+          prerelease: false
