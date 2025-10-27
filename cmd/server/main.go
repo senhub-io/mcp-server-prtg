@@ -14,10 +14,10 @@ import (
 
 // Build-time variables injected via ldflags.
 var (
-	Version    = "v1.0.0"     // Injected via -X flag at build time
-	CommitHash = "unknown"    // Injected via -X flag at build time
-	BuildTime  = "unknown"    // Injected via -X flag at build time
-	GoVersion  = "unknown"    // Injected via -X flag at build time
+	Version    = "v1.0.0"  // Injected via -X flag at build time
+	CommitHash = "unknown" // Injected via -X flag at build time
+	BuildTime  = "unknown" // Injected via -X flag at build time
+	GoVersion  = "unknown" // Injected via -X flag at build time
 )
 
 const (
