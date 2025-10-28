@@ -71,7 +71,7 @@
 				
 				<option value="file7">github.com/matthieu/mcp-server-prtg/internal/handlers/tools.go (0.0%)</option>
 				
-				<option value="file8">github.com/matthieu/mcp-server-prtg/internal/server/sse_server_v2.go (0.0%)</option>
+				<option value="file8">github.com/matthieu/mcp-server-prtg/internal/server/streamable_http_server.go (0.0%)</option>
 				
 				<option value="file9">github.com/matthieu/mcp-server-prtg/internal/services/configuration/config.go (0.0%)</option>
 				
@@ -470,7 +470,7 @@ func runService(args *cliArgs.ParsedArgs) error <span class="cov0" title="0">{
         svcConfig := &amp;service.Config{
                 Name:             args.ServiceName,
                 DisplayName:      "MCP Server PRTG",
-                Description:      "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
+                Description:      "MCP Server for PRTG monitoring data - provides remote access via Streamable HTTP transport",
                 Executable:       executablePath,
                 WorkingDirectory: workingDir,
         }
@@ -580,7 +580,7 @@ func createService(args *cliArgs.ParsedArgs) (service.Service, error) <span clas
         <span class="cov0" title="0">svcConfig := &amp;service.Config{
                 Name:             args.ServiceName,
                 DisplayName:      "MCP Server PRTG",
-                Description:      "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
+                Description:      "MCP Server for PRTG monitoring data - provides remote access via Streamable HTTP transport",
                 Executable:       executablePath,
                 Arguments:        serviceArgs,
                 WorkingDirectory: workingDir,
@@ -788,7 +788,7 @@ type Agent struct {
         config     *configuration.Configuration
         logger     *logger.Logger
         db         *database.DB
-        sseServer  *server.SSEServerV2
+        httpServer *server.StreamableHTTPServer
         args       *cliArgs.ParsedArgs
         shutdownCh chan struct{} // Channel to signal shutdown
 }
@@ -843,21 +843,21 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) <span class="cov0" title
         )
 
         // Register MCP tools
-        toolHandler := handlers.NewToolHandler(db, baseLogger)
+        toolHandler := handlers.NewToolHandler(db, config, baseLogger)
         toolHandler.RegisterTools(mcpServer)
 
         moduleLogger.Info().
                 Int("tools_count", 6).
                 Msg("MCP tools registered")
 
-        // Create SSE server (v2 with proxy architecture)
-        sseServer := server.NewSSEServerV2(mcpServer, db, config, baseLogger)
+        // Create Streamable HTTP server (modern MCP transport)
+        httpServer := server.NewStreamableHTTPServer(mcpServer, db, config, baseLogger)
 
         return &amp;Agent{
                 config:     config,
                 logger:     baseLogger,
                 db:         db,
-                sseServer:  sseServer,
+                httpServer: httpServer,
                 args:       args,
                 shutdownCh: make(chan struct{}),
         }, nil</span>
@@ -868,10 +868,10 @@ func (a *Agent) Start() error <span class="cov0" title="0">{
         moduleLogger := logger.NewModuleLogger(a.logger, "agent")
         moduleLogger.Info().Msg("Starting agent")
 
-        // Start SSE server
+        // Start Streamable HTTP server
         ctx := context.Background()
-        if err := a.sseServer.Start(ctx); err != nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("failed to start SSE server: %w", err)
+        if err := a.httpServer.Start(ctx); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to start HTTP server: %w", err)
         }</span>
 
         // Wait for shutdown signal (server runs in goroutine)
@@ -898,10 +898,10 @@ func (a *Agent) Shutdown(ctx context.Context) error <span class="cov0" title="0"
         <span class="cov0" title="0">shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
         defer cancel()
 
-        // Shutdown SSE server
-        if a.sseServer != nil </span><span class="cov0" title="0">{
-                if err := a.sseServer.Shutdown(shutdownCtx); err != nil </span><span class="cov0" title="0">{
-                        moduleLogger.Error().Err(err).Msg("Error shutting down SSE server")
+        // Shutdown HTTP server
+        if a.httpServer != nil </span><span class="cov0" title="0">{
+                if err := a.httpServer.Shutdown(shutdownCtx); err != nil </span><span class="cov0" title="0">{
+                        moduleLogger.Error().Err(err).Msg("Error shutting down HTTP server")
                 }</span>
         }
 
@@ -1132,10 +1132,12 @@ func New(connStr string, logger *zerolog.Logger) (*DB, error) <span class="cov0"
                 return nil, fmt.Errorf("failed to open database: %w", err)
         }</span>
 
-        // Configure connection pool
-        <span class="cov0" title="0">conn.SetMaxOpenConns(25)
-        conn.SetMaxIdleConns(5)
-        conn.SetConnMaxLifetime(5 * time.Minute)
+        // Configure connection pool with optimized settings
+        // Higher limits for better concurrency while maintaining resource efficiency
+        <span class="cov0" title="0">conn.SetMaxOpenConns(50)                  // Increased from 25 for better concurrency
+        conn.SetMaxIdleConns(10)                  // 20% of MaxOpen (recommended ratio)
+        conn.SetConnMaxLifetime(15 * time.Minute) // Longer lifetime to avoid frequent reconnections
+        conn.SetConnMaxIdleTime(5 * time.Minute)  // Close idle connections after 5 minutes to free resources
 
         // Test connection
         ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1497,7 +1499,24 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
                 args = append(args, "%"+deviceName+"%")
         }</span>
 
-        <span class="cov0" title="0">query += " ORDER BY s.priority DESC, s.status, s.name LIMIT 100"
+        // Order by severity: Down statuses first, then Warning, then others
+        // Severity order: Down(5), DownPartial(14), DownAcknowledged(13), Warning(4), Unusual(10),
+        //                 NoProbe(6), Unknown(1), Collecting(2), then Paused statuses
+        <span class="cov0" title="0">query += ` ORDER BY
+                s.priority DESC,
+                CASE s.status
+                        WHEN 5 THEN 1   -- Down (most critical)
+                        WHEN 14 THEN 2  -- Down Partial
+                        WHEN 13 THEN 3  -- Down Acknowledged
+                        WHEN 4 THEN 4   -- Warning
+                        WHEN 10 THEN 5  -- Unusual
+                        WHEN 6 THEN 6   -- No Probe
+                        WHEN 1 THEN 7   -- Unknown
+                        WHEN 2 THEN 8   -- Collecting
+                        ELSE 9          -- Paused statuses (7,8,9,11,12)
+                END,
+                s.name
+                LIMIT 100`
 
         rows, err := db.Query(ctx, query, args...)
         if err != nil </span><span class="cov0" title="0">{
@@ -1873,16 +1892,23 @@ import (
         "github.com/rs/zerolog"
 )
 
+// Config is an interface for accessing configuration settings
+type Config interface {
+        AllowCustomQueries() bool
+}
+
 // ToolHandler handles MCP tool requests
 type ToolHandler struct {
         db     *database.DB
+        config Config
         logger *zerolog.Logger
 }
 
 // NewToolHandler creates a new tool handler
-func NewToolHandler(db *database.DB, logger *zerolog.Logger) *ToolHandler <span class="cov0" title="0">{
+func NewToolHandler(db *database.DB, config Config, logger *zerolog.Logger) *ToolHandler <span class="cov0" title="0">{
         return &amp;ToolHandler{
                 db:     db,
+                config: config,
                 logger: logger,
         }
 }</span>
@@ -1907,7 +1933,7 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) <span class="cov0" titl
                                 },
                                 "status": map[string]interface{}{
                                         "type":        "integer",
-                                        "description": "Filter by status (3=Up, 4=Warning, 5=Down, 7=Paused)",
+                                        "description": "Filter by status (1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, 7=PausedByUser, 8=PausedByDependency, 9=PausedBySchedule, 10=Unusual, 11=PausedByLicense, 12=PausedUntil, 13=DownAcknowledged, 14=DownPartial)",
                                 },
                                 "tags": map[string]string{
                                         "type":        "string",
@@ -2020,7 +2046,7 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) <span class="cov0" titl
                         "- prtg_sensor_path: sensor_id, path\n" +
                         "- prtg_tag: id, name\n" +
                         "- prtg_sensor_tag: prtg_sensor_id, prtg_tag_id\n\n" +
-                        "Use these EXACT table names in your queries. Status codes: 3=Up, 4=Warning, 5=Down, 7=Paused, 13=Unknown",
+                        "Use these EXACT table names in your queries. Status codes: 1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, 7=PausedByUser, 8=PausedByDependency, 9=PausedBySchedule, 10=Unusual, 11=PausedByLicense, 12=PausedUntil, 13=DownAcknowledged, 14=DownPartial",
                 InputSchema: mcp.ToolInputSchema{
                         Type: "object",
                         Properties: map[string]interface{}{
@@ -2067,9 +2093,9 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
                 Int("limit", args.Limit).
                 Msg("calling db.GetSensors")
 
-        // Create a new context with longer timeout to avoid cancellation
-        // The parent context from MCP might be cancelled too early
-        dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        // Add timeout to parent context (preserves cancellation chain)
+        // This allows client cancellation while providing reasonable timeout for DB operations
+        dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
         defer cancel()
 
         sensors, err := h.db.GetSensors(dbCtx, args.DeviceName, args.SensorName, args.Status, args.Tags, args.Limit)
@@ -2118,8 +2144,8 @@ func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.Cal
                 return nil, fmt.Errorf("sensor_id must be greater than 0")
         }</span>
 
-        // Create a new context with longer timeout
-        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        // Add timeout to parent context (preserves cancellation chain)
+        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
         defer cancel()
 
         sensor, err := h.db.GetSensorByID(dbCtx, args.SensorID)
@@ -2148,8 +2174,8 @@ func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolR
                 args.Hours = 24
         }</span>
 
-        // Create a new context with longer timeout
-        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        // Add timeout to parent context (preserves cancellation chain)
+        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
         defer cancel()
 
         sensors, err := h.db.GetAlerts(dbCtx, args.Hours, args.Status, args.DeviceName)
@@ -2176,8 +2202,8 @@ func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.Call
                 return nil, fmt.Errorf("device_name is required")
         }</span>
 
-        // Create a new context with longer timeout
-        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        // Add timeout to parent context (preserves cancellation chain)
+        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
         defer cancel()
 
         overview, err := h.db.GetDeviceOverview(dbCtx, args.DeviceName)
@@ -2215,8 +2241,8 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
                 args.Hours = 24
         }</span>
 
-        // Create a new context with longer timeout
-        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        // Add timeout to parent context (preserves cancellation chain)
+        <span class="cov0" title="0">dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
         defer cancel()
 
         sensors, err := h.db.GetTopSensors(dbCtx, args.Metric, args.SensorType, args.Limit, args.Hours)
@@ -2231,7 +2257,13 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) <span class="cov0" title="0">{
         h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_query_sql")
 
-        var args struct {
+        // SECURITY: Check if custom queries are allowed (disabled by default for security)
+        if !h.config.AllowCustomQueries() </span><span class="cov0" title="0">{
+                h.logger.Warn().Msg("Custom SQL queries are disabled in configuration (allow_custom_queries: false)")
+                return nil, fmt.Errorf("custom SQL queries are disabled for security reasons - set 'allow_custom_queries: true' in config.yaml to enable (not recommended in production)")
+        }</span>
+
+        <span class="cov0" title="0">var args struct {
                 Query string `json:"query"`
                 Limit int    `json:"limit"`
         }
@@ -2253,8 +2285,8 @@ func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToo
                 Int("limit", args.Limit).
                 Msg("calling db.ExecuteCustomQuery")
 
-        // Create a new context with longer timeout to avoid cancellation
-        dbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        // Add timeout to parent context (preserves cancellation chain)
+        dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
         defer cancel()
 
         results, err := h.db.ExecuteCustomQuery(dbCtx, args.Query, args.Limit)
@@ -2286,7 +2318,7 @@ func formatResult(data interface{}, count int) (*mcp.CallToolResult, error) <spa
         }</span>
 
         <span class="cov0" title="0">return &amp;mcp.CallToolResult{
-                Content: []interface{}{
+                Content: []mcp.Content{
                         mcp.TextContent{
                                 Type: "text",
                                 Text: fmt.Sprintf("Found %d result(s):\n\n%s", count, string(jsonData)),
@@ -2302,9 +2334,10 @@ import (
         "context"
         "crypto/tls"
         "fmt"
+        "net"
         "net/http"
-        "net/http/httputil"
-        "net/url"
+        "strings"
+        "sync"
         "time"
 
         server "github.com/mark3labs/mcp-go/server"
@@ -2314,69 +2347,147 @@ import (
         "github.com/matthieu/mcp-server-prtg/internal/version"
 )
 
-// SSEServerV2 wraps the MCP SSE server with authentication and TLS.
-type SSEServerV2 struct {
-        mcpServer    *server.MCPServer
-        sseServer    *server.SSEServer
-        proxyServer  *http.Server
-        config       *configuration.Configuration
-        logger       *logger.ModuleLogger
-        db           *database.DB
-        baseURL      string
-        internalAddr string
-        externalAddr string
+// authAttempt tracks authentication attempts for rate limiting
+type authAttempt struct {
+        count       int
+        firstTry    time.Time
+        lastTry     time.Time
+        lockedUntil time.Time
 }
 
-// NewSSEServerV2 creates a new SSE-based MCP server with authentication proxy.
-func NewSSEServerV2(mcpServer *server.MCPServer, db *database.DB, config *configuration.Configuration, baseLogger *logger.Logger) *SSEServerV2 <span class="cov0" title="0">{
-        logger := logger.NewModuleLogger(baseLogger, logger.ModuleServer)
+// authRateLimiter manages rate limiting for authentication attempts per IP
+type authRateLimiter struct {
+        attempts map[string]*authAttempt
+        mu       sync.RWMutex
 
-        // Get public URL for SSE endpoint (uses public_url from config if set)
-        baseURL := config.GetPublicURL()
+        // Configuration
+        maxAttempts int           // Max attempts before lockout
+        window      time.Duration // Time window for counting attempts
+        lockoutTime time.Duration // How long to lock out after max attempts
+}
 
-        // Internal SSE server runs on a different port (no auth, localhost only)
-        internalAddr := "127.0.0.1:18443"
-
-        // External address for binding
-        externalAddr := config.GetServerAddress()
-
-        return &amp;SSEServerV2{
-                mcpServer:    mcpServer,
-                config:       config,
-                logger:       logger,
-                db:           db,
-                baseURL:      baseURL,
-                internalAddr: internalAddr,
-                externalAddr: externalAddr,
+// newAuthRateLimiter creates a new rate limiter with default settings
+func newAuthRateLimiter() *authRateLimiter <span class="cov0" title="0">{
+        return &amp;authRateLimiter{
+                attempts:    make(map[string]*authAttempt),
+                maxAttempts: 5,               // 5 attempts max
+                window:      1 * time.Minute, // per minute
+                lockoutTime: 5 * time.Minute, // locked for 5 minutes after max attempts
         }
 }</span>
 
-// Start starts the SSE server with authentication proxy.
-func (s *SSEServerV2) Start(_ context.Context) error <span class="cov0" title="0">{
-        s.logger.Info().
-                Str("external_address", s.externalAddr).
-                Str("internal_address", s.internalAddr).
-                Bool("tls", s.config.IsTLSEnabled()).
-                Msg("Starting MCP Server with SSE transport (v2)")
+// checkAndRecord checks if an IP is rate limited and records the attempt
+// Returns true if the request should be allowed, false if rate limited
+func (rl *authRateLimiter) checkAndRecord(ip string, success bool) bool <span class="cov0" title="0">{
+        rl.mu.Lock()
+        defer rl.mu.Unlock()
 
-        // Create internal SSE server with public base URL
-        // The SSE server will append /message to this URL automatically
-        s.sseServer = server.NewSSEServer(s.mcpServer, s.baseURL)
+        now := time.Now()
 
-        // Start internal SSE server in background
-        go func() </span><span class="cov0" title="0">{
-                s.logger.Info().Str("address", s.internalAddr).Msg("Starting internal SSE server")
-                if err := s.sseServer.Start(s.internalAddr); err != nil </span><span class="cov0" title="0">{
-                        s.logger.Error().Err(err).Msg("Internal SSE server error")
+        // Get or create attempt record
+        attempt, exists := rl.attempts[ip]
+        if !exists </span><span class="cov0" title="0">{
+                attempt = &amp;authAttempt{
+                        count:    0,
+                        firstTry: now,
+                }
+                rl.attempts[ip] = attempt
+        }</span>
+
+        // Check if IP is currently locked out
+        <span class="cov0" title="0">if now.Before(attempt.lockedUntil) </span><span class="cov0" title="0">{
+                return false // Still locked out
+        }</span>
+
+        // If successful auth, reset the counter
+        <span class="cov0" title="0">if success </span><span class="cov0" title="0">{
+                delete(rl.attempts, ip)
+                return true
+        }</span>
+
+        // Reset counter if window has expired
+        <span class="cov0" title="0">if now.Sub(attempt.firstTry) &gt; rl.window </span><span class="cov0" title="0">{
+                attempt.count = 0
+                attempt.firstTry = now
+        }</span>
+
+        // Increment counter
+        <span class="cov0" title="0">attempt.count++
+        attempt.lastTry = now
+
+        // Check if max attempts exceeded
+        if attempt.count &gt; rl.maxAttempts </span><span class="cov0" title="0">{
+                attempt.lockedUntil = now.Add(rl.lockoutTime)
+                return false // Lock out this IP
+        }</span>
+
+        <span class="cov0" title="0">return true</span> // Allow attempt
+}
+
+// cleanup removes old entries (optional, called periodically)
+func (rl *authRateLimiter) cleanup() <span class="cov0" title="0">{
+        rl.mu.Lock()
+        defer rl.mu.Unlock()
+
+        now := time.Now()
+        for ip, attempt := range rl.attempts </span><span class="cov0" title="0">{
+                // Remove entries older than lockout time
+                if now.Sub(attempt.lastTry) &gt; rl.lockoutTime </span><span class="cov0" title="0">{
+                        delete(rl.attempts, ip)
                 }</span>
-        }()
+        }
+}
 
-        // Wait a bit for internal server to start
-        <span class="cov0" title="0">time.Sleep(500 * time.Millisecond)
+// StreamableHTTPServer implements MCP server using Streamable HTTP transport
+type StreamableHTTPServer struct {
+        mcpServer      *server.MCPServer
+        streamableHTTP http.Handler
+        httpServer     *http.Server
+        config         *configuration.Configuration
+        logger         *logger.ModuleLogger
+        db             *database.DB
+        rateLimiter    *authRateLimiter
+        address        string
+        shutdownCh     chan struct{} // Channel for graceful shutdown of background tasks
+}
 
-        // Create authentication proxy
-        if err := s.startAuthProxy(); err != nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("failed to start auth proxy: %w", err)
+// NewStreamableHTTPServer creates a new Streamable HTTP-based MCP server
+func NewStreamableHTTPServer(mcpServer *server.MCPServer, db *database.DB, config *configuration.Configuration, baseLogger *logger.Logger) *StreamableHTTPServer <span class="cov0" title="0">{
+        logger := logger.NewModuleLogger(baseLogger, logger.ModuleServer)
+
+        // Get server address for binding
+        address := config.GetServerAddress()
+
+        return &amp;StreamableHTTPServer{
+                mcpServer:   mcpServer,
+                config:      config,
+                logger:      logger,
+                db:          db,
+                rateLimiter: newAuthRateLimiter(),
+                address:     address,
+                shutdownCh:  make(chan struct{}),
+        }
+}</span>
+
+// Start starts the Streamable HTTP server
+func (s *StreamableHTTPServer) Start(_ context.Context) error <span class="cov0" title="0">{
+        s.logger.Info().
+                Str("address", s.address).
+                Bool("tls", s.config.IsTLSEnabled()).
+                Msg("Starting MCP Server with Streamable HTTP transport")
+
+        // Create Streamable HTTP server with heartbeat support
+        // Default heartbeat interval is 30 seconds, can be configured
+        heartbeatInterval := 30 * time.Second
+        heartbeatOption := server.WithHeartbeatInterval(heartbeatInterval)
+        s.streamableHTTP = server.NewStreamableHTTPServer(s.mcpServer, heartbeatOption)
+
+        // Start rate limiter cleanup goroutine
+        go s.cleanupRateLimiterPeriodically()
+
+        // Create HTTP server with endpoints
+        if err := s.startHTTPServer(); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to start HTTP server: %w", err)
         }</span>
 
         // Log startup information
@@ -2385,255 +2496,257 @@ func (s *SSEServerV2) Start(_ context.Context) error <span class="cov0" title="0
         return nil</span>
 }
 
-// startAuthProxy starts the external authentication proxy.
-func (s *SSEServerV2) startAuthProxy() error <span class="cov0" title="0">{
-        // Parse internal URL
-        internalURL, err := url.Parse(fmt.Sprintf("http://%s", s.internalAddr))
-        if err != nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("failed to parse internal URL: %w", err)
-        }</span>
-
-        // Create reverse proxy to internal SSE server
-        <span class="cov0" title="0">proxy := httputil.NewSingleHostReverseProxy(internalURL)
-
-        // Custom director to preserve headers
-        originalDirector := proxy.Director
-        proxy.Director = func(req *http.Request) </span><span class="cov0" title="0">{
-                originalDirector(req)
-                req.Host = internalURL.Host
-        }</span>
-
-        // Create authenticated handler
-        <span class="cov0" title="0">authHandler := s.createAuthMiddleware()(proxy.ServeHTTP)
-
-        // Create mux with additional endpoints
+// startHTTPServer starts the HTTP server with all endpoints
+func (s *StreamableHTTPServer) startHTTPServer() error <span class="cov0" title="0">{
+        // Create mux with all endpoints
         mux := http.NewServeMux()
 
-        // SSE endpoints (proxied with auth)
-        mux.HandleFunc("/sse", authHandler)
-        mux.HandleFunc("/message", authHandler)
+        // MCP endpoint with authentication middleware
+        mux.Handle("/mcp", s.createAuthMiddleware(s.streamableHTTP))
 
         // Health check endpoint (no auth)
         mux.HandleFunc("/health", s.handleHealth)
 
         // Status endpoint (auth required)
-        mux.HandleFunc("/status", s.createAuthMiddleware()(s.handleStatus))
+        statusHandler := s.createAuthMiddleware(http.HandlerFunc(s.handleStatus))
+        mux.Handle("/status", statusHandler)
 
-        // Create HTTP server
-        // For SSE, we need long/no timeouts as connections stay open
-        s.proxyServer = &amp;http.Server{
-                Addr:         s.externalAddr,
-                Handler:      mux,
-                ReadTimeout:  0, // No read timeout for SSE
-                WriteTimeout: 0, // No write timeout for SSE (long-lived connections)
-                IdleTimeout:  0, // No idle timeout for SSE (connections stay open)
+        // Create HTTP server with optimized timeouts
+        s.httpServer = &amp;http.Server{
+                Addr:              s.address,
+                Handler:           mux,
+                ReadTimeout:       0,                // No read timeout for streaming connections
+                WriteTimeout:      0,                // No write timeout for streaming connections
+                IdleTimeout:       60 * time.Minute, // Close inactive connections after 1 hour
+                ReadHeaderTimeout: 10 * time.Second, // Protection against slow-loris attacks
+                MaxHeaderBytes:    1 &lt;&lt; 20,          // 1MB max header size
         }
 
-        // Start server (with or without TLS)
-        go s.startProxyServer()
-
-        return nil</span>
-}
-
-// startProxyServer starts the proxy HTTP server.
-func (s *SSEServerV2) startProxyServer() <span class="cov0" title="0">{
-        var err error
-
+        // Configure TLS if enabled
         if s.config.IsTLSEnabled() </span><span class="cov0" title="0">{
-                // Load TLS configuration
                 certFile := s.config.GetTLSCertFile()
                 keyFile := s.config.GetTLSKeyFile()
 
-                // Configure TLS
                 tlsConfig := &amp;tls.Config{
                         MinVersion:               tls.VersionTLS12,
                         PreferServerCipherSuites: true,
                 }
 
-                s.proxyServer.TLSConfig = tlsConfig
+                s.httpServer.TLSConfig = tlsConfig
 
                 s.logger.Info().
                         Str("cert", certFile).
                         Str("key", keyFile).
-                        Msg("Starting HTTPS proxy server")
+                        Msg("Starting HTTPS server")
 
-                err = s.proxyServer.ListenAndServeTLS(certFile, keyFile)
-        }</span> else<span class="cov0" title="0"> {
-                s.logger.Warn().Msg("Starting HTTP proxy server (TLS disabled - not recommended for production)")
-                err = s.proxyServer.ListenAndServe()
-        }</span>
+                // Start server in background
+                go func() </span><span class="cov0" title="0">{
+                        if err := s.httpServer.ListenAndServeTLS(certFile, keyFile); err != nil &amp;&amp; err != http.ErrServerClosed </span><span class="cov0" title="0">{
+                                s.logger.Error().Err(err).Msg("HTTPS server error")
+                        }</span>
+                }()
+        } else<span class="cov0" title="0"> {
+                s.logger.Warn().Msg("Starting HTTP server (TLS disabled - not recommended for production)")
 
-        <span class="cov0" title="0">if err != nil &amp;&amp; err != http.ErrServerClosed </span><span class="cov0" title="0">{
-                s.logger.Error().Err(err).Msg("HTTP proxy server error")
-        }</span>
+                // Start server in background
+                go func() </span><span class="cov0" title="0">{
+                        if err := s.httpServer.ListenAndServe(); err != nil &amp;&amp; err != http.ErrServerClosed </span><span class="cov0" title="0">{
+                                s.logger.Error().Err(err).Msg("HTTP server error")
+                        }</span>
+                }()
+        }
+
+        <span class="cov0" title="0">return nil</span>
 }
 
-// createAuthMiddleware creates authentication middleware using Bearer token.
-func (s *SSEServerV2) createAuthMiddleware() func(http.HandlerFunc) http.HandlerFunc <span class="cov0" title="0">{
+// getClientIP extracts the real client IP from the request
+// Handles X-Forwarded-For and X-Real-IP headers for proxy situations
+func getClientIP(r *http.Request) string <span class="cov0" title="0">{
+        // Try X-Real-IP first (single IP from trusted proxy)
+        if ip := r.Header.Get("X-Real-IP"); ip != "" </span><span class="cov0" title="0">{
+                return ip
+        }</span>
+
+        // Try X-Forwarded-For (can be a list)
+        <span class="cov0" title="0">if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" </span><span class="cov0" title="0">{
+                // Take the first IP (client IP)
+                if idx := strings.Index(forwarded, ","); idx != -1 </span><span class="cov0" title="0">{
+                        return strings.TrimSpace(forwarded[:idx])
+                }</span>
+                <span class="cov0" title="0">return strings.TrimSpace(forwarded)</span>
+        }
+
+        // Fall back to RemoteAddr
+        // RemoteAddr is in format "IP:port", extract just the IP
+        <span class="cov0" title="0">if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil </span><span class="cov0" title="0">{
+                return host
+        }</span>
+
+        <span class="cov0" title="0">return r.RemoteAddr</span>
+}
+
+// createAuthMiddleware creates authentication middleware using Bearer token with rate limiting
+func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Handler <span class="cov0" title="0">{
         expectedToken := s.config.GetAPIKey()
 
-        return func(next http.HandlerFunc) http.HandlerFunc </span><span class="cov0" title="0">{
-                return func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
-                        // Extract Bearer token from Authorization header
-                        authHeader := r.Header.Get("Authorization")
-                        var providedToken string
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                // Extract client IP for rate limiting
+                clientIP := getClientIP(r)
 
-                        if authHeader != "" </span><span class="cov0" title="0">{
-                                // Check for "Bearer &lt;token&gt;" format
-                                const bearerPrefix = "Bearer "
-                                if len(authHeader) &gt; len(bearerPrefix) &amp;&amp; authHeader[:len(bearerPrefix)] == bearerPrefix </span><span class="cov0" title="0">{
-                                        providedToken = authHeader[len(bearerPrefix):]
-                                }</span>
-                        }
+                // Check rate limit BEFORE validating token (prevent brute-force)
+                if !s.rateLimiter.checkAndRecord(clientIP, false) </span><span class="cov0" title="0">{
+                        s.logger.Warn().
+                                Str("client_ip", clientIP).
+                                Str("path", r.URL.Path).
+                                Msg("Rate limit exceeded - IP temporarily blocked")
 
-                        // Fallback: check query parameter (for SSE compatibility)
-                        <span class="cov0" title="0">if providedToken == "" </span><span class="cov0" title="0">{
-                                providedToken = r.URL.Query().Get("token")
+                        w.Header().Set("Retry-After", "300") // 5 minutes
+                        http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
+                        return
+                }</span>
+
+                // Extract Bearer token from Authorization header
+                <span class="cov0" title="0">authHeader := r.Header.Get("Authorization")
+                var providedToken string
+
+                if authHeader != "" </span><span class="cov0" title="0">{
+                        // Check for "Bearer &lt;token&gt;" format
+                        const bearerPrefix = "Bearer "
+                        if len(authHeader) &gt; len(bearerPrefix) &amp;&amp; authHeader[:len(bearerPrefix)] == bearerPrefix </span><span class="cov0" title="0">{
+                                providedToken = authHeader[len(bearerPrefix):]
                         }</span>
+                }
 
-                        // Validate token
-                        <span class="cov0" title="0">if providedToken != expectedToken </span><span class="cov0" title="0">{
-                                s.logger.Warn().
-                                        Str("remote_addr", r.RemoteAddr).
-                                        Str("path", r.URL.Path).
-                                        Str("method", r.Method).
-                                        Bool("has_auth_header", authHeader != "").
-                                        Msg("Unauthorized access attempt")
+                // Fallback: check query parameter (for compatibility)
+                <span class="cov0" title="0">if providedToken == "" </span><span class="cov0" title="0">{
+                        providedToken = r.URL.Query().Get("token")
+                }</span>
 
-                                w.Header().Set("WWW-Authenticate", "Bearer realm=\"MCP Server PRTG\"")
-                                http.Error(w, "Unauthorized: Missing or invalid Bearer token", http.StatusUnauthorized)
-                                return
-                        }</span>
-
-                        // Token valid, continue
-                        <span class="cov0" title="0">s.logger.Debug().
+                // Validate token
+                <span class="cov0" title="0">if providedToken != expectedToken </span><span class="cov0" title="0">{
+                        s.logger.Warn().
+                                Str("client_ip", clientIP).
                                 Str("remote_addr", r.RemoteAddr).
                                 Str("path", r.URL.Path).
                                 Str("method", r.Method).
-                                Msg("Authenticated request")
+                                Bool("has_auth_header", authHeader != "").
+                                Msg("Unauthorized access attempt")
 
-                        next(w, r)</span>
+                        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+                        return
+                }</span>
+
+                // Authentication successful - record it
+                <span class="cov0" title="0">s.rateLimiter.checkAndRecord(clientIP, true)
+
+                // Log successful authentication
+                s.logger.Debug().
+                        Str("client_ip", clientIP).
+                        Str("path", r.URL.Path).
+                        Str("method", r.Method).
+                        Msg("Authenticated request")
+
+                // Call next handler
+                next.ServeHTTP(w, r)</span>
+        })
+}
+
+// cleanupRateLimiterPeriodically runs periodic cleanup of rate limiter entries
+func (s *StreamableHTTPServer) cleanupRateLimiterPeriodically() <span class="cov0" title="0">{
+        ticker := time.NewTicker(10 * time.Minute)
+        defer ticker.Stop()
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        s.rateLimiter.cleanup()
+                        s.logger.Debug().Msg("Cleaned up rate limiter entries")</span>
+                case &lt;-s.shutdownCh:<span class="cov0" title="0">
+                        s.logger.Debug().Msg("Stopping rate limiter cleanup goroutine")
+                        return</span>
                 }
         }
 }
 
-// handleHealth handles health check requests.
-func (s *SSEServerV2) handleHealth(w http.ResponseWriter, _ *http.Request) <span class="cov0" title="0">{
+// handleHealth handles health check requests
+func (s *StreamableHTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(http.StatusOK)
-        fmt.Fprintf(w, `{"status":"healthy","timestamp":"%s"}`, time.Now().Format(time.RFC3339))
+        _, _ = w.Write([]byte(`{"status":"ok"}`))
 }</span>
 
-// handleStatus handles status requests (authenticated).
-func (s *SSEServerV2) handleStatus(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
-        w.Header().Set("Content-Type", "application/json")
+// handleStatus handles status requests (requires authentication)
+func (s *StreamableHTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) <span class="cov0" title="0">{
+        status := map[string]interface{}{
+                "version":   version.Get(),
+                "transport": "streamable-http",
+                "protocol":  "2025-03-26",
+                "uptime":    time.Since(startTime).String(),
+        }
 
-        // Check database health
-        dbStatus := "connected"
-        dbError := ""
-        ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-        defer cancel()
-
+        // Check database connection
         if s.db != nil </span><span class="cov0" title="0">{
-                if err := s.db.Health(ctx); err != nil </span><span class="cov0" title="0">{
-                        dbStatus = "disconnected"
-                        dbError = err.Error()
-                        s.logger.Warn().Err(err).Msg("Database health check failed")
+                if err := s.db.Health(r.Context()); err != nil </span><span class="cov0" title="0">{
+                        status["database"] = "error"
+                        status["database_error"] = err.Error()
+                }</span> else<span class="cov0" title="0"> {
+                        status["database"] = "connected"
                 }</span>
         } else<span class="cov0" title="0"> {
-                dbStatus = "not_configured"
+                status["database"] = "not_configured"
         }</span>
 
-        <span class="cov0" title="0">w.WriteHeader(http.StatusOK)
+        <span class="cov0" title="0">w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
 
-        status := fmt.Sprintf(`{
-                "status":"running",
-                "version":"%s",
-                "transport":"sse",
-                "tls_enabled":%t,
-                "base_url":"%s",
-                "mcp_tools":6,
-                "database":{
-                        "status":"%s",
-                        "error":"%s"
-                },
-                "timestamp":"%s"
-        }`, version.Get(), s.config.IsTLSEnabled(), s.baseURL, dbStatus, dbError, time.Now().Format(time.RFC3339))
-
-        fmt.Fprint(w, status)</span>
+        // Simple JSON encoding
+        fmt.Fprintf(w, `{"version":"%s","transport":"streamable-http","protocol":"2025-03-26","uptime":"%s","database":"%s"}`,
+                status["version"], status["uptime"], status["database"])</span>
 }
 
-// Shutdown gracefully shuts down the server.
-func (s *SSEServerV2) Shutdown(ctx context.Context) error <span class="cov0" title="0">{
-        s.logger.Info().Msg("Shutting down SSE server")
-
-        var firstErr error
-
-        // Shutdown proxy server
-        if s.proxyServer != nil </span><span class="cov0" title="0">{
-                if err := s.proxyServer.Shutdown(ctx); err != nil </span><span class="cov0" title="0">{
-                        s.logger.Error().Err(err).Msg("Error shutting down proxy server")
-                        if firstErr == nil </span><span class="cov0" title="0">{
-                                firstErr = err
-                        }</span>
-                }
-        }
-
-        // Shutdown internal SSE server
-        <span class="cov0" title="0">if s.sseServer != nil </span><span class="cov0" title="0">{
-                if err := s.sseServer.Shutdown(ctx); err != nil </span><span class="cov0" title="0">{
-                        s.logger.Error().Err(err).Msg("Error shutting down SSE server")
-                        if firstErr == nil </span><span class="cov0" title="0">{
-                                firstErr = err
-                        }</span>
-                }
-        }
-
-        <span class="cov0" title="0">if firstErr == nil </span><span class="cov0" title="0">{
-                s.logger.Info().Msg("SSE server shut down successfully")
-        }</span>
-
-        <span class="cov0" title="0">return firstErr</span>
-}
-
-// logStartupInfo logs startup information.
-func (s *SSEServerV2) logStartupInfo() <span class="cov0" title="0">{
-        protocol := "HTTP"
+// logStartupInfo logs startup information
+func (s *StreamableHTTPServer) logStartupInfo() <span class="cov0" title="0">{
+        protocol := "http"
         if s.config.IsTLSEnabled() </span><span class="cov0" title="0">{
-                protocol = "HTTPS"
+                protocol = "https"
         }</span>
 
-        <span class="cov0" title="0">s.logger.Info().Msgf(`
-╔════════════════════════════════════════════════════════════════╗
-║         MCP Server PRTG - SSE Transport Started (v2)           ║
-╠════════════════════════════════════════════════════════════════╣
-║  Protocol:     %s                                           ║
-║  External:     %s                                    ║
-║  Internal:     %s                              ║
-║  Base URL:     %s                        ║
-║  MCP Tools:    6 tools registered                             ║
-║  Endpoints:                                                    ║
-║    - GET  /sse      (SSE stream - authenticated)              ║
-║    - POST /message  (RPC messages - authenticated)            ║
-║    - GET  /health   (Health check - public)                   ║
-║    - GET  /status   (Server status - authenticated)           ║
-╠════════════════════════════════════════════════════════════════╣
-║  Authentication: Bearer Token (RFC 6750)                       ║
-║    - Header: Authorization: Bearer &lt;token&gt;                     ║
-║    - Query:  ?token=&lt;token&gt; (fallback for SSE)                 ║
-║  Token: %s                                    ║
-╚════════════════════════════════════════════════════════════════╝
-        `, protocol, s.externalAddr, s.internalAddr, s.baseURL, maskAPIKey(s.config.GetAPIKey()))</span>
+        <span class="cov0" title="0">s.logger.Info().
+                Str("url", fmt.Sprintf("%s://%s/mcp", protocol, s.address)).
+                Str("health_check", fmt.Sprintf("%s://%s/health", protocol, s.address)).
+                Str("status", fmt.Sprintf("%s://%s/status", protocol, s.address)).
+                Str("version", version.Get()).
+                Str("protocol", "2025-03-26").
+                Msg("MCP Server ready")
+
+        s.logger.Info().Msg("Configure Claude Desktop with:")
+        s.logger.Info().Msgf(`  "mcpServers": {`)
+        s.logger.Info().Msgf(`    "prtg": {`)
+        s.logger.Info().Msgf(`      "url": "%s://%s/mcp",`, protocol, s.address)
+        s.logger.Info().Msgf(`      "headers": {`)
+        s.logger.Info().Msgf(`        "Authorization": "Bearer YOUR_API_KEY"`)
+        s.logger.Info().Msgf(`      }`)
+        s.logger.Info().Msgf(`    }`)
+        s.logger.Info().Msgf(`  }`)</span>
 }
 
-// maskAPIKey masks the API key for logging.
-func maskAPIKey(key string) string <span class="cov0" title="0">{
-        if len(key) &lt;= 8 </span><span class="cov0" title="0">{
-                return "***"
+// Shutdown gracefully shuts down the server
+func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error <span class="cov0" title="0">{
+        s.logger.Info().Msg("Shutting down Streamable HTTP server")
+
+        // Signal background tasks to stop
+        close(s.shutdownCh)
+
+        // Shutdown HTTP server
+        if err := s.httpServer.Shutdown(ctx); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to shutdown HTTP server: %w", err)
         }</span>
 
-        <span class="cov0" title="0">return key[:4] + "..." + key[len(key)-4:]</span>
+        <span class="cov0" title="0">s.logger.Info().Msg("Server shutdown complete")
+        return nil</span>
 }
+
+var startTime = time.Now()
 </pre>
 		
 		<pre class="file" id="file9" style="display: none">package configuration
@@ -2676,6 +2789,9 @@ type Configuration struct {
 
         // Callbacks
         onChangeCallbacks []func()
+
+        // Shutdown signal for graceful goroutine termination
+        shutdownCh chan struct{}
 }
 
 // ConfigData represents the YAML configuration structure.
@@ -2688,15 +2804,16 @@ type ConfigData struct {
 
 // ServerConfig holds HTTP server configuration.
 type ServerConfig struct {
-        APIKey       string `yaml:"api_key"`       // API Key (Bearer token)
-        BindAddress  string `yaml:"bind_address"`  // Address to bind to (e.g., 0.0.0.0)
-        Port         int    `yaml:"port"`          // Port to listen on
-        PublicURL    string `yaml:"public_url"`    // Public URL for SSE endpoint (optional, e.g., https://dash999.hibouvision.com:8443)
-        EnableTLS    bool   `yaml:"enable_tls"`    // Enable HTTPS
-        CertFile     string `yaml:"cert_file"`     // TLS certificate file
-        KeyFile      string `yaml:"key_file"`      // TLS private key file
-        ReadTimeout  int    `yaml:"read_timeout"`  // Read timeout in seconds
-        WriteTimeout int    `yaml:"write_timeout"` // Write timeout in seconds
+        APIKey             string `yaml:"api_key"`              // API Key (Bearer token)
+        BindAddress        string `yaml:"bind_address"`         // Address to bind to (e.g., 0.0.0.0)
+        Port               int    `yaml:"port"`                 // Port to listen on
+        PublicURL          string `yaml:"public_url"`           // Public URL for SSE endpoint (optional, e.g., https://dash999.hibouvision.com:8443)
+        EnableTLS          bool   `yaml:"enable_tls"`           // Enable HTTPS
+        CertFile           string `yaml:"cert_file"`            // TLS certificate file
+        KeyFile            string `yaml:"key_file"`             // TLS private key file
+        ReadTimeout        int    `yaml:"read_timeout"`         // Read timeout in seconds
+        WriteTimeout       int    `yaml:"write_timeout"`        // Write timeout in seconds
+        AllowCustomQueries bool   `yaml:"allow_custom_queries"` // Allow custom SQL queries (prtg_query_sql tool) - DISABLE in production for security
 }
 
 // DatabaseConfig holds database connection settings.
@@ -2814,14 +2931,15 @@ func (c *Configuration) createDefaultConfiguration() error <span class="cov0" ti
         c.data = ConfigData{
                 ConfigVersion: CurrentConfigVersion,
                 Server: ServerConfig{
-                        APIKey:       apiKey,
-                        BindAddress:  getOrDefault(c.args.BindAddress, "0.0.0.0"),
-                        Port:         getOrDefaultInt(c.args.Port, 8443),
-                        EnableTLS:    c.args.EnableHTTPS,
-                        CertFile:     getOrDefault(c.args.CertFile, defaultCertFile),
-                        KeyFile:      getOrDefault(c.args.KeyFile, defaultKeyFile),
-                        ReadTimeout:  0, // No timeout for SSE connections
-                        WriteTimeout: 0, // No timeout for SSE connections
+                        APIKey:             apiKey,
+                        BindAddress:        getOrDefault(c.args.BindAddress, "0.0.0.0"),
+                        Port:               getOrDefaultInt(c.args.Port, 8443),
+                        EnableTLS:          c.args.EnableHTTPS,
+                        CertFile:           getOrDefault(c.args.CertFile, defaultCertFile),
+                        KeyFile:            getOrDefault(c.args.KeyFile, defaultKeyFile),
+                        ReadTimeout:        0,     // No timeout for SSE connections
+                        WriteTimeout:       0,     // No timeout for SSE connections
+                        AllowCustomQueries: false, // SECURITY: Disable custom SQL queries by default - enable only in dev/test
                 },
                 Database: DatabaseConfig{
                         Host:     getOrDefault(c.args.DBHost, "localhost"),
@@ -3113,6 +3231,12 @@ func (c *Configuration) GetWriteTimeout() time.Duration <span class="cov0" title
         return time.Duration(c.data.Server.WriteTimeout) * time.Second
 }</span>
 
+// AllowCustomQueries returns whether custom SQL queries are allowed.
+// SECURITY: This should be false in production environments to prevent SQL injection risks.
+func (c *Configuration) AllowCustomQueries() bool <span class="cov0" title="0">{
+        return c.data.Server.AllowCustomQueries
+}</span>
+
 // Helper functions.
 
 func getOrDefault(value, defaultValue string) string <span class="cov0" title="0">{
@@ -3144,6 +3268,7 @@ func (c *Configuration) initWatcher() error <span class="cov0" title="0">{
         }</span>
 
         <span class="cov0" title="0">c.watcher = watcher
+        c.shutdownCh = make(chan struct{})
 
         // Start watching in background
         go c.watchConfigFile()
@@ -3157,6 +3282,11 @@ func (c *Configuration) initWatcher() error <span class="cov0" title="0">{
 func (c *Configuration) watchConfigFile() <span class="cov0" title="0">{
         for </span><span class="cov0" title="0">{
                 select </span>{
+                case &lt;-c.shutdownCh:<span class="cov0" title="0">
+                        // Graceful shutdown - exit goroutine immediately
+                        c.logger.Debug().Msg("Config file watcher shutting down")
+                        return</span>
+
                 case event, ok := &lt;-c.watcher.Events:<span class="cov0" title="0">
                         if !ok </span><span class="cov0" title="0">{
                                 return
@@ -3190,9 +3320,20 @@ func (c *Configuration) OnConfigChanged(callback func()) <span class="cov0" titl
         c.onChangeCallbacks = append(c.onChangeCallbacks, callback)
 }</span>
 
-// Shutdown stops the configuration manager.
+// Shutdown stops the configuration manager gracefully.
 func (c *Configuration) Shutdown(_ context.Context) error <span class="cov0" title="0">{
-        if c.watcher != nil </span><span class="cov0" title="0">{
+        // Signal the watcher goroutine to exit (close only once)
+        if c.shutdownCh != nil </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-c.shutdownCh:<span class="cov0" title="0"></span>
+                        // Already closed
+                default:<span class="cov0" title="0">
+                        close(c.shutdownCh)</span>
+                }
+        }
+
+        // Close the file watcher
+        <span class="cov0" title="0">if c.watcher != nil </span><span class="cov0" title="0">{
                 return c.watcher.Close()
         }</span>
 
@@ -3546,9 +3687,11 @@ type DeviceOverview struct {
         WarnSensors  int      `json:"warning_sensors"`
 }
 
-// SensorStatus represents common PRTG sensor status values.
+// SensorStatus represents PRTG sensor status values.
+// Official PRTG status codes from documentation.
 const (
-        StatusUnknown            = 0
+        StatusUnknown            = 1
+        StatusCollecting         = 2
         StatusUp                 = 3
         StatusWarning            = 4
         StatusDown               = 5
@@ -3558,11 +3701,18 @@ const (
         StatusPausedBySchedule   = 9
         StatusUnusual            = 10
         StatusPausedByLicense    = 11
+        StatusPausedUntil        = 12
+        StatusDownAcknowledged   = 13
+        StatusDownPartial        = 14
 )
 
 // GetStatusText returns human-readable status text.
 func GetStatusText(status int) string <span class="cov0" title="0">{
         switch status </span>{
+        case StatusUnknown:<span class="cov0" title="0">
+                return "Unknown"</span>
+        case StatusCollecting:<span class="cov0" title="0">
+                return "Collecting"</span>
         case StatusUp:<span class="cov0" title="0">
                 return "Up"</span>
         case StatusWarning:<span class="cov0" title="0">
@@ -3581,6 +3731,12 @@ func GetStatusText(status int) string <span class="cov0" title="0">{
                 return "Unusual"</span>
         case StatusPausedByLicense:<span class="cov0" title="0">
                 return "Paused (License)"</span>
+        case StatusPausedUntil:<span class="cov0" title="0">
+                return "Paused Until"</span>
+        case StatusDownAcknowledged:<span class="cov0" title="0">
+                return "Down (Acknowledged)"</span>
+        case StatusDownPartial:<span class="cov0" title="0">
+                return "Down (Partial)"</span>
         default:<span class="cov0" title="0">
                 return "Unknown"</span>
         }
