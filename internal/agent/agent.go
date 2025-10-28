@@ -19,7 +19,7 @@ type Agent struct {
 	config     *configuration.Configuration
 	logger     *logger.Logger
 	db         *database.DB
-	sseServer  *server.SSEServerV2
+	httpServer *server.StreamableHTTPServer
 	args       *cliArgs.ParsedArgs
 	shutdownCh chan struct{} // Channel to signal shutdown
 }
@@ -81,14 +81,14 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
 		Int("tools_count", 6).
 		Msg("MCP tools registered")
 
-	// Create SSE server (v2 with proxy architecture)
-	sseServer := server.NewSSEServerV2(mcpServer, db, config, baseLogger)
+	// Create Streamable HTTP server (modern MCP transport)
+	httpServer := server.NewStreamableHTTPServer(mcpServer, db, config, baseLogger)
 
 	return &Agent{
 		config:     config,
 		logger:     baseLogger,
 		db:         db,
-		sseServer:  sseServer,
+		httpServer: httpServer,
 		args:       args,
 		shutdownCh: make(chan struct{}),
 	}, nil
@@ -99,10 +99,10 @@ func (a *Agent) Start() error {
 	moduleLogger := logger.NewModuleLogger(a.logger, "agent")
 	moduleLogger.Info().Msg("Starting agent")
 
-	// Start SSE server
+	// Start Streamable HTTP server
 	ctx := context.Background()
-	if err := a.sseServer.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start SSE server: %w", err)
+	if err := a.httpServer.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start HTTP server: %w", err)
 	}
 
 	// Wait for shutdown signal (server runs in goroutine)
@@ -129,10 +129,10 @@ func (a *Agent) Shutdown(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// Shutdown SSE server
-	if a.sseServer != nil {
-		if err := a.sseServer.Shutdown(shutdownCtx); err != nil {
-			moduleLogger.Error().Err(err).Msg("Error shutting down SSE server")
+	// Shutdown HTTP server
+	if a.httpServer != nil {
+		if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
+			moduleLogger.Error().Err(err).Msg("Error shutting down HTTP server")
 		}
 	}
 
