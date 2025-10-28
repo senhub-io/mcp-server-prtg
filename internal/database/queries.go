@@ -276,7 +276,24 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
 		args = append(args, "%"+deviceName+"%")
 	}
 
-	query += " ORDER BY s.priority DESC, s.status, s.name LIMIT 100"
+	// Order by severity: Down statuses first, then Warning, then others
+	// Severity order: Down(5), DownPartial(14), DownAcknowledged(13), Warning(4), Unusual(10),
+	//                 NoProbe(6), Unknown(1), Collecting(2), then Paused statuses
+	query += ` ORDER BY
+		s.priority DESC,
+		CASE s.status
+			WHEN 5 THEN 1   -- Down (most critical)
+			WHEN 14 THEN 2  -- Down Partial
+			WHEN 13 THEN 3  -- Down Acknowledged
+			WHEN 4 THEN 4   -- Warning
+			WHEN 10 THEN 5  -- Unusual
+			WHEN 6 THEN 6   -- No Probe
+			WHEN 1 THEN 7   -- Unknown
+			WHEN 2 THEN 8   -- Collecting
+			ELSE 9          -- Paused statuses (7,8,9,11,12)
+		END,
+		s.name
+		LIMIT 100`
 
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {

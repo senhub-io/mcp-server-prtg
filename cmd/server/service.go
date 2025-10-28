@@ -178,7 +178,7 @@ func runService(args *cliArgs.ParsedArgs) error {
 	svcConfig := &service.Config{
 		Name:             args.ServiceName,
 		DisplayName:      "MCP Server PRTG",
-		Description:      "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
+		Description:      "MCP Server for PRTG monitoring data - provides remote access via Streamable HTTP transport",
 		Executable:       executablePath,
 		WorkingDirectory: workingDir,
 	}
@@ -288,7 +288,7 @@ func createService(args *cliArgs.ParsedArgs) (service.Service, error) {
 	svcConfig := &service.Config{
 		Name:             args.ServiceName,
 		DisplayName:      "MCP Server PRTG",
-		Description:      "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
+		Description:      "MCP Server for PRTG monitoring data - provides remote access via Streamable HTTP transport",
 		Executable:       executablePath,
 		Arguments:        serviceArgs,
 		WorkingDirectory: workingDir,
