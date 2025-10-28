@@ -53,7 +53,7 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 				},
 				"status": map[string]interface{}{
 					"type":        "integer",
-					"description": "Filter by status (3=Up, 4=Warning, 5=Down, 7=Paused)",
+					"description": "Filter by status (1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, 7=PausedByUser, 8=PausedByDependency, 9=PausedBySchedule, 10=Unusual, 11=PausedByLicense, 12=PausedUntil, 13=DownAcknowledged, 14=DownPartial)",
 				},
 				"tags": map[string]string{
 					"type":        "string",
@@ -166,7 +166,7 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 			"- prtg_sensor_path: sensor_id, path\n" +
 			"- prtg_tag: id, name\n" +
 			"- prtg_sensor_tag: prtg_sensor_id, prtg_tag_id\n\n" +
-			"Use these EXACT table names in your queries. Status codes: 3=Up, 4=Warning, 5=Down, 7=Paused, 13=Unknown",
+			"Use these EXACT table names in your queries. Status codes: 1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, 7=PausedByUser, 8=PausedByDependency, 9=PausedBySchedule, 10=Unusual, 11=PausedByLicense, 12=PausedUntil, 13=DownAcknowledged, 14=DownPartial",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -438,7 +438,7 @@ func formatResult(data interface{}, count int) (*mcp.CallToolResult, error) {
 	}
 
 	return &mcp.CallToolResult{
-		Content: []interface{}{
+		Content: []mcp.Content{
 			mcp.TextContent{
 				Type: "text",
 				Text: fmt.Sprintf("Found %d result(s):\n\n%s", count, string(jsonData)),
