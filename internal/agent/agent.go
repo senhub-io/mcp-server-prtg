@@ -6,7 +6,8 @@ import (
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
-	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
+
+	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
 	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/matthieu/mcp-server-prtg/internal/handlers"
 	"github.com/matthieu/mcp-server-prtg/internal/server"
@@ -20,12 +21,12 @@ type Agent struct {
 	logger     *logger.Logger
 	db         *database.DB
 	httpServer *server.StreamableHTTPServer
-	args       *cliArgs.ParsedArgs
+	args       *cliargs.ParsedArgs
 	shutdownCh chan struct{} // Channel to signal shutdown
 }
 
 // NewAgent creates a new agent instance.
-func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
+func NewAgent(args *cliargs.ParsedArgs) (*Agent, error) {
 	// Initialize logger
 	baseLogger := logger.NewLogger(args)
 
@@ -62,6 +63,7 @@ func NewAgent(args *cliArgs.ParsedArgs) (*Agent, error) {
 			Err(err).
 			Str("sslmode", config.GetDatabaseSSLMode()).
 			Msg("Failed to initialize database - server will start but tools will not work")
+
 		db = nil
 	} else {
 		moduleLogger.Info().Msg("Database connection established")

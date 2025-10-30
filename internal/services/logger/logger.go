@@ -7,15 +7,18 @@ import (
 	"sync"
 
 	"github.com/kardianos/service"
-	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
 )
 
 // Logger wraps zerolog.Logger.
 type Logger = zerolog.Logger
 
 // Module log level registry for selective debugging.
+//
+//nolint:gochecknoglobals // Global state required for module-level logging control across packages.
 var (
 	moduleLogLevels    = make(map[string]zerolog.Level)
 	activeDebugModules = make(map[string]bool)
@@ -41,7 +44,7 @@ func NewSilentLogger() *Logger {
 }
 
 // NewLogger creates a new logger instance based on CLI arguments.
-func NewLogger(args *cliArgs.ParsedArgs) *Logger {
+func NewLogger(args *cliargs.ParsedArgs) *Logger {
 	// Determine log level from configuration
 	level := parseLogLevel(args.LogLevel)
 	zerolog.SetGlobalLevel(level)
@@ -55,7 +58,7 @@ func NewLogger(args *cliArgs.ParsedArgs) *Logger {
 }
 
 // buildDevelopmentLogger creates a logger for development/console mode.
-func buildDevelopmentLogger(_ *cliArgs.ParsedArgs, level zerolog.Level) *Logger {
+func buildDevelopmentLogger(_ *cliargs.ParsedArgs, level zerolog.Level) *Logger {
 	// Console writer with colors
 	consoleWriter := zerolog.ConsoleWriter{
 		Out:        os.Stderr,
@@ -76,13 +79,14 @@ func buildDevelopmentLogger(_ *cliArgs.ParsedArgs, level zerolog.Level) *Logger 
 }
 
 // buildProductionLogger creates a logger for production/service mode.
-func buildProductionLogger(args *cliArgs.ParsedArgs, level zerolog.Level) *Logger {
+func buildProductionLogger(args *cliargs.ParsedArgs, level zerolog.Level) *Logger {
 	// Ensure log directory exists
 	logDir := filepath.Dir(args.LogFile)
 	if err := os.MkdirAll(logDir, 0750); err != nil {
 		// Fallback to stderr
 		logger := zerolog.New(os.Stderr).Level(level).With().Timestamp().Logger()
 		logger.Error().Err(err).Msg("Failed to create log directory, using stderr")
+
 		return &logger
 	}
 
@@ -139,6 +143,7 @@ func parseLogLevel(level string) zerolog.Level {
 func SetModuleLogLevel(module string, level zerolog.Level) {
 	moduleLock.Lock()
 	defer moduleLock.Unlock()
+
 	moduleLogLevels[module] = level
 }
 
@@ -193,14 +198,16 @@ func (m *ModuleLogger) Debug() *zerolog.Event {
 	}
 
 	disabledLogger := m.Logger.Level(zerolog.Disabled)
+
 	return disabledLogger.Debug()
 }
 
 // copyMap creates a copy of a map.
 func copyMap(original map[string]bool) map[string]bool {
-	copy := make(map[string]bool, len(original))
+	moduleCopy := make(map[string]bool, len(original))
 	for k, v := range original {
-		copy[k] = v
+		moduleCopy[k] = v
 	}
-	return copy
+
+	return moduleCopy
 }

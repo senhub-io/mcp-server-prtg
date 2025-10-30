@@ -11,13 +11,14 @@ import (
 	"time"
 
 	server "github.com/mark3labs/mcp-go/server"
+
 	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
 	"github.com/matthieu/mcp-server-prtg/internal/version"
 )
 
-// authAttempt tracks authentication attempts for rate limiting
+// authAttempt tracks authentication attempts for rate limiting.
 type authAttempt struct {
 	count       int
 	firstTry    time.Time
@@ -25,7 +26,7 @@ type authAttempt struct {
 	lockedUntil time.Time
 }
 
-// authRateLimiter manages rate limiting for authentication attempts per IP
+// authRateLimiter manages rate limiting for authentication attempts per IP.
 type authRateLimiter struct {
 	attempts map[string]*authAttempt
 	mu       sync.RWMutex
@@ -36,7 +37,7 @@ type authRateLimiter struct {
 	lockoutTime time.Duration // How long to lock out after max attempts
 }
 
-// newAuthRateLimiter creates a new rate limiter with default settings
+// newAuthRateLimiter creates a new rate limiter with default settings.
 func newAuthRateLimiter() *authRateLimiter {
 	return &authRateLimiter{
 		attempts:    make(map[string]*authAttempt),
@@ -46,8 +47,7 @@ func newAuthRateLimiter() *authRateLimiter {
 	}
 }
 
-// checkAndRecord checks if an IP is rate limited and records the attempt
-// Returns true if the request should be allowed, false if rate limited
+// Returns true if the request should be allowed, false if rate limited.
 func (rl *authRateLimiter) checkAndRecord(ip string, success bool) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -94,7 +94,7 @@ func (rl *authRateLimiter) checkAndRecord(ip string, success bool) bool {
 	return true // Allow attempt
 }
 
-// cleanup removes old entries (optional, called periodically)
+// cleanup removes old entries (optional, called periodically).
 func (rl *authRateLimiter) cleanup() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -108,7 +108,7 @@ func (rl *authRateLimiter) cleanup() {
 	}
 }
 
-// StreamableHTTPServer implements MCP server using Streamable HTTP transport
+// StreamableHTTPServer implements MCP server using Streamable HTTP transport.
 type StreamableHTTPServer struct {
 	mcpServer      *server.MCPServer
 	streamableHTTP http.Handler
@@ -121,8 +121,13 @@ type StreamableHTTPServer struct {
 	shutdownCh     chan struct{} // Channel for graceful shutdown of background tasks
 }
 
-// NewStreamableHTTPServer creates a new Streamable HTTP-based MCP server
-func NewStreamableHTTPServer(mcpServer *server.MCPServer, db *database.DB, config *configuration.Configuration, baseLogger *logger.Logger) *StreamableHTTPServer {
+// NewStreamableHTTPServer creates a new Streamable HTTP-based MCP server.
+func NewStreamableHTTPServer(
+	mcpServer *server.MCPServer,
+	db *database.DB,
+	config *configuration.Configuration,
+	baseLogger *logger.Logger,
+) *StreamableHTTPServer {
 	logger := logger.NewModuleLogger(baseLogger, logger.ModuleServer)
 
 	// Get server address for binding
@@ -139,7 +144,7 @@ func NewStreamableHTTPServer(mcpServer *server.MCPServer, db *database.DB, confi
 	}
 }
 
-// Start starts the Streamable HTTP server
+// Start starts the Streamable HTTP server.
 func (s *StreamableHTTPServer) Start(_ context.Context) error {
 	s.logger.Info().
 		Str("address", s.address).
@@ -166,7 +171,9 @@ func (s *StreamableHTTPServer) Start(_ context.Context) error {
 	return nil
 }
 
-// startHTTPServer starts the HTTP server with all endpoints
+// startHTTPServer starts the HTTP server with all endpoints.
+//
+//nolint:unparam // error return kept for consistency and future-proofing
 func (s *StreamableHTTPServer) startHTTPServer() error {
 	// Create mux with all endpoints
 	mux := http.NewServeMux()
@@ -229,8 +236,7 @@ func (s *StreamableHTTPServer) startHTTPServer() error {
 	return nil
 }
 
-// getClientIP extracts the real client IP from the request
-// Handles X-Forwarded-For and X-Real-IP headers for proxy situations
+// Handles X-Forwarded-For and X-Real-IP headers for proxy situations.
 func getClientIP(r *http.Request) string {
 	// Try X-Real-IP first (single IP from trusted proxy)
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
@@ -243,6 +249,7 @@ func getClientIP(r *http.Request) string {
 		if idx := strings.Index(forwarded, ","); idx != -1 {
 			return strings.TrimSpace(forwarded[:idx])
 		}
+
 		return strings.TrimSpace(forwarded)
 	}
 
@@ -255,7 +262,7 @@ func getClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// createAuthMiddleware creates authentication middleware using Bearer token with rate limiting
+// createAuthMiddleware creates authentication middleware using Bearer token with rate limiting.
 func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Handler {
 	expectedToken := s.config.GetAPIKey()
 
@@ -272,11 +279,13 @@ func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Hand
 
 			w.Header().Set("Retry-After", "300") // 5 minutes
 			http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
+
 			return
 		}
 
 		// Extract Bearer token from Authorization header
 		authHeader := r.Header.Get("Authorization")
+
 		var providedToken string
 
 		if authHeader != "" {
@@ -303,6 +312,7 @@ func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Hand
 				Msg("Unauthorized access attempt")
 
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+
 			return
 		}
 
@@ -321,7 +331,7 @@ func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Hand
 	})
 }
 
-// cleanupRateLimiterPeriodically runs periodic cleanup of rate limiter entries
+// cleanupRateLimiterPeriodically runs periodic cleanup of rate limiter entries.
 func (s *StreamableHTTPServer) cleanupRateLimiterPeriodically() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
@@ -338,14 +348,17 @@ func (s *StreamableHTTPServer) cleanupRateLimiterPeriodically() {
 	}
 }
 
-// handleHealth handles health check requests
-func (s *StreamableHTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+// handleHealth handles health check requests.
+func (s *StreamableHTTPServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+
+	if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+		s.logger.Error().Err(err).Msg("Failed to write health response")
+	}
 }
 
-// handleStatus handles status requests (requires authentication)
+// handleStatus handles status requests (requires authentication).
 func (s *StreamableHTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := map[string]interface{}{
 		"version":   version.Get(),
@@ -374,7 +387,7 @@ func (s *StreamableHTTPServer) handleStatus(w http.ResponseWriter, r *http.Reque
 		status["version"], status["uptime"], status["database"])
 }
 
-// logStartupInfo logs startup information
+// logStartupInfo logs startup information.
 func (s *StreamableHTTPServer) logStartupInfo() {
 	protocol := "http"
 	if s.config.IsTLSEnabled() {
@@ -400,7 +413,7 @@ func (s *StreamableHTTPServer) logStartupInfo() {
 	s.logger.Info().Msgf(`  }`)
 }
 
-// Shutdown gracefully shuts down the server
+// Shutdown gracefully shuts down the server.
 func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 	s.logger.Info().Msg("Shutting down Streamable HTTP server")
 
@@ -413,7 +426,9 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 	}
 
 	s.logger.Info().Msg("Server shutdown complete")
+
 	return nil
 }
 
+//nolint:gochecknoglobals // Server start time is package-level constant set once at initialization.
 var startTime = time.Now()
