@@ -62,6 +62,7 @@ func Load(configPath string) (*Config, error) {
 
 // loadYAMLConfig loads configuration from a YAML file.
 func loadYAMLConfig(path string, cfg *Config) error {
+	// #nosec G304 -- Config path is user-provided via CLI flag (--config)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err

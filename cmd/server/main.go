@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
+	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
 	"github.com/matthieu/mcp-server-prtg/internal/version"
@@ -35,7 +36,7 @@ func main() {
 	version.Set(Version)
 
 	// Parse CLI arguments with version info
-	args := cliArgs.ParseWithVersion(getVersionString())
+	args := cliargs.ParseWithVersion(getVersionString())
 
 	// Execute command
 	if err := executeCommand(args); err != nil {
@@ -45,7 +46,7 @@ func main() {
 }
 
 // executeCommand executes the specified command.
-func executeCommand(args *cliArgs.ParsedArgs) error {
+func executeCommand(args *cliargs.ParsedArgs) error {
 	// If no command provided, show help
 	if args.Command == "" {
 		return showHelp()
@@ -67,35 +68,46 @@ func executeCommand(args *cliArgs.ParsedArgs) error {
 		if err := installService(args); err != nil {
 			return fmt.Errorf("failed to install service: %w", err)
 		}
+
 		fmt.Println("✓ Service installed successfully")
 		fmt.Printf("  Configuration: %s\n", args.ConfigPath)
 		fmt.Printf("  Use '%s start' to start the service\n", os.Args[0])
+
 		return nil
 
 	case cmdUninstall:
 		fmt.Println("Uninstalling MCP Server PRTG service...")
+
 		if err := uninstallService(args); err != nil {
 			return fmt.Errorf("failed to uninstall service: %w", err)
 		}
+
 		fmt.Println("✓ Service uninstalled successfully")
+
 		return nil
 
 	case cmdStart:
 		fmt.Println("Starting MCP Server PRTG service...")
+
 		if err := startService(args); err != nil {
 			return fmt.Errorf("failed to start service: %w", err)
 		}
+
 		fmt.Println("✓ Service started successfully")
 		// Wait a bit and check status
 		time.Sleep(2 * time.Second)
+
 		return getServiceStatus(args)
 
 	case cmdStop:
 		fmt.Println("Stopping MCP Server PRTG service...")
+
 		if err := stopService(args); err != nil {
 			return fmt.Errorf("failed to stop service: %w", err)
 		}
+
 		fmt.Println("✓ Service stopped successfully")
+
 		return nil
 
 	case cmdStatus:
@@ -110,12 +122,13 @@ func executeCommand(args *cliArgs.ParsedArgs) error {
 }
 
 // handleConfigCommand handles config-related commands.
-func handleConfigCommand(args *cliArgs.ParsedArgs) error {
+func handleConfigCommand(args *cliargs.ParsedArgs) error {
 	fmt.Println("Configuration management")
 	fmt.Printf("  Config file: %s\n", args.ConfigPath)
 	fmt.Println("\nTo generate a new configuration file, run:")
 	fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
 	fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")
+
 	return nil
 }
 
@@ -126,7 +139,7 @@ func getVersionString() string {
 }
 
 // ensureConfiguration creates configuration file if it doesn't exist.
-func ensureConfiguration(args *cliArgs.ParsedArgs) error {
+func ensureConfiguration(args *cliargs.ParsedArgs) error {
 	// Check if config file already exists
 	if _, err := os.Stat(args.ConfigPath); err == nil {
 		fmt.Printf("  Configuration file already exists: %s\n", args.ConfigPath)
@@ -135,7 +148,7 @@ func ensureConfiguration(args *cliArgs.ParsedArgs) error {
 
 	// Create directory for config file if needed
 	configDir := filepath.Dir(args.ConfigPath)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -149,10 +162,13 @@ func ensureConfiguration(args *cliArgs.ParsedArgs) error {
 	}
 
 	// Shutdown config to close file watcher
-	_ = config.Shutdown(nil)
+	if err := config.Shutdown(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to shutdown config watcher: %v\n", err)
+	}
 
 	fmt.Printf("  ✓ Configuration file created: %s\n", args.ConfigPath)
 	fmt.Printf("  ✓ API Key generated (see config file)\n")
+
 	if config.IsTLSEnabled() {
 		fmt.Printf("  ✓ TLS certificates generated\n")
 	}
@@ -189,5 +205,6 @@ func showHelp() error {
 	fmt.Printf("  %s start\n", os.Args[0])
 	fmt.Println()
 	fmt.Println("For more information, see: https://github.com/matthieu/mcp-server-prtg")
+
 	return nil
 }

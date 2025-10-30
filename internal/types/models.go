@@ -48,7 +48,8 @@ type Group struct {
 	TreeDepth   int    `json:"tree_depth"`
 }
 
-// DeviceOverview represents a complete device view with its sensors.
+// DeviceOverview represents a device with its sensors and aggregated statistics.
+// Used by the prtg_device_overview MCP tool to provide a complete device status summary.
 type DeviceOverview struct {
 	Device       Device   `json:"device"`
 	Sensors      []Sensor `json:"sensors"`
@@ -77,7 +78,8 @@ const (
 	StatusDownPartial        = 14
 )
 
-// GetStatusText returns human-readable status text.
+// GetStatusText returns the human-readable name for a PRTG status code (1-14).
+// Returns "Unknown" for invalid status codes.
 func GetStatusText(status int) string {
 	switch status {
 	case StatusUnknown:
