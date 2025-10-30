@@ -2,14 +2,14 @@
 
 [![Version](https://img.shields.io/github/v/release/senhub-io/mcp-server-prtg?include_prereleases)](https://github.com/senhub-io/mcp-server-prtg/releases)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/senhub-io/mcp-server-prtg/go-test.yml?branch=main)](https://github.com/senhub-io/mcp-server-prtg/actions)
-[![Go](https://img.shields.io/badge/go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 **MCP Server PRTG** is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes PRTG monitoring data through a standardized API. It enables LLMs (like LLM) to query sensor status, analyze alerts, and generate reports on your monitoring infrastructure in real-time.
 
 ## Features
 
-- **SSE Transport (Server-Sent Events)** - v2 architecture with HTTPS proxy and internal server
+- **Streamable HTTP Transport** - Modern MCP protocol (2025-03-26) with HTTP SSE streaming
 - **6 MCP Tools** to query PRTG data (sensors, alerts, statistics, SQL)
 - **Bearer Token Authentication** (RFC 6750)
 - **TLS/HTTPS Support** with automatic certificate generation
@@ -87,31 +87,48 @@ logging:
 
 ## Usage with MCP Client
 
-1. Install [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy):
-   ```bash
-   pip install mcp-proxy
-   ```
+Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
 
-2. Configure MCP Client (`mcp_client_config.json`):
-   ```json
-   {
-     "mcpServers": {
-       "prtg": {
-         "command": "mcp-proxy",
-         "args": [
-           "http://your-server:8443/sse",
-           "--headers",
-           "Authorization",
-           "Bearer your-api-key"
-         ]
-       }
-     }
-   }
-   ```
+```json
+{
+  "mcpServers": {
+    "prtg": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://<YOUR_SERVER>:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
 
-3. Restart MCP Client
+**For HTTP (development only):**
+```json
+{
+  "mcpServers": {
+    "prtg": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://<YOUR_SERVER>:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
 
-**Note on HTTPS/TLS:** mcp-proxy does not support the `--insecure` flag for self-signed certificates. For development, use HTTP as shown above. For production, either use trusted CA certificates or add the self-signed certificate to your system trust store. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#certificate-verification-failed-with-mcp-proxy) for details.
+**Note:** For production with self-signed certificates, add `NODE_TLS_REJECT_UNAUTHORIZED=0` to `env` (not recommended) or use trusted CA certificates.
 
 **See:** [docs/USAGE.md](docs/USAGE.md) for usage examples
 
@@ -208,6 +225,5 @@ For questions or issues:
 
 ---
 
-**Version:** 1.0.2-beta
 **Organization:** SenHub.io
 **MCP Protocol:** [modelcontextprotocol.io](https://modelcontextprotocol.io)
