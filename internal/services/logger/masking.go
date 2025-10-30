@@ -7,6 +7,8 @@ import (
 )
 
 // Sensitive patterns to mask in logs.
+//
+//nolint:gochecknoglobals // Regex patterns are compile-time constants used across all log operations.
 var sensitivePatterns = []*regexp.Regexp{
 	// Passwords in various formats
 	regexp.MustCompile(`(?i)"(password|passwd|pwd)"\s*:\s*"([^"]+)"`),
@@ -36,8 +38,10 @@ func MaskSensitiveData(input string) string {
 			if len(parts) >= 3 {
 				value := parts[len(parts)-1]
 				maskedValue := maskValue(value)
+
 				return strings.Replace(match, value, maskedValue, 1)
 			}
+
 			return match
 		})
 	}
@@ -47,7 +51,7 @@ func MaskSensitiveData(input string) string {
 
 // maskValue masks a sensitive value keeping only first and last characters.
 func maskValue(value string) string {
-	if len(value) == 0 {
+	if value == "" {
 		return value
 	}
 

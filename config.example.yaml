@@ -1,0 +1,144 @@
+# MCP Server PRTG - Configuration Example
+# ==========================================
+# This is a fully documented example configuration file for mcp-server-prtg.
+# Copy this file to your desired location and customize it for your environment.
+#
+# Security best practices are applied by default. Review and adjust as needed.
+#
+# For more information, see: https://github.com/matthieu/mcp-server-prtg
+
+# Configuration file format version (do not modify)
+config_version: 1
+
+# Server Configuration
+# ====================
+server:
+  # API Key for authentication (required)
+  # Generate a secure UUID using: uuidgen (on Unix/macOS) or New-Guid (PowerShell)
+  # This key must be provided by MCP clients in the Authorization header
+  api_key: "your-secure-api-key-here"
+
+  # Network bind address
+  # - "0.0.0.0" binds to all interfaces (default)
+  # - "127.0.0.1" binds to localhost only (more secure for local-only access)
+  # - Specific IP for binding to a particular interface
+  bind_address: "0.0.0.0"
+
+  # Server port (default: 8443 for HTTPS)
+  # Use 8080 for HTTP if TLS is disabled
+  port: 8443
+
+  # Public URL for the server (optional)
+  # Used for generating client connection examples
+  # Leave empty if not using a reverse proxy or public domain
+  public_url: ""
+
+  # Enable TLS/SSL encryption (strongly recommended for production)
+  # Set to false only for local development or when using a TLS-terminating reverse proxy
+  enable_tls: true
+
+  # TLS certificate file path (required if enable_tls is true)
+  # Use absolute paths or paths relative to the working directory
+  # Generate self-signed cert: openssl req -x509 -newkey rsa:4096 -nodes -keyout key.pem -out cert.pem -days 365
+  cert_file: "/path/to/server.crt"
+
+  # TLS private key file path (required if enable_tls is true)
+  key_file: "/path/to/server.key"
+
+  # HTTP read timeout in seconds (0 = no timeout)
+  # Set to 0 for Server-Sent Events (SSE) streaming connections
+  # Non-zero values will cause streaming connections to timeout
+  read_timeout: 0
+
+  # HTTP write timeout in seconds (0 = no timeout)
+  # Set to 0 for Server-Sent Events (SSE) streaming connections
+  # Non-zero values will cause streaming connections to timeout
+  write_timeout: 0
+
+  # ⚠️  SECURITY WARNING: Allow custom SQL queries
+  # ==================================================
+  # When set to true, MCP clients can execute arbitrary SELECT queries against the database.
+  # This should ONLY be enabled in trusted environments with trusted clients.
+  #
+  # Risks when enabled:
+  # - Data exposure: Clients can read any data in the database
+  # - Performance impact: Complex queries can consume significant resources
+  # - Information disclosure: Database schema can be discovered
+  #
+  # Security measures when enabled:
+  # - Only SELECT queries are allowed (INSERT/UPDATE/DELETE/DROP are blocked)
+  # - Queries with multiple statements (;) are rejected
+  # - Keywords like INSERT, UPDATE, DELETE, DROP, CREATE, ALTER are blocked
+  # - Results are limited to prevent memory exhaustion
+  #
+  # Recommendation: Keep this set to false unless absolutely necessary
+  allow_custom_queries: false
+
+# Database Configuration
+# ======================
+database:
+  # PostgreSQL server hostname or IP address
+  host: "localhost"
+
+  # PostgreSQL server port (default: 5432)
+  port: 5432
+
+  # Database name
+  # This should match your PRTG data exporter database
+  name: "prtg_data_exporter"
+
+  # Database user (read-only access recommended)
+  # Create a dedicated read-only user for security:
+  # CREATE USER prtg_reader WITH PASSWORD 'your-secure-password';
+  # GRANT CONNECT ON DATABASE prtg_data_exporter TO prtg_reader;
+  # GRANT USAGE ON SCHEMA public TO prtg_reader;
+  # GRANT SELECT ON ALL TABLES IN SCHEMA public TO prtg_reader;
+  user: "prtg_reader"
+
+  # Database password
+  # ⚠️  Store this securely - consider using environment variables:
+  # password: "${PRTG_DB_PASSWORD}"
+  password: "your-secure-password-here"
+
+  # SSL mode for database connection
+  # Options:
+  # - "disable": No SSL (not recommended for production)
+  # - "require": SSL required but no certificate verification
+  # - "verify-ca": SSL required with CA certificate verification
+  # - "verify-full": SSL required with full certificate verification (most secure)
+  sslmode: "disable"
+
+# Logging Configuration
+# =====================
+logging:
+  # Log level
+  # Options: debug, info, warn, error, fatal, panic
+  # - debug: Very verbose, includes all operations (development only)
+  # - info: General operational messages (recommended for production)
+  # - warn: Warning messages for potential issues
+  # - error: Error messages for failures
+  level: "info"
+
+  # Log file path
+  # Use absolute paths or paths relative to the working directory
+  # The directory will be created automatically if it doesn't exist
+  file: "/var/log/mcp-server-prtg/mcp-server-prtg.log"
+
+  # Maximum size of each log file in megabytes before rotation
+  # Default: 10 MB
+  max_size_mb: 10
+
+  # Maximum number of old log files to retain
+  # Older files are automatically deleted
+  # Default: 5 (keeps last 5 rotated files)
+  max_backups: 5
+
+  # Maximum age of log files in days
+  # Files older than this are automatically deleted
+  # Default: 30 days
+  max_age_days: 30
+
+  # Compress rotated log files using gzip
+  # Recommended to save disk space
+  # Default: true
+  compress: true
