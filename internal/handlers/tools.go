@@ -324,7 +324,7 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 
 	// Tool 11: prtg_get_statistics
 	s.AddTool(mcp.Tool{
-		Name:        "prtg_get_statistics",
+		Name: "prtg_get_statistics",
 		Description: "Get aggregated PRTG server statistics including total counts, status breakdown, and sensor type distribution. " +
 			"Provides a comprehensive overview of your PRTG installation's health and composition.",
 		InputSchema: mcp.ToolInputSchema{
