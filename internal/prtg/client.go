@@ -124,12 +124,13 @@ func (c *Client) GetChannels(ctx context.Context, filters map[string]string) ([]
 		endpoint += "?" + queryString
 	}
 
-	var response ChannelsResponse
-	if err := c.doRequest(ctx, "GET", endpoint, nil, &response); err != nil {
+	// PRTG API returns array directly, not wrapped in object
+	var channels []Channel
+	if err := c.doRequest(ctx, "GET", endpoint, nil, &channels); err != nil {
 		return nil, err
 	}
 
-	return response.Channels, nil
+	return channels, nil
 }
 
 // GetChannelsBySensor retrieves all channels for a specific sensor.
