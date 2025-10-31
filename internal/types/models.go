@@ -59,6 +59,28 @@ type DeviceOverview struct {
 	WarnSensors  int      `json:"warning_sensors"`
 }
 
+// HierarchyNode represents a node in the PRTG hierarchy tree.
+// Used by the prtg_get_hierarchy MCP tool to navigate the PRTG structure.
+type HierarchyNode struct {
+	Group   Group             `json:"group"`
+	Devices []HierarchyDevice `json:"devices"`
+	Groups  []*HierarchyNode  `json:"groups,omitempty"`
+}
+
+// HierarchyDevice represents a device with its sensors in the hierarchy.
+type HierarchyDevice struct {
+	Device  Device   `json:"device"`
+	Sensors []Sensor `json:"sensors,omitempty"`
+}
+
+// SearchResults represents the results of a universal search across PRTG objects.
+// Used by the prtg_search MCP tool.
+type SearchResults struct {
+	Groups  []Group  `json:"groups"`
+	Devices []Device `json:"devices"`
+	Sensors []Sensor `json:"sensors"`
+}
+
 // SensorStatus represents PRTG sensor status values.
 // Official PRTG status codes from documentation.
 const (
