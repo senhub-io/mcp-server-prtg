@@ -251,27 +251,22 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 
 	h.logger.Debug().Int("count", len(sensors)).Msg("db.GetSensors returned")
 
-	result, err := formatResult(sensors, len(sensors))
-	if err != nil {
-		h.logger.Error().Err(err).Msg("formatResult failed")
-		return nil, err
-	}
-
-	// Calculate response size
-	responseSize := 0
-
-	if len(result.Content) > 0 {
-		if textContent, ok := result.Content[0].(mcp.TextContent); ok {
-			responseSize = len(textContent.Text)
-		}
-	}
+	// Use visual formatting for sensors
+	formattedText := formatSensorsResponse(sensors)
 
 	h.logger.Info().
 		Int("sensors_count", len(sensors)).
-		Int("response_size_bytes", responseSize).
+		Int("response_size_bytes", len(formattedText)).
 		Msg("returning result to MCP client")
 
-	return result, nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleGetSensorStatus handles the prtg_get_sensor_status tool.
@@ -329,7 +324,17 @@ func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolR
 		return nil, fmt.Errorf("failed to get alerts: %w", err)
 	}
 
-	return formatResult(sensors, len(sensors))
+	// Use visual formatting for alerts
+	formattedText := formatAlertsResponse(sensors)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleDeviceOverview handles the prtg_device_overview tool.
@@ -357,7 +362,17 @@ func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.Call
 		return nil, fmt.Errorf("failed to get device overview: %w", err)
 	}
 
-	return formatResult(overview, overview.TotalSensors)
+	// Use visual formatting for device overview
+	formattedText := formatDeviceOverviewResponse(overview)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleTopSensors handles the prtg_top_sensors tool.
@@ -396,7 +411,17 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 		return nil, fmt.Errorf("failed to get top sensors: %w", err)
 	}
 
-	return formatResult(sensors, len(sensors))
+	// Use visual formatting for top sensors
+	formattedText := formatTopSensorsResponse(sensors, args.Metric)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleCustomQuery handles the prtg_query_sql tool.
