@@ -10,7 +10,7 @@
 ## Features
 
 - **Streamable HTTP Transport** - Modern MCP protocol (2025-03-26) with HTTP SSE streaming
-- **6 MCP Tools** to query PRTG data (sensors, alerts, statistics, SQL)
+- **12 MCP Tools** to query PRTG data (sensors, alerts, hierarchy, groups, tags, business processes, statistics, SQL)
 - **Bearer Token Authentication** (RFC 6750)
 - **TLS/HTTPS Support** with automatic certificate generation
 - **Windows Service** - Installation and management via kardianos/service
@@ -139,8 +139,14 @@ Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
 | `prtg_get_sensors` | List sensors with filters (name, status, tags) |
 | `prtg_get_sensor_status` | Details of a specific sensor by ID |
 | `prtg_get_alerts` | Sensors in alert state (warning/down) |
-| `prtg_device_overview` | Complete overview of a device |
+| `prtg_device_overview` | Complete overview of a device with group info and tags |
 | `prtg_top_sensors` | Top sensors by uptime/downtime/alerts |
+| `prtg_get_hierarchy` | Navigate PRTG hierarchy tree (groups/devices/sensors) |
+| `prtg_search` | Universal search across groups, devices, and sensors |
+| `prtg_get_groups` | List groups/probes with filtering options |
+| `prtg_get_tags` | List tags with usage statistics |
+| `prtg_get_business_processes` | Query Business Process sensors |
+| `prtg_get_statistics` | Server-wide aggregated statistics |
 | `prtg_query_sql` | Custom SQL queries on PRTG database |
 
 **See:** [docs/TOOLS.md](docs/TOOLS.md) for complete tool documentation
