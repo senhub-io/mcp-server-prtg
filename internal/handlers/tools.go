@@ -1,5 +1,5 @@
 // Package handlers implements MCP (Model Context Protocol) tool handlers for PRTG monitoring data.
-// It provides 11 MCP tools: sensors, alerts, device overview, top sensors, hierarchy, search, groups, tags, business processes, filters, statistics, and custom SQL.
+// It provides 12 MCP tools: sensors, sensor status, alerts, device overview, top sensors, hierarchy, search, groups, tags, business processes, statistics, and custom SQL.
 package handlers
 
 import (
