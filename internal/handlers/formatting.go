@@ -342,6 +342,264 @@ func formatTopSensorsResponse(sensors []types.Sensor, metric string) string {
 	return sb.String()
 }
 
+// formatHierarchyResponse formats hierarchy in a visual tree format with full JSON data.
+func formatHierarchyResponse(node *types.HierarchyNode) string {
+	var sb strings.Builder
+
+	// 1. Header
+	sb.WriteString(fmt.Sprintf("## 🌳 PRTG Hierarchy: %s\n\n", node.Group.Name))
+
+	// 2. Group info
+	sb.WriteString("**Group Information:**\n")
+	sb.WriteString(fmt.Sprintf("- **Group ID:** %d\n", node.Group.ID))
+	sb.WriteString(fmt.Sprintf("- **Tree Depth:** %d\n", node.Group.TreeDepth))
+	if node.Group.IsProbeNode {
+		sb.WriteString("- **Type:** 📡 Probe Node\n")
+	} else {
+		sb.WriteString("- **Type:** 📁 Group\n")
+	}
+	if node.Group.FullPath != "" {
+		sb.WriteString(fmt.Sprintf("- **Path:** %s\n", node.Group.FullPath))
+	}
+	sb.WriteString("\n")
+
+	// 3. Tree structure
+	sb.WriteString("**Tree Structure:**\n\n")
+	formatHierarchyNode(&sb, node, "", true)
+	sb.WriteString("\n")
+
+	// 4. Statistics summary
+	deviceCount, sensorCount := countHierarchyStats(node)
+	childGroupCount := len(node.Groups)
+
+	sb.WriteString("**Summary:**\n")
+	sb.WriteString(fmt.Sprintf("- **Child Groups:** %d\n", childGroupCount))
+	sb.WriteString(fmt.Sprintf("- **Total Devices:** %d\n", deviceCount))
+	sb.WriteString(fmt.Sprintf("- **Total Sensors:** %d\n", sensorCount))
+	sb.WriteString("\n")
+
+	// 5. Full JSON data
+	sb.WriteString("---\n\n")
+	sb.WriteString("💾 **Complete hierarchy data below** (downloadable)\n\n")
+	sb.WriteString("```json\n")
+	jsonData, _ := json.MarshalIndent(node, "", "  ")
+	sb.WriteString(string(jsonData))
+	sb.WriteString("\n```\n")
+
+	return sb.String()
+}
+
+// formatHierarchyNode recursively formats a hierarchy node as a tree structure.
+func formatHierarchyNode(sb *strings.Builder, node *types.HierarchyNode, prefix string, isLast bool) {
+	// Determine the branch characters
+	branch := "├── "
+	if isLast {
+		branch = "└── "
+	}
+
+	// Group name
+	groupType := "📁"
+	if node.Group.IsProbeNode {
+		groupType = "📡"
+	}
+	sb.WriteString(fmt.Sprintf("%s%s %s %s\n", prefix, branch, groupType, node.Group.Name))
+
+	// Prepare prefix for children
+	childPrefix := prefix
+	if isLast {
+		childPrefix += "    "
+	} else {
+		childPrefix += "│   "
+	}
+
+	// Devices in this group
+	for i, device := range node.Devices {
+		isLastDevice := i == len(node.Devices)-1 && len(node.Groups) == 0
+
+		deviceBranch := "├── "
+		if isLastDevice {
+			deviceBranch = "└── "
+		}
+
+		statusInfo := ""
+		if device.Device.SensorCount > 0 {
+			statusInfo = fmt.Sprintf(" (%d sensors)", device.Device.SensorCount)
+		}
+
+		sb.WriteString(fmt.Sprintf("%s%s 🖥️  %s%s\n", childPrefix, deviceBranch, device.Device.Name, statusInfo))
+
+		// Sensors if included
+		if len(device.Sensors) > 0 {
+			sensorPrefix := childPrefix
+			if isLastDevice {
+				sensorPrefix += "    "
+			} else {
+				sensorPrefix += "│   "
+			}
+
+			for j, sensor := range device.Sensors {
+				isLastSensor := j == len(device.Sensors)-1
+				sensorBranch := "├── "
+				if isLastSensor {
+					sensorBranch = "└── "
+				}
+
+				emoji := getStatusEmoji(sensor.Status)
+				sb.WriteString(fmt.Sprintf("%s%s %s %s (%s)\n",
+					sensorPrefix, sensorBranch, emoji, sensor.Name, sensor.StatusText))
+			}
+		}
+	}
+
+	// Child groups
+	for i, childGroup := range node.Groups {
+		isLastGroup := i == len(node.Groups)-1
+		formatHierarchyNode(sb, childGroup, childPrefix, isLastGroup)
+	}
+}
+
+// countHierarchyStats counts total devices and sensors in the hierarchy tree.
+func countHierarchyStats(node *types.HierarchyNode) (devices, sensors int) {
+	devices = len(node.Devices)
+
+	for _, device := range node.Devices {
+		sensors += len(device.Sensors)
+	}
+
+	for _, childGroup := range node.Groups {
+		childDevices, childSensors := countHierarchyStats(childGroup)
+		devices += childDevices
+		sensors += childSensors
+	}
+
+	return devices, sensors
+}
+
+// formatSearchResponse formats universal search results in a visual format with full JSON data.
+func formatSearchResponse(results *types.SearchResults, searchTerm string) string {
+	var sb strings.Builder
+
+	totalResults := len(results.Groups) + len(results.Devices) + len(results.Sensors)
+
+	// 1. Header
+	sb.WriteString(fmt.Sprintf("## 🔍 Search Results for \"%s\"\n\n", searchTerm))
+	sb.WriteString(fmt.Sprintf("Found **%d total result(s)** across all categories\n\n", totalResults))
+
+	if totalResults == 0 {
+		sb.WriteString("No results found. Try a different search term.\n")
+		return sb.String()
+	}
+
+	// 2. Summary breakdown
+	sb.WriteString("**Results by category:**\n")
+	sb.WriteString(fmt.Sprintf("- 📁 **Groups:** %d\n", len(results.Groups)))
+	sb.WriteString(fmt.Sprintf("- 🖥️  **Devices:** %d\n", len(results.Devices)))
+	sb.WriteString(fmt.Sprintf("- 📊 **Sensors:** %d\n", len(results.Sensors)))
+	sb.WriteString("\n")
+
+	// 3. Groups section
+	if len(results.Groups) > 0 {
+		sb.WriteString("### 📁 Groups\n\n")
+		sb.WriteString("| ID | Name | Type | Path |\n")
+		sb.WriteString("|----|------|------|------|\n")
+
+		displayCount := len(results.Groups)
+		if displayCount > 20 {
+			displayCount = 20
+		}
+
+		for i := 0; i < displayCount; i++ {
+			group := results.Groups[i]
+			groupType := "Group"
+			if group.IsProbeNode {
+				groupType = "Probe"
+			}
+
+			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s |\n",
+				group.ID,
+				truncateString(group.Name, 30),
+				groupType,
+				truncateString(group.FullPath, 40),
+			))
+		}
+
+		if len(results.Groups) > 20 {
+			sb.WriteString(fmt.Sprintf("| ... | *%d more groups* | ... | ... |\n", len(results.Groups)-20))
+		}
+		sb.WriteString("\n")
+	}
+
+	// 4. Devices section
+	if len(results.Devices) > 0 {
+		sb.WriteString("### 🖥️  Devices\n\n")
+		sb.WriteString("| ID | Name | Host | Group | Sensors |\n")
+		sb.WriteString("|----|------|------|-------|----------|\n")
+
+		displayCount := len(results.Devices)
+		if displayCount > 20 {
+			displayCount = 20
+		}
+
+		for i := 0; i < displayCount; i++ {
+			device := results.Devices[i]
+
+			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %d |\n",
+				device.ID,
+				truncateString(device.Name, 25),
+				truncateString(device.Host, 20),
+				truncateString(device.GroupName, 20),
+				device.SensorCount,
+			))
+		}
+
+		if len(results.Devices) > 20 {
+			sb.WriteString(fmt.Sprintf("| ... | *%d more devices* | ... | ... | ... |\n", len(results.Devices)-20))
+		}
+		sb.WriteString("\n")
+	}
+
+	// 5. Sensors section
+	if len(results.Sensors) > 0 {
+		sb.WriteString("### 📊 Sensors\n\n")
+		sb.WriteString("| ID | Name | Device | Type | Status |\n")
+		sb.WriteString("|----|------|--------|------|--------|\n")
+
+		displayCount := len(results.Sensors)
+		if displayCount > 20 {
+			displayCount = 20
+		}
+
+		for i := 0; i < displayCount; i++ {
+			sensor := results.Sensors[i]
+			statusEmoji := getStatusEmoji(sensor.Status)
+
+			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %s | %s %s |\n",
+				sensor.ID,
+				truncateString(sensor.Name, 25),
+				truncateString(sensor.DeviceName, 20),
+				truncateString(sensor.SensorType, 15),
+				statusEmoji,
+				sensor.StatusText,
+			))
+		}
+
+		if len(results.Sensors) > 20 {
+			sb.WriteString(fmt.Sprintf("| ... | *%d more sensors* | ... | ... | ... |\n", len(results.Sensors)-20))
+		}
+		sb.WriteString("\n")
+	}
+
+	// 6. Full JSON data
+	sb.WriteString("---\n\n")
+	sb.WriteString("💾 **Complete search results below** (downloadable)\n\n")
+	sb.WriteString("```json\n")
+	jsonData, _ := json.MarshalIndent(results, "", "  ")
+	sb.WriteString(string(jsonData))
+	sb.WriteString("\n```\n")
+
+	return sb.String()
+}
+
 // truncateString truncates a string to maxLen characters, adding "..." if truncated.
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
