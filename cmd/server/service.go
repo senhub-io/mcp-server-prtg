@@ -395,7 +395,6 @@ func getServiceStatus(args *cliargs.ParsedArgs) error {
 
 			fmt.Println("Server:")
 			fmt.Printf("  Address:      %s\n", config.GetServerAddress())
-			fmt.Printf("  Public URL:   %s\n", config.GetPublicURL())
 			fmt.Printf("  TLS Enabled:  %v\n", config.IsTLSEnabled())
 
 			if config.IsTLSEnabled() {

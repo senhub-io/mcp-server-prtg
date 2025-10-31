@@ -231,6 +231,9 @@ func formatDeviceOverviewResponse(overview *types.DeviceOverview) string {
 	sb.WriteString("**Device Information:**\n")
 	sb.WriteString(fmt.Sprintf("- **Device ID:** %d\n", overview.Device.ID))
 	sb.WriteString(fmt.Sprintf("- **Host:** %s\n", overview.Device.Host))
+	if overview.Device.GroupName != "" {
+		sb.WriteString(fmt.Sprintf("- **Group:** %s\n", overview.Device.GroupName))
+	}
 	sb.WriteString(fmt.Sprintf("- **Total Sensors:** %d\n", overview.TotalSensors))
 	if overview.Device.FullPath != "" {
 		sb.WriteString(fmt.Sprintf("- **Path:** %s\n", overview.Device.FullPath))
@@ -250,30 +253,104 @@ func formatDeviceOverviewResponse(overview *types.DeviceOverview) string {
 	}
 	sb.WriteString("\n")
 
-	// 4. Sensors table
+	// 4. Tag summary
+	if len(overview.Sensors) > 0 {
+		tagMap := make(map[string]int)
+		for _, sensor := range overview.Sensors {
+			if sensor.Tags != "" {
+				tags := strings.Split(sensor.Tags, ",")
+				for _, tag := range tags {
+					tag = strings.TrimSpace(tag)
+					if tag != "" {
+						tagMap[tag]++
+					}
+				}
+			}
+		}
+
+		if len(tagMap) > 0 {
+			sb.WriteString("**Tags used on this device:**\n")
+			// Sort tags by usage count
+			type tagCount struct {
+				tag   string
+				count int
+			}
+			tagCounts := make([]tagCount, 0, len(tagMap))
+			for tag, count := range tagMap {
+				tagCounts = append(tagCounts, tagCount{tag, count})
+			}
+			// Sort by count descending
+			for i := 0; i < len(tagCounts); i++ {
+				for j := i + 1; j < len(tagCounts); j++ {
+					if tagCounts[j].count > tagCounts[i].count {
+						tagCounts[i], tagCounts[j] = tagCounts[j], tagCounts[i]
+					}
+				}
+			}
+			// Show top 10 tags
+			displayCount := len(tagCounts)
+			if displayCount > 10 {
+				displayCount = 10
+			}
+			for i := 0; i < displayCount; i++ {
+				sb.WriteString(fmt.Sprintf("- 🏷️ **%s** (%d sensor%s)\n",
+					tagCounts[i].tag,
+					tagCounts[i].count,
+					func() string {
+						if tagCounts[i].count > 1 {
+							return "s"
+						}
+						return ""
+					}(),
+				))
+			}
+			if len(tagCounts) > 10 {
+				sb.WriteString(fmt.Sprintf("- *...and %d more tags*\n", len(tagCounts)-10))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// 5. Sensors table
 	if len(overview.Sensors) > 0 {
 		sb.WriteString("**Sensors:**\n\n")
-		sb.WriteString("| Name | Status | Type | Last Check |\n")
-		sb.WriteString("|------|--------|------|------------|\n")
+		sb.WriteString("| Name | Status | Type | Last Check | Tags |\n")
+		sb.WriteString("|------|--------|------|------------|------|\n")
 
-		for _, sensor := range overview.Sensors {
+		displayCount := len(overview.Sensors)
+		if displayCount > 50 {
+			displayCount = 50
+		}
+
+		for i := 0; i < displayCount; i++ {
+			sensor := overview.Sensors[i]
 			statusEmoji := getStatusEmoji(sensor.Status)
 			lastCheck := "-"
 			if sensor.LastCheckUTC != nil {
 				lastCheck = sensor.LastCheckUTC.Format("2006-01-02 15:04")
 			}
 
-			sb.WriteString(fmt.Sprintf("| %s | %s %s | %s | %s |\n",
+			tags := "-"
+			if sensor.Tags != "" {
+				tags = truncateString(strings.ReplaceAll(sensor.Tags, ",", ", "), 30)
+			}
+
+			sb.WriteString(fmt.Sprintf("| %s | %s %s | %s | %s | %s |\n",
 				truncateString(sensor.Name, 30),
 				statusEmoji,
 				sensor.StatusText,
-				truncateString(sensor.SensorType, 20),
+				truncateString(sensor.SensorType, 15),
 				lastCheck,
+				tags,
 			))
+		}
+
+		if len(overview.Sensors) > 50 {
+			sb.WriteString(fmt.Sprintf("| ... | *%d more sensors* | ... | ... | ... |\n", len(overview.Sensors)-50))
 		}
 	}
 
-	// 5. Full JSON data
+	// 6. Full JSON data
 	sb.WriteString("\n---\n\n")
 	sb.WriteString("💾 **Complete data below** (downloadable)\n\n")
 	sb.WriteString("```json\n")
@@ -594,6 +671,317 @@ func formatSearchResponse(results *types.SearchResults, searchTerm string) strin
 	sb.WriteString("💾 **Complete search results below** (downloadable)\n\n")
 	sb.WriteString("```json\n")
 	jsonData, _ := json.MarshalIndent(results, "", "  ")
+	sb.WriteString(string(jsonData))
+	sb.WriteString("\n```\n")
+
+	return sb.String()
+}
+
+// formatGroupsResponse formats groups in a visual format with full JSON data.
+func formatGroupsResponse(groups []types.Group) string {
+	var sb strings.Builder
+
+	// 1. Header
+	sb.WriteString(fmt.Sprintf("## 📁 PRTG Groups\n\n"))
+	sb.WriteString(fmt.Sprintf("Found **%d group(s)**\n\n", len(groups)))
+
+	if len(groups) == 0 {
+		sb.WriteString("No groups found matching the criteria.\n")
+		return sb.String()
+	}
+
+	// 2. Breakdown by type
+	probeCount := 0
+	groupCount := 0
+	for _, group := range groups {
+		if group.IsProbeNode {
+			probeCount++
+		} else {
+			groupCount++
+		}
+	}
+
+	sb.WriteString("**Breakdown by type:**\n")
+	sb.WriteString(fmt.Sprintf("- 📡 **Probes:** %d\n", probeCount))
+	sb.WriteString(fmt.Sprintf("- 📁 **Groups:** %d\n", groupCount))
+	sb.WriteString("\n")
+
+	// 3. Groups table
+	sb.WriteString("| ID | Name | Type | Tree Depth | Path |\n")
+	sb.WriteString("|----|------|------|------------|------|\n")
+
+	displayCount := len(groups)
+	if displayCount > 50 {
+		displayCount = 50
+	}
+
+	for i := 0; i < displayCount; i++ {
+		group := groups[i]
+		groupType := "Group"
+		typeIcon := "📁"
+		if group.IsProbeNode {
+			groupType = "Probe"
+			typeIcon = "📡"
+		}
+
+		sb.WriteString(fmt.Sprintf("| %d | %s | %s %s | %d | %s |\n",
+			group.ID,
+			truncateString(group.Name, 30),
+			typeIcon,
+			groupType,
+			group.TreeDepth,
+			truncateString(group.FullPath, 50),
+		))
+	}
+
+	if len(groups) > 50 {
+		sb.WriteString(fmt.Sprintf("| ... | *%d more groups* | ... | ... | ... |\n", len(groups)-50))
+	}
+	sb.WriteString("\n")
+
+	// 4. Full JSON data
+	sb.WriteString("---\n\n")
+	sb.WriteString("💾 **Complete groups data below** (downloadable)\n\n")
+	sb.WriteString("```json\n")
+	jsonData, _ := json.MarshalIndent(groups, "", "  ")
+	sb.WriteString(string(jsonData))
+	sb.WriteString("\n```\n")
+
+	return sb.String()
+}
+
+// formatTagsResponse formats tags data with visual summary and JSON export.
+func formatTagsResponse(tags []types.Tag) string {
+	var sb strings.Builder
+
+	// 1. Header
+	sb.WriteString(fmt.Sprintf("## 🏷️ PRTG Tags\n\n"))
+	sb.WriteString(fmt.Sprintf("Found **%d tag(s)**\n\n", len(tags)))
+
+	if len(tags) == 0 {
+		sb.WriteString("No tags found matching the criteria.\n")
+		return sb.String()
+	}
+
+	// 2. Statistics
+	totalSensorCount := 0
+	for _, tag := range tags {
+		totalSensorCount += tag.SensorCount
+	}
+
+	sb.WriteString("**Tag usage statistics:**\n")
+	sb.WriteString(fmt.Sprintf("- 📊 **Total sensor associations:** %d\n", totalSensorCount))
+	if len(tags) > 0 {
+		avgUsage := float64(totalSensorCount) / float64(len(tags))
+		sb.WriteString(fmt.Sprintf("- 📈 **Average sensors per tag:** %.1f\n", avgUsage))
+	}
+	sb.WriteString("\n")
+
+	// 3. Tags table
+	sb.WriteString("| ID | Tag Name | Sensor Count |\n")
+	sb.WriteString("|----|----------|-------------|\n")
+
+	displayCount := len(tags)
+	if displayCount > 50 {
+		displayCount = 50
+	}
+
+	for i := 0; i < displayCount; i++ {
+		tag := tags[i]
+		sb.WriteString(fmt.Sprintf("| %d | %s | %d |\n",
+			tag.ID,
+			truncateString(tag.Name, 40),
+			tag.SensorCount,
+		))
+	}
+
+	if len(tags) > 50 {
+		sb.WriteString(fmt.Sprintf("| ... | *%d more tags* | ... |\n", len(tags)-50))
+	}
+	sb.WriteString("\n")
+
+	// 4. Full JSON data
+	sb.WriteString("---\n\n")
+	sb.WriteString("💾 **Complete tags data below** (downloadable)\n\n")
+	sb.WriteString("```json\n")
+	jsonData, _ := json.MarshalIndent(tags, "", "  ")
+	sb.WriteString(string(jsonData))
+	sb.WriteString("\n```\n")
+
+	return sb.String()
+}
+
+// formatBusinessProcessesResponse formats business process sensors with visual summary and JSON export.
+func formatBusinessProcessesResponse(processes []types.Sensor) string {
+	var sb strings.Builder
+
+	// 1. Header
+	sb.WriteString(fmt.Sprintf("## 📊 PRTG Business Processes\n\n"))
+	sb.WriteString(fmt.Sprintf("Found **%d business process(es)**\n\n", len(processes)))
+
+	if len(processes) == 0 {
+		sb.WriteString("No business process sensors found matching the criteria.\n")
+		sb.WriteString("\n💡 **Note:** Business Process sensors aggregate the status of multiple source sensors to monitor complete workflows.\n")
+		return sb.String()
+	}
+
+	// 2. Status breakdown
+	statusCounts := make(map[int]int)
+	for _, process := range processes {
+		statusCounts[process.Status]++
+	}
+
+	sb.WriteString("**Status breakdown:**\n")
+	if count, ok := statusCounts[types.StatusUp]; ok && count > 0 {
+		sb.WriteString(fmt.Sprintf("- ✅ **Up:** %d\n", count))
+	}
+	if count, ok := statusCounts[types.StatusWarning]; ok && count > 0 {
+		sb.WriteString(fmt.Sprintf("- ⚠️ **Warning:** %d\n", count))
+	}
+	if count, ok := statusCounts[types.StatusDown]; ok && count > 0 {
+		sb.WriteString(fmt.Sprintf("- ❌ **Down:** %d\n", count))
+	}
+	// Show other statuses if present
+	for status, count := range statusCounts {
+		if status != types.StatusUp && status != types.StatusWarning && status != types.StatusDown && count > 0 {
+			sb.WriteString(fmt.Sprintf("- 🔵 **%s:** %d\n", types.GetStatusText(status), count))
+		}
+	}
+	sb.WriteString("\n")
+
+	// 3. Business processes table
+	sb.WriteString("| ID | Name | Status | Priority | Device | Last Check | Message |\n")
+	sb.WriteString("|----|------|--------|----------|--------|------------|----------|\n")
+
+	displayCount := len(processes)
+	if displayCount > 50 {
+		displayCount = 50
+	}
+
+	for i := 0; i < displayCount; i++ {
+		process := processes[i]
+		statusEmoji := getStatusEmoji(process.Status)
+
+		lastCheck := "Never"
+		if process.LastCheckUTC != nil {
+			lastCheck = process.LastCheckUTC.Format("2006-01-02 15:04")
+		}
+
+		sb.WriteString(fmt.Sprintf("| %d | %s | %s %s | %d | %s | %s | %s |\n",
+			process.ID,
+			truncateString(process.Name, 30),
+			statusEmoji,
+			process.StatusText,
+			process.Priority,
+			truncateString(process.DeviceName, 20),
+			lastCheck,
+			truncateString(process.Message, 30),
+		))
+	}
+
+	if len(processes) > 50 {
+		sb.WriteString(fmt.Sprintf("| ... | *%d more processes* | ... | ... | ... | ... | ... |\n", len(processes)-50))
+	}
+	sb.WriteString("\n")
+
+	// 4. Full JSON data
+	sb.WriteString("---\n\n")
+	sb.WriteString("💾 **Complete business processes data below** (downloadable)\n\n")
+	sb.WriteString("```json\n")
+	jsonData, _ := json.MarshalIndent(processes, "", "  ")
+	sb.WriteString(string(jsonData))
+	sb.WriteString("\n```\n")
+
+	return sb.String()
+}
+
+// formatStatisticsResponse formats PRTG server statistics with visual summary and JSON export.
+func formatStatisticsResponse(stats *types.Statistics) string {
+	var sb strings.Builder
+
+	// 1. Header
+	sb.WriteString("## 📊 PRTG Server Statistics\n\n")
+
+	// 2. Overall counts
+	sb.WriteString("**Overall Infrastructure:**\n")
+	sb.WriteString(fmt.Sprintf("- 🖥️ **Devices:** %d\n", stats.TotalDevices))
+	sb.WriteString(fmt.Sprintf("- 📁 **Groups:** %d\n", stats.TotalGroups))
+	sb.WriteString(fmt.Sprintf("- 📡 **Probes:** %d\n", stats.TotalProbes))
+	sb.WriteString(fmt.Sprintf("- 🔍 **Sensors:** %d\n", stats.TotalSensors))
+	sb.WriteString(fmt.Sprintf("- 🏷️ **Tags:** %d\n", stats.TotalTags))
+	sb.WriteString(fmt.Sprintf("- 📈 **Avg Sensors/Device:** %.1f\n", stats.AvgSensorsPerDevice))
+	sb.WriteString("\n")
+
+	// 3. Status breakdown
+	if len(stats.SensorsByStatus) > 0 {
+		sb.WriteString("**Sensor Status Breakdown:**\n")
+
+		// Order: Up, Warning, Down, then others
+		statusOrder := []string{"Up", "Warning", "Down"}
+		for _, status := range statusOrder {
+			if count, ok := stats.SensorsByStatus[status]; ok {
+				emoji := ""
+				switch status {
+				case "Up":
+					emoji = "✅"
+				case "Warning":
+					emoji = "⚠️"
+				case "Down":
+					emoji = "❌"
+				}
+				percentage := 0.0
+				if stats.TotalSensors > 0 {
+					percentage = float64(count) / float64(stats.TotalSensors) * 100
+				}
+				sb.WriteString(fmt.Sprintf("- %s **%s:** %d (%.1f%%)\n", emoji, status, count, percentage))
+			}
+		}
+
+		// Show other statuses
+		for status, count := range stats.SensorsByStatus {
+			if status != "Up" && status != "Warning" && status != "Down" {
+				percentage := 0.0
+				if stats.TotalSensors > 0 {
+					percentage = float64(count) / float64(stats.TotalSensors) * 100
+				}
+				sb.WriteString(fmt.Sprintf("- 🔵 **%s:** %d (%.1f%%)\n", status, count, percentage))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// 4. Top sensor types
+	if len(stats.TopSensorTypes) > 0 {
+		sb.WriteString("**Top Sensor Types:**\n\n")
+		sb.WriteString("| Rank | Sensor Type | Count | % of Total |\n")
+		sb.WriteString("|------|-------------|-------|------------|\n")
+
+		displayCount := len(stats.TopSensorTypes)
+		if displayCount > 15 {
+			displayCount = 15
+		}
+
+		for i := 0; i < displayCount; i++ {
+			st := stats.TopSensorTypes[i]
+			percentage := 0.0
+			if stats.TotalSensors > 0 {
+				percentage = float64(st.Count) / float64(stats.TotalSensors) * 100
+			}
+			sb.WriteString(fmt.Sprintf("| #%d | %s | %d | %.1f%% |\n",
+				i+1,
+				truncateString(st.Type, 40),
+				st.Count,
+				percentage,
+			))
+		}
+		sb.WriteString("\n")
+	}
+
+	// 5. Full JSON data
+	sb.WriteString("---\n\n")
+	sb.WriteString("💾 **Complete statistics data below** (downloadable)\n\n")
+	sb.WriteString("```json\n")
+	jsonData, _ := json.MarshalIndent(stats, "", "  ")
 	sb.WriteString(string(jsonData))
 	sb.WriteString("\n```\n")
 

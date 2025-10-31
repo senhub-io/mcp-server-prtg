@@ -1097,6 +1097,221 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 	return results, nil
 }
 
+// GetTags retrieves all PRTG tags matching the given filters.
+func (db *DB) GetTags(ctx context.Context, tagName string, limit int) ([]types.Tag, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT
+			t.id,
+			t.prtg_server_address_id,
+			t.name,
+			COUNT(DISTINCT st.prtg_sensor_id) as sensor_count
+		FROM prtg_tag t
+		LEFT JOIN prtg_sensor_tag st ON t.id = st.prtg_tag_id
+			AND t.prtg_server_address_id = st.prtg_server_address_id
+		WHERE 1=1
+	`
+
+	args := []interface{}{}
+	argPos := 1
+
+	if tagName != "" {
+		query += fmt.Sprintf(" AND t.name ILIKE $%d", argPos)
+		args = append(args, "%"+tagName+"%")
+		argPos++
+	}
+
+	query += ` GROUP BY t.id, t.prtg_server_address_id, t.name
+		ORDER BY t.name`
+
+	query += fmt.Sprintf(" LIMIT $%d", argPos)
+	args = append(args, limit)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	tags := []types.Tag{}
+	for rows.Next() {
+		var tag types.Tag
+
+		err := rows.Scan(
+			&tag.ID,
+			&tag.ServerID,
+			&tag.Name,
+			&tag.SensorCount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan failed: %w", err)
+		}
+
+		tags = append(tags, tag)
+	}
+
+	return tags, rows.Err()
+}
+
+// GetBusinessProcesses retrieves Business Process sensors from PRTG.
+// Business Process sensors are special sensors that aggregate status from multiple source sensors.
+func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, status *int, limit int) ([]types.Sensor, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT
+			s.id,
+			s.prtg_server_address_id,
+			s.name,
+			s.sensor_type,
+			s.prtg_device_id,
+			d.name as device_name,
+			s.scanning_interval_seconds,
+			s.status,
+			s.status_text,
+			s.last_check_utc,
+			s.last_up_utc,
+			s.last_down_utc,
+			s.priority,
+			s.message,
+			s.uptime_since_seconds,
+			s.downtime_since_seconds,
+			s.full_path,
+			COALESCE(
+				(SELECT STRING_AGG(t.name, ', ' ORDER BY t.name)
+				 FROM prtg_sensor_tag st
+				 JOIN prtg_tag t ON st.prtg_tag_id = t.id
+				 WHERE st.prtg_sensor_id = s.id
+				   AND st.prtg_server_address_id = s.prtg_server_address_id),
+				''
+			) as tags
+		FROM prtg_sensor s
+		LEFT JOIN prtg_device d ON s.prtg_device_id = d.id
+			AND s.prtg_server_address_id = d.prtg_server_address_id
+		WHERE s.sensor_type ILIKE '%business%process%'
+	`
+
+	args := []interface{}{}
+	argPos := 1
+
+	if processName != "" {
+		query += fmt.Sprintf(" AND s.name ILIKE $%d", argPos)
+		args = append(args, "%"+processName+"%")
+		argPos++
+	}
+
+	if status != nil {
+		query += fmt.Sprintf(" AND s.status = $%d", argPos)
+		args = append(args, *status)
+		argPos++
+	}
+
+	query += ` ORDER BY s.priority DESC, s.name`
+
+	query += fmt.Sprintf(" LIMIT $%d", argPos)
+	args = append(args, limit)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSensors(rows)
+}
+
+// GetStatistics retrieves aggregated PRTG server statistics.
+func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	stats := &types.Statistics{
+		SensorsByStatus: make(map[string]int),
+		TopSensorTypes:  []types.SensorTypeCount{},
+	}
+
+	// Get total counts
+	countQuery := `
+		SELECT
+			(SELECT COUNT(*) FROM prtg_sensor) as total_sensors,
+			(SELECT COUNT(*) FROM prtg_device) as total_devices,
+			(SELECT COUNT(*) FROM prtg_group) as total_groups,
+			(SELECT COUNT(*) FROM prtg_tag) as total_tags,
+			(SELECT COUNT(*) FROM prtg_group WHERE is_probe_node = true) as total_probes
+	`
+
+	err := db.QueryRow(ctx, countQuery).Scan(
+		&stats.TotalSensors,
+		&stats.TotalDevices,
+		&stats.TotalGroups,
+		&stats.TotalTags,
+		&stats.TotalProbes,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("count query failed: %w", err)
+	}
+
+	// Calculate average sensors per device
+	if stats.TotalDevices > 0 {
+		stats.AvgSensorsPerDevice = float64(stats.TotalSensors) / float64(stats.TotalDevices)
+	}
+
+	// Get status breakdown
+	statusQuery := `
+		SELECT status, COUNT(*) as count
+		FROM prtg_sensor
+		GROUP BY status
+		ORDER BY status
+	`
+
+	statusRows, err := db.Query(ctx, statusQuery)
+	if err != nil {
+		return nil, fmt.Errorf("status query failed: %w", err)
+	}
+	defer statusRows.Close()
+
+	for statusRows.Next() {
+		var status, count int
+		if err := statusRows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("status scan failed: %w", err)
+		}
+		statusText := types.GetStatusText(status)
+		stats.SensorsByStatus[statusText] = count
+	}
+
+	// Get top sensor types
+	typeQuery := `
+		SELECT sensor_type, COUNT(*) as count
+		FROM prtg_sensor
+		WHERE sensor_type IS NOT NULL AND sensor_type != ''
+		GROUP BY sensor_type
+		ORDER BY count DESC
+		LIMIT 15
+	`
+
+	typeRows, err := db.Query(ctx, typeQuery)
+	if err != nil {
+		return nil, fmt.Errorf("sensor type query failed: %w", err)
+	}
+	defer typeRows.Close()
+
+	for typeRows.Next() {
+		var sensorType string
+		var count int
+		if err := typeRows.Scan(&sensorType, &count); err != nil {
+			return nil, fmt.Errorf("sensor type scan failed: %w", err)
+		}
+		stats.TopSensorTypes = append(stats.TopSensorTypes, types.SensorTypeCount{
+			Type:  sensorType,
+			Count: count,
+		})
+	}
+
+	return stats, nil
+}
+
 // scanSensors is a helper function to scan sensor rows.
 func scanSensors(rows *sql.Rows) ([]types.Sensor, error) {
 	sensors := []types.Sensor{}
