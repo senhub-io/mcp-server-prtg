@@ -1227,6 +1227,9 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 }
 
 // GetStatistics retrieves aggregated PRTG server statistics.
+// Uses PostgreSQL table statistics (pg_class.reltuples) for fast row count estimates
+// instead of exact COUNT(*) to prevent timeouts on large databases (100k+ rows).
+// The estimates are updated by ANALYZE/VACUUM and are accurate enough for dashboard statistics.
 func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	stats := &types.Statistics{
 		SensorsByStatus: make(map[string]int),
