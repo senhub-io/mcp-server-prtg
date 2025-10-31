@@ -4,9 +4,11 @@ Complete installation guide for MCP Server PRTG on different platforms.
 
 ## Prerequisites
 
-- **PostgreSQL** - PRTG Data Exporter database
+- **PRTG Data Exporter** - Must be installed on the same server. [PRTG Data Exporter](https://www.paessler.com/manuals/prtg_data_exporter) exports PRTG monitoring data to a local PostgreSQL database that MCP Server PRTG queries.
 - **MCP Server PRTG Binary** - Downloaded from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases)
 - **Node.js** and **npm** - For mcp-remote (MCP Client)
+
+> **Note:** PRTG Data Exporter includes PostgreSQL 17 and creates the `prtg_data_exporter` database automatically. Install it before proceeding with MCP Server PRTG installation.
 
 ## Windows Installation
 
