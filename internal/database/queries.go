@@ -633,7 +633,7 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 			g.prtg_server_address_id,
 			g.name,
 			g.is_probe_node,
-			g.parent_id,
+			g.self_group_id,
 			gp.path AS full_path,
 			g.tree_depth
 		FROM prtg_group g
@@ -652,7 +652,7 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 	}
 
 	if parentID != nil {
-		query += fmt.Sprintf(" AND g.parent_id = $%d", argPos)
+		query += fmt.Sprintf(" AND g.self_group_id = $%d", argPos)
 		args = append(args, *parentID)
 		argPos++
 	}
@@ -780,13 +780,13 @@ func (db *DB) GetHierarchy(ctx context.Context, groupName string, includeSensors
 				g.prtg_server_address_id,
 				g.name,
 				g.is_probe_node,
-				g.parent_id,
+				g.self_group_id,
 				gp.path AS full_path,
 				g.tree_depth
 			FROM prtg_group g
 			INNER JOIN prtg_group_path gp ON g.id = gp.group_id
 				AND g.prtg_server_address_id = gp.prtg_server_address_id
-			WHERE g.parent_id IS NULL
+			WHERE g.self_group_id IS NULL
 			ORDER BY g.name
 			LIMIT 10
 		`
@@ -947,7 +947,7 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 			g.prtg_server_address_id,
 			g.name,
 			g.is_probe_node,
-			g.parent_id,
+			g.self_group_id,
 			gp.path AS full_path,
 			g.tree_depth
 		FROM prtg_group g
