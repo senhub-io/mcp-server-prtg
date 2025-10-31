@@ -49,6 +49,7 @@ type ConfigData struct {
 	ConfigVersion int            `yaml:"config_version"`
 	Server        ServerConfig   `yaml:"server"`
 	Database      DatabaseConfig `yaml:"database"`
+	PRTG          PRTGConfig     `yaml:"prtg"`
 	Logging       LoggingConfig  `yaml:"logging"`
 }
 
@@ -73,6 +74,15 @@ type DatabaseConfig struct {
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	SSLMode  string `yaml:"sslmode"`
+}
+
+// PRTGConfig holds PRTG API connection settings for accessing historical metrics data.
+type PRTGConfig struct {
+	Enabled   bool   `yaml:"enabled"`    // Enable/disable PRTG API access
+	BaseURL   string `yaml:"base_url"`   // PRTG server base URL (e.g., https://prtg.example.com)
+	APIToken  string `yaml:"api_token"`  // PRTG API v2 token (Bearer authentication)
+	Timeout   int    `yaml:"timeout"`    // HTTP request timeout in seconds
+	VerifySSL bool   `yaml:"verify_ssl"` // Verify SSL certificates
 }
 
 // LoggingConfig holds logging settings.
@@ -200,6 +210,13 @@ func (c *Configuration) createDefaultConfiguration() error {
 			User:     getOrDefault(c.args.DBUser, "prtg_reader"),
 			Password: c.args.DBPassword,
 			SSLMode:  getOrDefault(c.args.DBSSLMode, "disable"),
+		},
+		PRTG: PRTGConfig{
+			Enabled:   false, // Disabled by default - opt-in for PRTG API access
+			BaseURL:   "",    // Example: https://prtg.example.com
+			APIToken:  "",    // PRTG API v2 token
+			Timeout:   30,    // 30 seconds default timeout
+			VerifySSL: true,  // Verify SSL by default for security
 		},
 		Logging: LoggingConfig{
 			Level:      getOrDefault(c.args.LogLevel, "info"),
@@ -475,6 +492,31 @@ func (c *Configuration) GetWriteTimeout() time.Duration {
 // SECURITY: This should be false in production environments to prevent SQL injection risks.
 func (c *Configuration) AllowCustomQueries() bool {
 	return c.data.Server.AllowCustomQueries
+}
+
+// IsPRTGEnabled returns whether PRTG API access is enabled.
+func (c *Configuration) IsPRTGEnabled() bool {
+	return c.data.PRTG.Enabled
+}
+
+// GetPRTGBaseURL returns the PRTG server base URL.
+func (c *Configuration) GetPRTGBaseURL() string {
+	return c.data.PRTG.BaseURL
+}
+
+// GetPRTGAPIToken returns the PRTG API token.
+func (c *Configuration) GetPRTGAPIToken() string {
+	return c.data.PRTG.APIToken
+}
+
+// GetPRTGTimeout returns the PRTG API timeout duration.
+func (c *Configuration) GetPRTGTimeout() time.Duration {
+	return time.Duration(c.data.PRTG.Timeout) * time.Second
+}
+
+// IsPRTGSSLVerifyEnabled returns whether SSL certificate verification is enabled for PRTG API.
+func (c *Configuration) IsPRTGSSLVerifyEnabled() bool {
+	return c.data.PRTG.VerifySSL
 }
 
 // Helper functions.
