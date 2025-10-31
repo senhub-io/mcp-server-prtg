@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Complete reference documentation for all 6 MCP tools provided by MCP Server PRTG.
+Complete reference documentation for all 12 MCP tools provided by MCP Server PRTG.
 
 ## Table of Contents
 
@@ -12,13 +12,19 @@ Complete reference documentation for all 6 MCP tools provided by MCP Server PRTG
   - [prtg_get_alerts](#prtg_get_alerts)
   - [prtg_device_overview](#prtg_device_overview)
   - [prtg_top_sensors](#prtg_top_sensors)
+  - [prtg_get_hierarchy](#prtg_get_hierarchy)
+  - [prtg_search](#prtg_search)
+  - [prtg_get_groups](#prtg_get_groups)
+  - [prtg_get_tags](#prtg_get_tags)
+  - [prtg_get_business_processes](#prtg_get_business_processes)
+  - [prtg_get_statistics](#prtg_get_statistics)
   - [prtg_query_sql](#prtg_query_sql)
 - [Database Schema](#database-schema)
 - [Common Patterns](#common-patterns)
 
 ## Overview
 
-MCP Server PRTG exposes 6 tools through the Model Context Protocol. All tools return JSON responses with consistent formatting.
+MCP Server PRTG exposes 12 tools through the Model Context Protocol. All tools return JSON responses with consistent visual formatting including markdown tables and complete JSON data.
 
 ### Response Format
 
@@ -560,6 +566,358 @@ Returns sensors ranked by uptime, downtime, or alert frequency. Useful for ident
 - For `alerts` metric: Only returns sensors with status != 3 (Up)
 - Results are limited to the specified `limit` parameter
 - `sensor_type` uses case-insensitive partial matching
+
+---
+
+### prtg_get_hierarchy
+
+Navigate PRTG hierarchy tree structure (groups, devices, sensors).
+
+#### Description
+
+Returns the hierarchical structure of PRTG objects starting from a specific group or the root. Useful for understanding infrastructure organization.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `group_name` | string | No | - | Starting group name (partial match, case-insensitive). If not provided, starts from root |
+| `include_sensors` | boolean | No | false | Include sensors in the hierarchy |
+| `max_depth` | integer | No | 3 | Maximum depth to traverse (1-10) |
+
+#### Examples
+
+**Get full hierarchy from root:**
+```json
+{
+  "name": "prtg_get_hierarchy",
+  "arguments": {
+    "max_depth": 2
+  }
+}
+```
+
+**Get hierarchy for specific group with sensors:**
+```json
+{
+  "name": "prtg_get_hierarchy",
+  "arguments": {
+    "group_name": "Production",
+    "include_sensors": true,
+    "max_depth": 3
+  }
+}
+```
+
+#### Notes
+
+- Returns nested JSON structure representing the hierarchy
+- Visual formatting shows groups, devices, and optionally sensors
+- Includes probe status and tree depth information
+- Limited to max_depth to prevent excessive data retrieval
+
+---
+
+### prtg_search
+
+Universal search across PRTG groups, devices, and sensors.
+
+#### Description
+
+Search for PRTG objects by name across all object types. Returns matching groups, devices, and sensors in a single query.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `search_term` | string | **Yes** | - | Search term (partial match, case-insensitive) |
+| `limit` | integer | No | 50 | Maximum results per object type |
+
+#### Examples
+
+**Search for "web" objects:**
+```json
+{
+  "name": "prtg_search",
+  "arguments": {
+    "search_term": "web",
+    "limit": 20
+  }
+}
+```
+
+**Search for production resources:**
+```json
+{
+  "name": "prtg_search",
+  "arguments": {
+    "search_term": "prod"
+  }
+}
+```
+
+#### Response Format
+
+Returns results grouped by type:
+```json
+{
+  "groups": [ /* matching groups */ ],
+  "devices": [ /* matching devices */ ],
+  "sensors": [ /* matching sensors */ ]
+}
+```
+
+#### Notes
+
+- Searches across all PRTG object types simultaneously
+- Uses case-insensitive partial matching
+- Results are limited per object type
+- Visual formatting shows breakdown by object type with counts
+
+---
+
+### prtg_get_groups
+
+List PRTG groups and probes with filtering options.
+
+#### Description
+
+Returns groups and probes (root-level groups) from PRTG. Groups organize devices hierarchically, and probes are special groups representing PRTG probe nodes.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `group_name` | string | No | - | Filter by group name (partial match, case-insensitive) |
+| `parent_id` | integer | No | - | Filter by parent group ID (shows direct children) |
+| `limit` | integer | No | 100 | Maximum number of results |
+
+#### Examples
+
+**List all groups:**
+```json
+{
+  "name": "prtg_get_groups",
+  "arguments": {
+    "limit": 50
+  }
+}
+```
+
+**Find production groups:**
+```json
+{
+  "name": "prtg_get_groups",
+  "arguments": {
+    "group_name": "production"
+  }
+}
+```
+
+**Get children of specific group:**
+```json
+{
+  "name": "prtg_get_groups",
+  "arguments": {
+    "parent_id": 100
+  }
+}
+```
+
+#### Response Format
+
+Visual table showing groups with:
+- Group ID and name
+- Type (Probe or Group) with emoji indicators
+- Tree depth and full path
+- Breakdown statistics (probe count vs group count)
+
+#### Notes
+
+- Probes are indicated with 📡 emoji
+- Regular groups use 📁 emoji
+- Results include full hierarchy path
+- Tree depth shows nesting level in PRTG structure
+
+---
+
+### prtg_get_tags
+
+List PRTG tags with usage statistics.
+
+#### Description
+
+Returns all tags defined in PRTG with their usage count. Tags are labels applied to sensors for organization and filtering.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `tag_name` | string | No | - | Filter by tag name (partial match, case-insensitive) |
+| `limit` | integer | No | 100 | Maximum number of results |
+
+#### Examples
+
+**List all tags:**
+```json
+{
+  "name": "prtg_get_tags",
+  "arguments": {}
+}
+```
+
+**Find production tags:**
+```json
+{
+  "name": "prtg_get_tags",
+  "arguments": {
+    "tag_name": "prod"
+  }
+}
+```
+
+#### Response Format
+
+Visual table showing:
+- Tag ID and name
+- Number of sensors using the tag
+- Total sensor associations
+- Average sensors per tag
+
+#### Notes
+
+- Includes tags with zero usage
+- Shows sensor count for each tag
+- Useful for tag management and cleanup
+- Can identify most/least used tags
+
+---
+
+### prtg_get_business_processes
+
+Query PRTG Business Process sensors.
+
+#### Description
+
+Returns Business Process sensors, which are special sensors that aggregate status from multiple source sensors to monitor complete business workflows.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `process_name` | string | No | - | Filter by process name (partial match, case-insensitive) |
+| `status` | integer | No | - | Filter by status (3=Up, 4=Warning, 5=Down, etc.) |
+| `limit` | integer | No | 100 | Maximum number of results |
+
+#### Examples
+
+**List all business processes:**
+```json
+{
+  "name": "prtg_get_business_processes",
+  "arguments": {}
+}
+```
+
+**Find failing processes:**
+```json
+{
+  "name": "prtg_get_business_processes",
+  "arguments": {
+    "status": 5
+  }
+}
+```
+
+**Search for specific process:**
+```json
+{
+  "name": "prtg_get_business_processes",
+  "arguments": {
+    "process_name": "E-commerce"
+  }
+}
+```
+
+#### Response Format
+
+Visual table showing:
+- Process ID and name
+- Current status with emoji indicators
+- Priority level
+- Device and last check time
+- Status message
+- Status breakdown statistics (up/warning/down counts)
+
+#### Notes
+
+- Business Process sensors aggregate status from source sensors
+- Results ordered by priority (highest first)
+- Shows complete process health overview
+- Useful for high-level business monitoring
+
+---
+
+### prtg_get_statistics
+
+Get server-wide aggregated PRTG statistics.
+
+#### Description
+
+Returns comprehensive statistics about the entire PRTG installation, including counts, status breakdown, and sensor type distribution.
+
+#### Parameters
+
+No parameters required - returns global statistics.
+
+#### Examples
+
+**Get PRTG statistics:**
+```json
+{
+  "name": "prtg_get_statistics",
+  "arguments": {}
+}
+```
+
+#### Response Format
+
+Returns comprehensive statistics:
+```json
+{
+  "total_sensors": 1234,
+  "total_devices": 156,
+  "total_groups": 45,
+  "total_tags": 89,
+  "total_probes": 3,
+  "avg_sensors_per_device": 7.9,
+  "sensors_by_status": {
+    "Up": 1100,
+    "Warning": 50,
+    "Down": 34,
+    "Paused (User)": 50
+  },
+  "top_sensor_types": [
+    {"type": "ping", "count": 234},
+    {"type": "http", "count": 189},
+    {"type": "snmp", "count": 156}
+  ]
+}
+```
+
+Visual output includes:
+- Overall infrastructure counts
+- Sensor status breakdown with percentages
+- Top 15 sensor types with distribution
+- Average sensors per device metric
+
+#### Notes
+
+- Provides health overview of entire PRTG installation
+- Status breakdown shows percentage distribution
+- Sensor type distribution helps identify monitoring focus
+- No parameters needed - always returns global stats
+- Useful for capacity planning and health monitoring
 
 ---
 
