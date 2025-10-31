@@ -1233,14 +1233,15 @@ func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 		TopSensorTypes:  []types.SensorTypeCount{},
 	}
 
-	// Get total counts
+	// Get total counts - optimized query using table statistics
+	// This is much faster than COUNT(*) on large tables
 	countQuery := `
 		SELECT
-			(SELECT COUNT(*) FROM prtg_sensor) as total_sensors,
-			(SELECT COUNT(*) FROM prtg_device) as total_devices,
-			(SELECT COUNT(*) FROM prtg_group) as total_groups,
-			(SELECT COUNT(*) FROM prtg_tag) as total_tags,
-			(SELECT COUNT(*) FROM prtg_group WHERE is_probe_node = true) as total_probes
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_sensor'), 0) as total_sensors,
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_device'), 0) as total_devices,
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_group'), 0) as total_groups,
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_tag'), 0) as total_tags,
+			COALESCE((SELECT COUNT(*)::BIGINT FROM prtg_group WHERE is_probe_node = true), 0) as total_probes
 	`
 
 	err := db.QueryRow(ctx, countQuery).Scan(
