@@ -81,12 +81,20 @@ func NewClient(config ClientConfig) (*Client, error) {
 func (c *Client) GetTimeSeries(ctx context.Context, objectID int, timeType TimeSeriesType) (*TimeSeriesData, error) {
 	endpoint := fmt.Sprintf("/api/v2/experimental/timeseries/%d/%s", objectID, timeType)
 
-	var response TimeSeriesResponse
-	if err := c.doRequest(ctx, "GET", endpoint, nil, &response); err != nil {
+	// PRTG API returns array of arrays directly [[timestamp, val1, val2, ...], ...]
+	var rawData [][]interface{}
+	if err := c.doRequest(ctx, "GET", endpoint, nil, &rawData); err != nil {
 		return nil, err
 	}
 
-	return c.parseTimeSeriesResponse(objectID, timeType, nil, nil, response)
+	// Get channel names from /channels endpoint
+	channels, err := c.GetChannelsBySensor(ctx, objectID)
+	if err != nil {
+		c.logger.Warn().Err(err).Msg("Could not fetch channel names, using generic names")
+		channels = nil
+	}
+
+	return c.parseRawTimeSeriesData(objectID, timeType, nil, nil, rawData, channels)
 }
 
 // GetTimeSeriesCustom retrieves time series data for a custom time range.
@@ -101,12 +109,20 @@ func (c *Client) GetTimeSeriesCustom(ctx context.Context, objectID int, start, e
 	params.Set("start", start.Format(time.RFC3339))
 	params.Set("end", end.Format(time.RFC3339))
 
-	var response TimeSeriesResponse
-	if err := c.doRequest(ctx, "GET", endpoint+"?"+params.Encode(), nil, &response); err != nil {
+	// PRTG API returns array of arrays directly
+	var rawData [][]interface{}
+	if err := c.doRequest(ctx, "GET", endpoint+"?"+params.Encode(), nil, &rawData); err != nil {
 		return nil, err
 	}
 
-	return c.parseTimeSeriesResponse(objectID, "", &start, &end, response)
+	// Get channel names from /channels endpoint
+	channels, err := c.GetChannelsBySensor(ctx, objectID)
+	if err != nil {
+		c.logger.Warn().Err(err).Msg("Could not fetch channel names, using generic names")
+		channels = nil
+	}
+
+	return c.parseRawTimeSeriesData(objectID, "", &start, &end, rawData, channels)
 }
 
 // GetChannels retrieves all channels with optional filters.
@@ -141,32 +157,52 @@ func (c *Client) GetChannelsBySensor(ctx context.Context, sensorID int) ([]Chann
 	return c.GetChannels(ctx, filters)
 }
 
-// parseTimeSeriesResponse converts the raw API response to structured time series data.
-func (c *Client) parseTimeSeriesResponse(
+// parseRawTimeSeriesData parses raw time series data from PRTG API.
+// rawData: [[timestamp, val1, val2, ...], ...]
+// channels: Channel info to get names (optional, will use generic names if nil)
+func (c *Client) parseRawTimeSeriesData(
 	objectID int,
 	timeType TimeSeriesType,
 	start, end *time.Time,
-	response TimeSeriesResponse,
+	rawData [][]interface{},
+	channels []Channel,
 ) (*TimeSeriesData, error) {
-	if len(response.Headers) == 0 {
+	if len(rawData) == 0 {
 		return &TimeSeriesData{
 			ObjectID:   objectID,
 			TimeType:   timeType,
 			StartTime:  start,
 			EndTime:    end,
-			Headers:    []string{},
+			Headers:    []string{"timestamp"},
 			DataPoints: []TimeSeriesDataPoint{},
 		}, nil
 	}
 
-	dataPoints := make([]TimeSeriesDataPoint, 0, len(response.Data))
+	// Build headers: timestamp + channel names
+	headers := []string{"timestamp"}
+	numChannels := len(rawData[0]) - 1 // First column is timestamp
 
-	for _, row := range response.Data {
+	// Try to get channel names from channels info
+	if channels != nil && len(channels) >= numChannels {
+		for i := 0; i < numChannels; i++ {
+			headers = append(headers, channels[i].Name)
+		}
+	} else {
+		// Use generic names if we don't have channel info
+		for i := 0; i < numChannels; i++ {
+			headers = append(headers, fmt.Sprintf("Channel %d", i))
+		}
+	}
+
+	// Parse data points
+	dataPoints := make([]TimeSeriesDataPoint, 0, len(rawData))
+
+	for _, row := range rawData {
 		if len(row) == 0 {
 			continue
 		}
 
-		// First column is always the timestamp
+		// First column is timestamp
 		timestamp, err := parseTimestamp(row[0])
 		if err != nil {
 			c.logger.Warn().
@@ -178,8 +214,8 @@ func (c *Client) parseTimeSeriesResponse(
 
 		// Remaining columns are channel values
 		values := make(map[string]interface{})
-		for i := 1; i < len(row) && i < len(response.Headers); i++ {
-			channelName := response.Headers[i]
+		for i := 1; i < len(row) && i-1 < len(headers)-1; i++ {
+			channelName := headers[i] // headers[0] is "timestamp", so headers[i] matches row[i]
 			values[channelName] = row[i]
 		}
 
@@ -194,7 +230,7 @@ func (c *Client) parseTimeSeriesResponse(
 		TimeType:   timeType,
 		StartTime:  start,
 		EndTime:    end,
-		Headers:    response.Headers,
+		Headers:    headers,
 		DataPoints: dataPoints,
 	}, nil
 }
