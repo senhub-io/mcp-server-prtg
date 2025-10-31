@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/kardianos/service"
+
 	"github.com/matthieu/mcp-server-prtg/internal/agent"
-	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
+	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
 	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
@@ -20,7 +21,7 @@ import (
 // program implements the service.Interface.
 type program struct {
 	agent     *agent.Agent
-	args      *cliArgs.ParsedArgs
+	args      *cliargs.ParsedArgs
 	done      chan bool
 	appLogger *logger.Logger
 }
@@ -43,10 +44,12 @@ func (p *program) run() {
 
 	// Initialize agent (may take time due to DB connection attempts)
 	var err error
+
 	p.agent, err = agent.NewAgent(p.args)
 	if err != nil {
 		p.appLogger.Error().Err(err).Msg("Failed to create agent")
 		p.done <- true
+
 		return
 	}
 
@@ -76,16 +79,18 @@ func (p *program) Stop(_ service.Service) error {
 	}
 
 	<-p.done
+
 	return nil
 }
 
 // installService installs the service.
-func installService(args *cliArgs.ParsedArgs) error {
+func installService(args *cliargs.ParsedArgs) error {
 	// Get executable directory
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
+
 	workingDir := filepath.Dir(execPath)
 
 	// Create logs directory
@@ -93,10 +98,11 @@ func installService(args *cliArgs.ParsedArgs) error {
 	if !filepath.IsAbs(logFile) {
 		logFile = filepath.Join(workingDir, logFile)
 	}
+
 	logDir := filepath.Dir(logFile)
 
-	if err := os.MkdirAll(logDir, 0750); err != nil {
-		return fmt.Errorf("failed to create log directory %s: %w", logDir, err)
+	if mkdirErr := os.MkdirAll(logDir, 0750); mkdirErr != nil {
+		return fmt.Errorf("failed to create log directory %s: %w", logDir, mkdirErr)
 	}
 
 	fmt.Printf("✅ Log directory created: %s\n", logDir)
@@ -111,7 +117,7 @@ func installService(args *cliArgs.ParsedArgs) error {
 }
 
 // uninstallService uninstalls the service.
-func uninstallService(args *cliArgs.ParsedArgs) error {
+func uninstallService(args *cliargs.ParsedArgs) error {
 	svc, err := createService(args)
 	if err != nil {
 		return err
@@ -128,7 +134,7 @@ func uninstallService(args *cliArgs.ParsedArgs) error {
 }
 
 // startService starts the service.
-func startService(args *cliArgs.ParsedArgs) error {
+func startService(args *cliargs.ParsedArgs) error {
 	svc, err := createService(args)
 	if err != nil {
 		return err
@@ -138,7 +144,7 @@ func startService(args *cliArgs.ParsedArgs) error {
 }
 
 // stopService stops the service.
-func stopService(args *cliArgs.ParsedArgs) error {
+func stopService(args *cliargs.ParsedArgs) error {
 	svc, err := createService(args)
 	if err != nil {
 		return err
@@ -149,7 +155,9 @@ func stopService(args *cliArgs.ParsedArgs) error {
 
 // runService runs the agent via service framework (handles both console and service mode).
 // This is the correct way to run the agent in all contexts - exactly like senhub-agent.
-func runService(args *cliArgs.ParsedArgs) error {
+//
+//nolint:gocyclo // Service initialization requires complex branching logic for path resolution and mode detection.
+func runService(args *cliargs.ParsedArgs) error {
 	// Get executable path and working directory
 	executablePath, err := os.Executable()
 	if err != nil {
@@ -178,7 +186,7 @@ func runService(args *cliArgs.ParsedArgs) error {
 	svcConfig := &service.Config{
 		Name:             args.ServiceName,
 		DisplayName:      "MCP Server PRTG",
-		Description:      "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
+		Description:      "MCP Server for PRTG monitoring data - provides remote access via Streamable HTTP transport",
 		Executable:       executablePath,
 		WorkingDirectory: workingDir,
 	}
@@ -220,6 +228,7 @@ func runService(args *cliArgs.ParsedArgs) error {
 			sig := <-sigChan
 			appLogger.Info().Msgf("Received signal: %v", sig)
 			appLogger.Info().Msg("Shutting down gracefully...")
+
 			if err := prg.Stop(svc); err != nil {
 				appLogger.Error().Err(err).Msg("Error stopping service")
 			}
@@ -228,6 +237,7 @@ func runService(args *cliArgs.ParsedArgs) error {
 		// Wait for completion
 		<-prg.done
 		appLogger.Info().Msg("Agent stopped")
+
 		return nil
 	}
 
@@ -244,6 +254,7 @@ func runService(args *cliArgs.ParsedArgs) error {
 				appLogger.Warn().Err(logErr).Msg("Failed to log service error")
 			}
 		}
+
 		return fmt.Errorf("service failed to run: %w", err)
 	}
 
@@ -251,7 +262,7 @@ func runService(args *cliArgs.ParsedArgs) error {
 }
 
 // createService creates a service instance.
-func createService(args *cliArgs.ParsedArgs) (service.Service, error) {
+func createService(args *cliargs.ParsedArgs) (service.Service, error) {
 	// Get executable path
 	executablePath, err := os.Executable()
 	if err != nil {
@@ -280,6 +291,7 @@ func createService(args *cliArgs.ParsedArgs) (service.Service, error) {
 	if args.ConfigPath != "" {
 		serviceArgs = append(serviceArgs, "--config", args.ConfigPath)
 	}
+
 	if args.LogFile != "" {
 		serviceArgs = append(serviceArgs, "--log-file", args.LogFile)
 	}
@@ -288,7 +300,7 @@ func createService(args *cliArgs.ParsedArgs) (service.Service, error) {
 	svcConfig := &service.Config{
 		Name:             args.ServiceName,
 		DisplayName:      "MCP Server PRTG",
-		Description:      "MCP Server for PRTG monitoring data - provides remote access via SSE transport",
+		Description:      "MCP Server for PRTG monitoring data - provides remote access via Streamable HTTP transport",
 		Executable:       executablePath,
 		Arguments:        serviceArgs,
 		WorkingDirectory: workingDir,
@@ -319,7 +331,9 @@ func createService(args *cliArgs.ParsedArgs) (service.Service, error) {
 }
 
 // getServiceStatus returns the service status with detailed information.
-func getServiceStatus(args *cliArgs.ParsedArgs) error {
+//
+//nolint:funlen // Status display requires comprehensive output formatting.
+func getServiceStatus(args *cliargs.ParsedArgs) error {
 	svc, err := createService(args)
 	if err != nil {
 		return err
@@ -331,7 +345,9 @@ func getServiceStatus(args *cliArgs.ParsedArgs) error {
 	}
 
 	var statusText string
+
 	var statusSymbol string
+
 	switch status {
 	case service.StatusRunning:
 		statusText = "Running"
@@ -364,20 +380,28 @@ func getServiceStatus(args *cliArgs.ParsedArgs) error {
 	fmt.Println()
 
 	// Try to load config for more details (only if config exists)
+	//nolint:nestif // Configuration loading requires nested checks for file existence and database connectivity.
 	if _, err := os.Stat(args.ConfigPath); err == nil {
 		// Create a silent logger for status check
 		silentLogger := logger.NewSilentLogger()
+
 		config, err := configuration.NewConfiguration(args, silentLogger)
 		if err == nil {
-			defer config.Shutdown(context.Background())
+			defer func() {
+				if shutdownErr := config.Shutdown(context.Background()); shutdownErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to shutdown config: %v\n", shutdownErr)
+				}
+			}()
 
 			fmt.Println("Server:")
 			fmt.Printf("  Address:      %s\n", config.GetServerAddress())
 			fmt.Printf("  Public URL:   %s\n", config.GetPublicURL())
 			fmt.Printf("  TLS Enabled:  %v\n", config.IsTLSEnabled())
+
 			if config.IsTLSEnabled() {
 				fmt.Printf("  Certificate:  %s\n", config.GetTLSCertFile())
 			}
+
 			fmt.Println()
 
 			// Database information
@@ -389,6 +413,7 @@ func getServiceStatus(args *cliArgs.ParsedArgs) error {
 
 			// Try to test database connection
 			connStr := config.GetDatabaseConnectionString()
+
 			db, err := database.New(connStr, silentLogger)
 			if err != nil {
 				fmt.Printf("  Status:   ❌ Connection Failed (%v)\n", err)
@@ -401,12 +426,14 @@ func getServiceStatus(args *cliArgs.ParsedArgs) error {
 
 	fmt.Println()
 	fmt.Println("═══════════════════════════════════════════════════════════════")
+
 	return nil
 }
 
 // cleanupFiles removes configuration files, logs, and certificates during uninstall.
-func cleanupFiles(args *cliArgs.ParsedArgs) {
+func cleanupFiles(args *cliargs.ParsedArgs) {
 	var filesToRemove []string
+
 	var dirsToRemove []string
 
 	// Get executable directory
@@ -415,6 +442,7 @@ func cleanupFiles(args *cliArgs.ParsedArgs) {
 		fmt.Printf("Warning: Could not get executable path: %v\n", err)
 		return
 	}
+
 	workingDir := filepath.Dir(execPath)
 
 	// Configuration file
@@ -422,9 +450,11 @@ func cleanupFiles(args *cliArgs.ParsedArgs) {
 	if configPath == "" {
 		configPath = filepath.Join(workingDir, "config.yaml")
 	}
+
 	if !filepath.IsAbs(configPath) {
 		configPath = filepath.Join(workingDir, configPath)
 	}
+
 	if _, err := os.Stat(configPath); err == nil {
 		filesToRemove = append(filesToRemove, configPath)
 	}
@@ -440,9 +470,11 @@ func cleanupFiles(args *cliArgs.ParsedArgs) {
 	if logFile == "" {
 		logFile = filepath.Join(workingDir, "logs", "mcp-server-prtg.log")
 	}
+
 	if !filepath.IsAbs(logFile) {
 		logFile = filepath.Join(workingDir, logFile)
 	}
+
 	logDir := filepath.Dir(logFile)
 	if _, err := os.Stat(logDir); err == nil {
 		dirsToRemove = append(dirsToRemove, logDir)

@@ -16,9 +16,10 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/matthieu/mcp-server-prtg/internal/cliArgs"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
 	"gopkg.in/yaml.v3"
+
+	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
+	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
 )
 
 const (
@@ -31,7 +32,7 @@ type Configuration struct {
 	configPath string
 	logger     *logger.ModuleLogger
 	watcher    *fsnotify.Watcher
-	args       *cliArgs.ParsedArgs
+	args       *cliargs.ParsedArgs
 
 	// Configuration data
 	data ConfigData
@@ -56,13 +57,13 @@ type ServerConfig struct {
 	APIKey             string `yaml:"api_key"`              // API Key (Bearer token)
 	BindAddress        string `yaml:"bind_address"`         // Address to bind to (e.g., 0.0.0.0)
 	Port               int    `yaml:"port"`                 // Port to listen on
-	PublicURL          string `yaml:"public_url"`           // Public URL for SSE endpoint (optional, e.g., https://dash999.hibouvision.com:8443)
+	PublicURL          string `yaml:"public_url"`           // Public URL for SSE endpoint (optional)
 	EnableTLS          bool   `yaml:"enable_tls"`           // Enable HTTPS
 	CertFile           string `yaml:"cert_file"`            // TLS certificate file
 	KeyFile            string `yaml:"key_file"`             // TLS private key file
 	ReadTimeout        int    `yaml:"read_timeout"`         // Read timeout in seconds
 	WriteTimeout       int    `yaml:"write_timeout"`        // Write timeout in seconds
-	AllowCustomQueries bool   `yaml:"allow_custom_queries"` // Allow custom SQL queries (prtg_query_sql tool) - DISABLE in production for security
+	AllowCustomQueries bool   `yaml:"allow_custom_queries"` // Allow custom SQL queries - DISABLE in production
 }
 
 // DatabaseConfig holds database connection settings.
@@ -86,7 +87,7 @@ type LoggingConfig struct {
 }
 
 // NewConfiguration creates a new configuration manager.
-func NewConfiguration(args *cliArgs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
+func NewConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
 	logger := logger.NewModuleLogger(baseLogger, logger.ModuleConfiguration)
 
 	config := &Configuration{
@@ -145,10 +146,12 @@ func (c *Configuration) createDefaultConfiguration() error {
 
 	if apiKey == "" {
 		var err error
+
 		apiKey, err = generateUUIDKey()
 		if err != nil {
 			return fmt.Errorf("failed to generate API key: %w", err)
 		}
+
 		c.logger.Info().Msg("Generated new API key (Bearer token)")
 	}
 
@@ -158,6 +161,7 @@ func (c *Configuration) createDefaultConfiguration() error {
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
+
 	exeDir := filepath.Dir(exePath)
 
 	defaultCertFile := filepath.Join(exeDir, "certs", "server.crt")
@@ -223,6 +227,7 @@ func (c *Configuration) saveConfiguration() error {
 	// For Windows paths, we need to generate YAML manually to ensure proper quoting
 	// The yaml.Marshal doesn't add quotes around strings with backslashes
 	var yamlData []byte
+
 	var err error
 
 	if filepath.Separator == '\\' {
@@ -272,7 +277,7 @@ func (c *Configuration) generateWindowsYAML() ([]byte, error) {
 	if strings.Contains(certFile, "\\") && !strings.HasPrefix(certFile, "\"") {
 		yamlStr = strings.ReplaceAll(yamlStr,
 			fmt.Sprintf("cert_file: %s", certFile),
-			fmt.Sprintf("cert_file: \"%s\"", certFile))
+			fmt.Sprintf("cert_file: %q", certFile))
 	}
 
 	// Quote key_file if it contains backslashes and isn't already quoted
@@ -280,7 +285,7 @@ func (c *Configuration) generateWindowsYAML() ([]byte, error) {
 	if strings.Contains(keyFile, "\\") && !strings.HasPrefix(keyFile, "\"") {
 		yamlStr = strings.ReplaceAll(yamlStr,
 			fmt.Sprintf("key_file: %s", keyFile),
-			fmt.Sprintf("key_file: \"%s\"", keyFile))
+			fmt.Sprintf("key_file: %q", keyFile))
 	}
 
 	return []byte(yamlStr), nil
@@ -295,6 +300,7 @@ func (c *Configuration) generateTLSCertificates() error {
 	if _, err := os.Stat(c.data.Server.CertFile); err == nil {
 		certExists = true
 	}
+
 	if _, err := os.Stat(c.data.Server.KeyFile); err == nil {
 		keyExists = true
 	}
@@ -305,6 +311,7 @@ func (c *Configuration) generateTLSCertificates() error {
 			Str("cert", c.data.Server.CertFile).
 			Str("key", c.data.Server.KeyFile).
 			Msg("TLS certificates already exist, skipping generation")
+
 		return nil
 	}
 
@@ -415,6 +422,7 @@ func (c *Configuration) GetPublicURL() string {
 	if c.data.Server.EnableTLS {
 		protocol = "https"
 	}
+
 	return fmt.Sprintf("%s://%s:%d", protocol, c.data.Server.BindAddress, c.data.Server.Port)
 }
 
@@ -512,7 +520,10 @@ func (c *Configuration) initWatcher() error {
 	}
 
 	if err := watcher.Add(c.configPath); err != nil {
-		watcher.Close()
+		if closeErr := watcher.Close(); closeErr != nil {
+			c.logger.Error().Err(closeErr).Msg("Failed to close watcher after Add error")
+		}
+
 		return fmt.Errorf("failed to watch config file: %w", err)
 	}
 
@@ -559,6 +570,7 @@ func (c *Configuration) watchConfigFile() {
 			if !ok {
 				return
 			}
+
 			c.logger.Error().Err(err).Msg("File watcher error")
 		}
 	}

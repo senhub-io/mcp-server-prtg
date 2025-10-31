@@ -6,7 +6,7 @@ Complete installation guide for MCP Server PRTG on different platforms.
 
 - **PostgreSQL** - PRTG Data Exporter database
 - **MCP Server PRTG Binary** - Downloaded from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases)
-- **Python 3.8+** and **pip** - For mcp-proxy (MCP Client client)
+- **Node.js** and **npm** - For mcp-remote (MCP Client)
 
 ## Windows Installation
 
@@ -310,40 +310,37 @@ For testing or debugging without installing as service:
 # Stop with Ctrl+C
 ```
 
-## Install mcp-proxy (Client)
+## Install mcp-remote (Client)
 
-For use with MCP Client, install mcp-proxy:
+For use with MCP Client, install mcp-remote:
 
 ```bash
-# Via pip
-pip install mcp-proxy
+# Via npm
+npx mcp-remote --version
 
-# Or with pip3
-pip3 install mcp-proxy
-
-# Verify installation
-mcp-proxy --help
+# mcp-remote will be automatically installed when needed
+# No separate installation required
 ```
 
 ## Installation Verification
 
-### Test SSE Connection
+### Test Streamable HTTP Connection
 
 ```bash
 # Test with curl (replace API_KEY and URL)
 curl -k -N \
   -H "Authorization: Bearer your-api-key" \
-  https://your-server:8443/sse
+  https://your-server:8443/mcp
 
-# You should receive SSE events
+# You should receive MCP connection
 ```
 
-### Test with mcp-proxy
+### Test with mcp-remote
 
 ```bash
 # Command line test
-mcp-proxy https://your-server:8443/sse \
-  --headers Authorization "Bearer your-api-key"
+npx mcp-remote https://your-server:8443/mcp \
+  --header "Authorization:Bearer your-api-key"
 
 # Should display MCP connection
 ```

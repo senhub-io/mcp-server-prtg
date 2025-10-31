@@ -12,13 +12,14 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// DB wraps the database connection and provides query methods
+// DB wraps the database connection and provides query methods.
 type DB struct {
 	conn   *sql.DB
 	logger *zerolog.Logger
 }
 
-// New creates a new database connection with proper pool settings
+// New creates a PostgreSQL database connection with optimized pool settings.
+// The connection is validated with a ping before returning.
 func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 	conn, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -37,7 +38,10 @@ func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 	defer cancel()
 
 	if err := conn.PingContext(ctx); err != nil {
-		conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			logger.Error().Err(closeErr).Msg("Failed to close connection after ping error")
+		}
+
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
@@ -49,7 +53,7 @@ func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 	}, nil
 }
 
-// Close closes the database connection
+// Close closes the database connection.
 func (db *DB) Close() error {
 	if db.conn != nil {
 		return db.conn.Close()
@@ -58,7 +62,8 @@ func (db *DB) Close() error {
 	return nil
 }
 
-// Conn returns the underlying database connection
+// Conn returns the underlying database connection.
+// Use with caution - prefer using DB methods for proper context handling.
 func (db *DB) Conn() *sql.DB {
 	return db.conn
 }
@@ -75,7 +80,7 @@ func (db *DB) Query(ctx context.Context, query string, args ...interface{}) (*sq
 	return db.conn.QueryContext(ctx, query, args...)
 }
 
-// QueryRow executes a query expected to return at most one row
+// QueryRow executes a query expected to return at most one row.
 func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -88,7 +93,7 @@ func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) *
 	return db.conn.QueryRowContext(ctx, query, args...)
 }
 
-// Exec executes a query that doesn't return rows
+// Exec executes a query that doesn't return rows.
 func (db *DB) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -101,7 +106,7 @@ func (db *DB) Exec(ctx context.Context, query string, args ...interface{}) (sql.
 	return db.conn.ExecContext(ctx, query, args...)
 }
 
-// Health checks the database connection health
+// Health checks the database connection health.
 func (db *DB) Health(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
