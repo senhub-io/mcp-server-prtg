@@ -111,14 +111,14 @@ const (
 // Statistics represents aggregated PRTG server statistics.
 // Used by the prtg_get_statistics MCP tool to provide server-wide metrics.
 type Statistics struct {
-	TotalSensors       int                    `json:"total_sensors"`
-	TotalDevices       int                    `json:"total_devices"`
-	TotalGroups        int                    `json:"total_groups"`
-	TotalTags          int                    `json:"total_tags"`
-	SensorsByStatus    map[string]int         `json:"sensors_by_status"`
-	TopSensorTypes     []SensorTypeCount      `json:"top_sensor_types"`
-	AvgSensorsPerDevice float64               `json:"avg_sensors_per_device"`
-	TotalProbes        int                    `json:"total_probes"`
+	TotalSensors        int               `json:"total_sensors"`
+	TotalDevices        int               `json:"total_devices"`
+	TotalGroups         int               `json:"total_groups"`
+	TotalTags           int               `json:"total_tags"`
+	SensorsByStatus     map[string]int    `json:"sensors_by_status"`
+	TopSensorTypes      []SensorTypeCount `json:"top_sensor_types"`
+	AvgSensorsPerDevice float64           `json:"avg_sensors_per_device"`
+	TotalProbes         int               `json:"total_probes"`
 }
 
 // SensorTypeCount represents a count of sensors by type.
