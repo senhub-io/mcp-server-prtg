@@ -81,6 +81,14 @@ type SearchResults struct {
 	Sensors []Sensor `json:"sensors"`
 }
 
+// Tag represents a PRTG tag with usage statistics.
+type Tag struct {
+	ID          int    `json:"id"`
+	ServerID    int    `json:"server_id"`
+	Name        string `json:"name"`
+	SensorCount int    `json:"sensor_count"`
+}
+
 // SensorStatus represents PRTG sensor status values.
 // Official PRTG status codes from documentation.
 const (
@@ -99,6 +107,25 @@ const (
 	StatusDownAcknowledged   = 13
 	StatusDownPartial        = 14
 )
+
+// Statistics represents aggregated PRTG server statistics.
+// Used by the prtg_get_statistics MCP tool to provide server-wide metrics.
+type Statistics struct {
+	TotalSensors       int                    `json:"total_sensors"`
+	TotalDevices       int                    `json:"total_devices"`
+	TotalGroups        int                    `json:"total_groups"`
+	TotalTags          int                    `json:"total_tags"`
+	SensorsByStatus    map[string]int         `json:"sensors_by_status"`
+	TopSensorTypes     []SensorTypeCount      `json:"top_sensor_types"`
+	AvgSensorsPerDevice float64               `json:"avg_sensors_per_device"`
+	TotalProbes        int                    `json:"total_probes"`
+}
+
+// SensorTypeCount represents a count of sensors by type.
+type SensorTypeCount struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+}
 
 // GetStatusText returns the human-readable name for a PRTG status code (1-14).
 // Returns "Unknown" for invalid status codes.

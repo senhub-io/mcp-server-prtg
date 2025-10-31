@@ -28,11 +28,6 @@ server:
   # Use 8080 for HTTP if TLS is disabled
   port: 8443
 
-  # Public URL for the server (optional)
-  # Used for generating client connection examples
-  # Leave empty if not using a reverse proxy or public domain
-  public_url: ""
-
   # Enable TLS/SSL encryption (strongly recommended for production)
   # Set to false only for local development or when using a TLS-terminating reverse proxy
   enable_tls: true

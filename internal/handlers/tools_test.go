@@ -82,6 +82,38 @@ func (m *MockDB) Search(ctx context.Context, searchTerm string, limit int) (*typ
 	return args.Get(0).(*types.SearchResults), args.Error(1)
 }
 
+func (m *MockDB) GetGroups(ctx context.Context, groupName string, parentID *int, limit int) ([]types.Group, error) {
+	args := m.Called(ctx, groupName, parentID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.Group), args.Error(1)
+}
+
+func (m *MockDB) GetTags(ctx context.Context, tagName string, limit int) ([]types.Tag, error) {
+	args := m.Called(ctx, tagName, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.Tag), args.Error(1)
+}
+
+func (m *MockDB) GetBusinessProcesses(ctx context.Context, processName string, status *int, limit int) ([]types.Sensor, error) {
+	args := m.Called(ctx, processName, status, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.Sensor), args.Error(1)
+}
+
+func (m *MockDB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.Statistics), args.Error(1)
+}
+
 func (m *MockDB) ExecuteCustomQuery(ctx context.Context, query string, limit int) ([]map[string]interface{}, error) {
 	args := m.Called(ctx, query, limit)
 	if args.Get(0) == nil {

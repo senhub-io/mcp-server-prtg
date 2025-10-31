@@ -57,7 +57,6 @@ type ServerConfig struct {
 	APIKey             string `yaml:"api_key"`              // API Key (Bearer token)
 	BindAddress        string `yaml:"bind_address"`         // Address to bind to (e.g., 0.0.0.0)
 	Port               int    `yaml:"port"`                 // Port to listen on
-	PublicURL          string `yaml:"public_url"`           // Public URL for SSE endpoint (optional)
 	EnableTLS          bool   `yaml:"enable_tls"`           // Enable HTTPS
 	CertFile           string `yaml:"cert_file"`            // TLS certificate file
 	KeyFile            string `yaml:"key_file"`             // TLS private key file
@@ -408,22 +407,6 @@ func (c *Configuration) GetAPIKey() string {
 // GetServerAddress returns the full server address.
 func (c *Configuration) GetServerAddress() string {
 	return fmt.Sprintf("%s:%d", c.data.Server.BindAddress, c.data.Server.Port)
-}
-
-// GetPublicURL returns the public URL (for SSE endpoint URLs).
-// If not configured, falls back to bind_address:port.
-func (c *Configuration) GetPublicURL() string {
-	if c.data.Server.PublicURL != "" {
-		return c.data.Server.PublicURL
-	}
-
-	// Fallback to constructed URL from bind address
-	protocol := "http"
-	if c.data.Server.EnableTLS {
-		protocol = "https"
-	}
-
-	return fmt.Sprintf("%s://%s:%d", protocol, c.data.Server.BindAddress, c.data.Server.Port)
 }
 
 // GetDatabaseConnectionString returns the PostgreSQL connection string.
