@@ -7,7 +7,7 @@ Common issues and their solutions for MCP Server PRTG.
 - [Service Issues](#service-issues)
 - [Database Connection Issues](#database-connection-issues)
 - [MCP Client Integration Issues](#claude-desktop-integration-issues)
-- [SSE Connection Issues](#sse-connection-issues)
+- [Connection Issues](#connection-issues)
 - [Authentication Issues](#authentication-issues)
 - [TLS/Certificate Issues](#tls-certificate-issues)
 - [Performance Issues](#performance-issues)
@@ -340,9 +340,9 @@ MCP tools don't appear in MCP Client's tools panel.
 
 #### Diagnosis
 
-**1. Check mcp-proxy is installed:**
+**1. Check mcp-remote is accessible:**
 ```bash
-mcp-proxy --version
+npx mcp-remote --version
 ```
 
 **2. Check MCP Client configuration:**
@@ -364,11 +364,11 @@ curl https://localhost:8443/health
 
 #### Solutions
 
-**1. Install mcp-proxy**
+**1. Verify Node.js and npm**
 ```bash
-pip install mcp-proxy
-# or
-pipx install mcp-proxy
+node --version
+npm --version
+# mcp-remote will be automatically installed via npx
 ```
 
 **2. Fix Configuration File**
@@ -378,13 +378,16 @@ Ensure valid JSON syntax:
 {
   "mcpServers": {
     "prtg": {
-      "command": "mcp-proxy",
+      "command": "npx",
       "args": [
-        "https://localhost:8443/sse",
-        "--headers",
-        "Authorization",
-        "Bearer your-api-key-here"
-      ]
+        "mcp-remote",
+        "https://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "your-api-key-here"
+      }
     }
   }
 }
@@ -447,29 +450,34 @@ Solution: Verify API key matches between `config.yaml` and `mcp_client_config.js
 
 Error: `SSL certificate verify failed` or `certificate verification failed`
 
-Solution: Add `--insecure` flag:
+Solution: Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env (development only):
 ```json
 {
   "mcpServers": {
     "prtg": {
-      "command": "mcp-proxy",
+      "command": "npx",
       "args": [
-        "https://localhost:8443/sse",
-        "--headers",
-        "Authorization",
-        "Bearer your-api-key",
-        "--insecure"
-      ]
+        "mcp-remote",
+        "https://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "your-api-key",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      }
     }
   }
 }
 ```
 
+**Note:** Not recommended for production. Use trusted certificates instead.
+
 **3. Database Connection Error**
 
 Check server logs and verify database connectivity.
 
-## SSE Connection Issues
+## Connection Issues
 
 ### Connection Refused
 
@@ -506,7 +514,7 @@ server:
 ### Connection Drops Frequently
 
 #### Symptom
-SSE connection disconnects and reconnects repeatedly.
+Streamable HTTP connection disconnects and reconnects repeatedly.
 
 #### Diagnosis
 
@@ -525,10 +533,17 @@ tail -f logs/mcp-server-prtg.log
 **2. Proxy or Firewall Interference**
 - Configure proxy to allow long-lived connections
 - Whitelist server IP/domain
+- Ensure proxies don't interfere with heartbeat mechanism (30s interval)
 
 **3. Resource Exhaustion**
 - Check server CPU/memory usage
 - Increase system resources
+
+**4. Heartbeat Issues**
+The server sends heartbeats every 30 seconds to keep connections alive. If heartbeats are being blocked:
+- Check proxy configuration
+- Verify firewall allows bidirectional traffic
+- Review network equipment (load balancers, firewalls) timeout settings
 
 ## Authentication Issues
 
@@ -587,28 +602,50 @@ Check logs for specific authentication failure reason.
 
 ## TLS/Certificate Issues
 
-### Certificate Verification Failed with mcp-proxy
+### Certificate Verification Failed
 
 #### Symptom
 Error when using HTTPS with self-signed certificates:
 ```
-httpcore.ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate
+Error: unable to verify the first certificate
 ```
 
-Or mcp-proxy error:
+Or:
 ```
-mcp-proxy: error: unrecognized arguments: --insecure
+Error: self signed certificate
 ```
-
-#### Root Cause
-
-**IMPORTANT:** mcp-proxy does **NOT** support the `--insecure` flag and has no built-in option to bypass SSL certificate verification. This is a known limitation of mcp-proxy.
 
 #### Solutions
 
-**Option 1: Use HTTP Instead of HTTPS (Recommended for Development)**
+**Option 1: Disable Certificate Verification (Development Only)**
 
-Disable TLS in server configuration and use HTTP:
+Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to environment variables:
+
+```json
+{
+  "mcpServers": {
+    "prtg": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "your-api-key",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      }
+    }
+  }
+}
+```
+
+**⚠️ WARNING:** This disables certificate validation. Only use for development with self-signed certificates. Never use in production.
+
+**Option 2: Use HTTP Instead of HTTPS (Development Only)**
+
+Disable TLS in server configuration:
 
 1. Edit `config.yaml`:
 ```yaml
@@ -627,13 +664,16 @@ server:
 {
   "mcpServers": {
     "prtg": {
-      "command": "mcp-proxy",
+      "command": "npx",
       "args": [
-        "http://localhost:8443/sse",
-        "--headers",
-        "Authorization",
-        "Bearer your-api-key"
-      ]
+        "mcp-remote",
+        "http://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "your-api-key"
+      }
     }
   }
 }
@@ -641,9 +681,9 @@ server:
 
 **Note:** Even with HTTP, your API key authentication is still secure via the Bearer token.
 
-**Option 2: Use Trusted CA Certificates (Production)**
+**Option 3: Use Trusted CA Certificates (Production - Recommended)**
 
-For production environments, use certificates from a trusted Certificate Authority:
+For production environments, use certificates from a trusted Certificate Authority (e.g., Let's Encrypt):
 
 ```yaml
 server:
@@ -652,15 +692,23 @@ server:
   key_file: "/etc/letsencrypt/live/domain.com/privkey.pem"
 ```
 
-Then use HTTPS:
+Then use HTTPS without disabling verification:
 ```json
 {
-  "args": [
-    "https://your-domain.com:8443/sse",
-    "--headers",
-    "Authorization",
-    "Bearer your-api-key"
-  ]
+  "mcpServers": {
+    "prtg": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://your-domain.com:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "your-api-key"
+      }
+    }
+  }
 }
 ```
 
@@ -740,7 +788,7 @@ Error: `certificate is valid for localhost, not for 192.168.1.100`
 
 **Option 1: Use hostname in URL**
 ```
-https://localhost:8443/sse  # Instead of IP address
+https://localhost:8443/mcp  # Instead of IP address
 ```
 
 **Option 2: Generate certificate with correct SANs**

@@ -7,7 +7,7 @@ Technical architecture documentation for MCP Server PRTG.
 - [Overview](#overview)
 - [System Architecture](#system-architecture)
 - [Components](#components)
-  - [SSE v2 Transport Layer](#sse-v2-transport-layer)
+  - [Streamable HTTP Transport Layer](#streamable-http-transport-layer)
   - [MCP Protocol Handler](#mcp-protocol-handler)
   - [Database Layer](#database-layer)
   - [Service Layer](#service-layer)
@@ -20,56 +20,51 @@ Technical architecture documentation for MCP Server PRTG.
 
 ## Overview
 
-MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Large Language Models (LLMs) through the Model Context Protocol (MCP). It uses a dual-server architecture with SSE (Server-Sent Events) transport for real-time bidirectional communication.
+MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Large Language Models (LLMs) through the Model Context Protocol (MCP). It uses **Streamable HTTP transport** (MCP 2025-03-26) for real-time bidirectional communication over HTTP.
 
 ### Key Features
 
-- **SSE v2 Transport**: Internal server + authentication proxy architecture
+- **Streamable HTTP Transport**: Modern MCP protocol with HTTP SSE streaming
 - **MCP Protocol**: Full implementation of Model Context Protocol
 - **PostgreSQL Database**: Read-only access to PRTG monitoring data
 - **Multi-platform Service**: Windows, Linux, and macOS support via kardianos/service
 - **TLS/HTTPS**: Built-in TLS with automatic certificate generation
 - **Hot-reload**: Dynamic configuration reloading without restarts
 - **Structured Logging**: JSON-based logging with rotation support
+- **Rate Limiting**: Built-in authentication brute-force protection
 
 ## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        MCP Client / MCP Client              │
+│                     MCP Client (Claude Desktop, etc.)           │
 │                                                                 │
-│  Uses mcp-proxy to connect via SSE transport                   │
+│  Uses mcp-remote to connect via Streamable HTTP transport      │
 └─────────────────────┬───────────────────────────────────────────┘
                       │ HTTPS + Bearer Token
-                      │ GET /sse (SSE stream)
-                      │ POST /message (JSON-RPC)
+                      │ POST/GET /mcp (Streamable HTTP + SSE)
+                      │ Heartbeat: every 30s
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    External Authentication Proxy                │
-│                    (Public-facing server)                       │
+│                    StreamableHTTPServer                         │
+│                    (Single unified server)                      │
 │                                                                 │
 │  • Binds to: 0.0.0.0:8443 (configurable)                       │
 │  • TLS/HTTPS enabled by default                                │
 │  • Bearer token authentication (RFC 6750)                      │
-│  • Reverse proxy to internal SSE server                        │
+│  • Rate limiting (5 attempts/min, 5 min lockout)              │
+│  • Heartbeat mechanism (30s interval)                         │
 │                                                                 │
 │  Endpoints:                                                     │
-│    • GET  /sse      → Proxy to internal SSE (auth required)    │
-│    • POST /message  → Proxy to internal SSE (auth required)    │
-│    • GET  /health   → Health check (public)                    │
-│    • GET  /status   → Server status (auth required)            │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │ HTTP (localhost only)
-                      │ Reverse proxy
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Internal SSE Server                          │
-│                    (Localhost only)                             │
+│    • POST/GET /mcp     → Streamable HTTP (auth required)      │
+│    • GET     /health   → Health check (public)                │
+│    • GET     /status   → Server status (auth required)        │
 │                                                                 │
-│  • Binds to: 127.0.0.1:18443                                   │
-│  • No authentication (protected by proxy)                      │
-│  • MCP protocol implementation                                 │
-│  • Manages SSE connections and message routing                 │
+│  Features:                                                      │
+│    • Single endpoint for all MCP operations                    │
+│    • Optimized timeouts for streaming (infinite)              │
+│    • Automatic heartbeat to prevent connection drops          │
+│    • IP-based rate limiting for security                      │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
                       │ MCP Protocol (JSON-RPC 2.0)
@@ -81,6 +76,7 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 │  • Tool registration and discovery                             │
 │  • Request routing and validation                              │
 │  • Response formatting                                         │
+│  • Streamable HTTP protocol implementation                    │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
                       │ Tool calls
@@ -93,7 +89,7 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 │  • prtg_get_alerts                                             │
 │  • prtg_device_overview                                        │
 │  • prtg_top_sensors                                            │
-│  • prtg_query_sql                                              │
+│  • prtg_query_sql (if enabled)                                │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
                       │ SQL queries
@@ -126,56 +122,72 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 
 ## Components
 
-### SSE v2 Transport Layer
+### Streamable HTTP Transport Layer
 
-**File**: `internal/server/sse_server_v2.go`
+**File**: `internal/server/streamable_http_server.go`
 
-The SSE v2 architecture uses a dual-server design for security and flexibility:
+The Streamable HTTP architecture uses a **single unified server** design (much simpler than the deprecated SSE v2 dual-server approach):
 
-#### Internal SSE Server
-- **Binding**: `127.0.0.1:18443` (localhost only)
-- **Purpose**: Handles MCP protocol and SSE connections
-- **Security**: No authentication (protected by proxy layer)
-- **Framework**: mark3labs/mcp-go SSE server
+#### StreamableHTTPServer
+- **Binding**: Configurable (default: `0.0.0.0:8443`)
+- **Purpose**: Handles MCP protocol via Streamable HTTP transport
+- **Security**: Bearer token authentication with rate limiting, TLS encryption
+- **Framework**: mark3labs/mcp-go Streamable HTTP server
 
 ```go
-type SSEServerV2 struct {
-    mcpServer    *server.MCPServer      // MCP protocol handler
-    sseServer    *server.SSEServer      // Internal SSE server
-    proxyServer  *http.Server           // External authentication proxy
-    config       *configuration.Configuration
-    logger       *logger.ModuleLogger
-    db           *database.DB
+type StreamableHTTPServer struct {
+    mcpServer      *server.MCPServer      // MCP protocol handler
+    streamableHTTP http.Handler           // Streamable HTTP handler
+    httpServer     *http.Server           // HTTP server
+    config         *configuration.Configuration
+    logger         *logger.ModuleLogger
+    db             *database.DB
+    rateLimiter    *authRateLimiter      // Rate limiting for auth
+    address        string
+    shutdownCh     chan struct{}
 }
 ```
 
-#### External Authentication Proxy
-- **Binding**: Configurable (default: `0.0.0.0:8443`)
-- **Purpose**: TLS termination and authentication
-- **Security**: Bearer token validation, TLS encryption
-- **Framework**: Go net/http with reverse proxy
+#### Key Features
 
-**Key Features:**
-- Infinite timeouts for SSE long-lived connections
-- Custom middleware for Bearer token authentication
-- Automatic reverse proxying to internal server
-- Health and status endpoints
+**Streamable HTTP Protocol:**
+- **Single endpoint**: `/mcp` handles all MCP operations
+- **Bidirectional streaming**: Uses HTTP SSE for server-to-client messages
+- **Heartbeat mechanism**: Automatic 30-second heartbeat to prevent timeouts
+- **Simpler than SSE v2**: No separate internal server or proxy needed
+
+**Optimized Timeouts:**
+```go
+s.httpServer = &http.Server{
+    ReadTimeout:       0,                // No read timeout for streaming
+    WriteTimeout:      0,                // No write timeout for streaming
+    IdleTimeout:       60 * time.Minute, // Close inactive connections after 1 hour
+    ReadHeaderTimeout: 10 * time.Second, // Protection against slow-loris attacks
+    MaxHeaderBytes:    1 << 20,          // 1MB max header size
+}
+```
 
 **Endpoints:**
 ```go
-mux.HandleFunc("/sse", authHandler)        // SSE stream (authenticated)
-mux.HandleFunc("/message", authHandler)    // RPC messages (authenticated)
-mux.HandleFunc("/health", handleHealth)    // Health check (public)
-mux.HandleFunc("/status", authHandler)     // Status (authenticated)
+mux.Handle("/mcp", s.createAuthMiddleware(s.streamableHTTP))      // MCP endpoint (authenticated)
+mux.HandleFunc("/health", s.handleHealth)                          // Health check (public)
+mux.Handle("/status", s.createAuthMiddleware(...))                 // Status (authenticated)
 ```
 
 #### Connection Flow
 
-1. Client connects to external proxy (`https://server:8443/sse`)
-2. Proxy validates Bearer token
-3. If valid, proxy forwards to internal server (`http://127.0.0.1:18443/sse`)
-4. Internal server establishes SSE connection
-5. Bidirectional communication via SSE + POST messages
+1. Client connects to server (`https://server:8443/mcp`)
+2. Server validates Bearer token (with rate limiting)
+3. Server establishes Streamable HTTP connection
+4. Bidirectional communication via HTTP + SSE streaming
+5. Heartbeat sent every 30 seconds to keep connection alive
+
+**Benefits over SSE v2:**
+- Simpler architecture (one server instead of two)
+- Standards-compliant MCP protocol
+- Built-in heartbeat mechanism
+- Better connection stability
+- Easier to deploy and configure
 
 ### MCP Protocol Handler
 
@@ -354,43 +366,63 @@ run       # Run in console mode (interactive)
 
 ### Security Layer
 
-#### Authentication
+#### Authentication with Rate Limiting
 
-**Type**: Bearer Token (RFC 6750)
+**Type**: Bearer Token (RFC 6750) with IP-based rate limiting
 **Implementation**: Custom HTTP middleware
 
 ```go
-func (s *SSEServerV2) createAuthMiddleware() func(http.HandlerFunc) http.HandlerFunc {
+func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Handler {
     expectedToken := s.config.GetAPIKey()
 
-    return func(next http.HandlerFunc) http.HandlerFunc {
-        return func(w http.ResponseWriter, r *http.Request) {
-            // Extract token from Authorization header
-            authHeader := r.Header.Get("Authorization")
-            const bearerPrefix = "Bearer "
-            var providedToken string
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Extract client IP for rate limiting
+        clientIP := getClientIP(r)
 
-            if strings.HasPrefix(authHeader, bearerPrefix) {
-                providedToken = authHeader[len(bearerPrefix):]
-            }
+        // Check rate limit BEFORE validating token (prevent brute-force)
+        if !s.rateLimiter.checkAndRecord(clientIP, false) {
+            s.logger.Warn().
+                Str("client_ip", clientIP).
+                Msg("Rate limit exceeded - IP temporarily blocked")
 
-            // Fallback: query parameter (for SSE compatibility)
-            if providedToken == "" {
-                providedToken = r.URL.Query().Get("token")
-            }
-
-            // Validate token
-            if providedToken != expectedToken {
-                w.Header().Set("WWW-Authenticate", "Bearer realm=\"MCP Server PRTG\"")
-                http.Error(w, "Unauthorized", http.StatusUnauthorized)
-                return
-            }
-
-            next(w, r)
+            w.Header().Set("Retry-After", "300") // 5 minutes
+            http.Error(w, "Too many authentication attempts", http.StatusTooManyRequests)
+            return
         }
-    }
+
+        // Extract Bearer token from Authorization header
+        authHeader := r.Header.Get("Authorization")
+        const bearerPrefix = "Bearer "
+        var providedToken string
+
+        if strings.HasPrefix(authHeader, bearerPrefix) {
+            providedToken = authHeader[len(bearerPrefix):]
+        }
+
+        // Fallback: query parameter (for compatibility)
+        if providedToken == "" {
+            providedToken = r.URL.Query().Get("token")
+        }
+
+        // Validate token
+        if providedToken != expectedToken {
+            w.Header().Set("WWW-Authenticate", "Bearer realm=\"MCP Server PRTG\"")
+            http.Error(w, "Unauthorized", http.StatusUnauthorized)
+            return
+        }
+
+        // Reset rate limiter on successful auth
+        s.rateLimiter.checkAndRecord(clientIP, true)
+        next.ServeHTTP(w, r)
+    })
 }
 ```
+
+**Rate Limiting Configuration:**
+- **Max attempts**: 5 failed attempts
+- **Time window**: 1 minute
+- **Lockout duration**: 5 minutes
+- **Scope**: Per client IP address
 
 #### TLS Configuration
 
@@ -455,7 +487,7 @@ Automatic secure file permissions:
 ```
 1. Client Request
    │
-   ├─→ POST /message
+   ├─→ POST/GET /mcp
    │   Headers: Authorization: Bearer <token>
    │   Body: {
    │     "jsonrpc": "2.0",
@@ -466,12 +498,13 @@ Automatic secure file permissions:
    │     }
    │   }
    │
-2. Authentication Proxy
+2. StreamableHTTPServer
    │
+   ├─→ Check rate limit for client IP
    ├─→ Validate Bearer token
-   ├─→ Forward to internal server (127.0.0.1:18443)
+   ├─→ Forward to Streamable HTTP handler
    │
-3. Internal SSE Server
+3. Streamable HTTP Handler
    │
    ├─→ Parse JSON-RPC request
    ├─→ Route to MCP Server
@@ -502,7 +535,7 @@ Automatic secure file permissions:
    ├─→ Create MCP response
    ├─→ Return to MCP Server
    │
-8. MCP Server → SSE Server → Proxy → Client
+8. MCP Server → Streamable HTTP → Client
    │
    └─→ Response: {
          "result": {
@@ -538,13 +571,35 @@ Automatic secure file permissions:
    └─→ No restart required
 ```
 
+### Heartbeat Mechanism
+
+```
+1. Connection Established
+   │
+   ├─→ Client connects to /mcp
+   ├─→ Streamable HTTP connection established
+   │
+2. Background Heartbeat
+   │
+   ├─→ Server sends heartbeat every 30 seconds
+   ├─→ Prevents connection timeout
+   ├─→ Keeps connection alive
+   │
+3. Connection Monitoring
+   │
+   ├─→ If heartbeat fails, connection is closed
+   ├─→ Client reconnects automatically
+   │
+   └─→ Ensures reliable long-lived connections
+```
+
 ## Technology Stack
 
 ### Core Technologies
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Language | Go 1.21+ | High-performance, concurrent server |
+| Language | Go 1.25+ | High-performance, concurrent server |
 | MCP Protocol | [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) | Model Context Protocol implementation |
 | Database Driver | [jackc/pgx/v5](https://github.com/jackc/pgx) | PostgreSQL driver with connection pooling |
 | Service Management | [kardianos/service](https://github.com/kardianos/service) | Cross-platform service framework |
@@ -553,7 +608,6 @@ Automatic secure file permissions:
 | Log Rotation | [natefinch/lumberjack](https://github.com/natefinch/lumberjack) | Log file rotation |
 | File Watching | [fsnotify](https://github.com/fsnotify/fsnotify) | Configuration hot-reload |
 | HTTP Server | Go net/http | Built-in HTTP server |
-| HTTP Proxy | Go net/http/httputil | Reverse proxy |
 
 ### Dependencies
 
@@ -571,18 +625,23 @@ require (
 
 ## Design Decisions
 
-### Why Dual-Server Architecture (SSE v2)?
+### Why Streamable HTTP Transport?
 
-**Problem**: SSE connections need infinite timeouts, but we also need request authentication.
+**Migration from SSE v2:**
+The server was migrated from SSE v2 (dual-server architecture) to Streamable HTTP for several reasons:
 
-**Solution**: Separate internal SSE server from external authentication proxy.
+**Problems with SSE v2:**
+- Complex dual-server architecture (internal + proxy)
+- Connection stability issues
+- Protocol deprecated as of MCP 2024-11-05
 
-**Benefits:**
-- Clean separation of concerns
-- Internal server focuses on MCP protocol
-- External proxy handles security and TLS
-- Easier to test and debug
-- Can scale independently
+**Benefits of Streamable HTTP:**
+- **Standards-compliant**: Official MCP 2025-03-26 transport
+- **Simpler architecture**: Single unified server
+- **Better stability**: Built-in heartbeat mechanism
+- **Single endpoint**: `/mcp` instead of `/sse` + `/message`
+- **Easier deployment**: No internal proxy configuration
+- **Future-proof**: Modern MCP protocol standard
 
 ### Why Bearer Token Authentication?
 
@@ -595,7 +654,21 @@ require (
 - RFC 6750 standard
 - Widely supported by HTTP clients
 - Easy to rotate
-- Works with SSE (query parameter fallback)
+- Works with Streamable HTTP protocol
+- Compatible with mcp-remote client
+
+### Why Add Rate Limiting?
+
+**Security Enhancement:**
+- Prevents brute-force authentication attacks
+- Per-IP tracking and lockout
+- Automatic cleanup of old entries
+- No impact on legitimate users
+
+**Configuration:**
+- 5 attempts per minute per IP
+- 5-minute lockout after max attempts
+- Automatic recovery after lockout period
 
 ### Why PostgreSQL with pgx?
 
@@ -661,6 +734,18 @@ require (
 - **Channel-based communication**: Safe concurrent patterns
 - **No shared state**: Each request independent
 
+### Heartbeat Mechanism
+
+**Purpose**: Prevents connection timeouts for long-lived connections
+
+```go
+heartbeatInterval := 30 * time.Second
+heartbeatOption := server.WithHeartbeatInterval(heartbeatInterval)
+s.streamableHTTP = server.NewStreamableHTTPServer(s.mcpServer, heartbeatOption)
+```
+
+This sends periodic heartbeats to keep connections alive, addressing the timeout issues experienced with earlier implementations.
+
 ### Caching Strategy
 
 Currently, no caching is implemented. Considerations for future:
@@ -682,7 +767,7 @@ Currently, no caching is implemented. Considerations for future:
 ### Defense in Depth
 
 1. **Network Layer**: TLS encryption, firewall rules
-2. **Application Layer**: Bearer token authentication
+2. **Application Layer**: Bearer token authentication, rate limiting
 3. **Database Layer**: Read-only user, parameterized queries
 4. **File System**: Restricted file permissions
 5. **Query Layer**: SQL injection prevention
@@ -692,12 +777,14 @@ Currently, no caching is implemented. Considerations for future:
 | Threat | Mitigation |
 |--------|-----------|
 | Unauthorized access | Bearer token authentication |
+| Brute-force attacks | IP-based rate limiting (5 attempts/min, 5 min lockout) |
 | Man-in-the-middle | TLS encryption |
 | SQL injection | Parameterized queries, keyword filtering |
 | Data modification | Read-only database user |
 | Credential exposure | File permissions (0600), password masking in logs |
-| DoS attacks | Query timeouts, result limits |
+| DoS attacks | Query timeouts, result limits, rate limiting |
 | Certificate theft | Secure file permissions |
+| Slow-loris attacks | ReadHeaderTimeout protection |
 
 ### Security Best Practices
 
@@ -706,6 +793,7 @@ Currently, no caching is implemented. Considerations for future:
 3. **Fail Secure**: Errors deny access by default
 4. **Security by Design**: Security built into architecture
 5. **Logging**: All authentication attempts logged
+6. **Rate Limiting**: Automatic protection against brute-force
 
 ## See Also
 
