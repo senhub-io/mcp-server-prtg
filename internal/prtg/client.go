@@ -262,13 +262,13 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Handle HTTP errors
-	if resp.StatusCode != http.StatusOK {
+	// Handle HTTP errors (accept any 2xx status as success)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return c.handleHTTPError(resp.StatusCode, endpoint, respBody)
 	}
 
-	// Parse JSON response
-	if result != nil {
+	// Parse JSON response (only if status is 200 and there's content)
+	if result != nil && resp.StatusCode == http.StatusOK && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, result); err != nil {
 			c.logger.Error().
 				Str("endpoint", endpoint).
@@ -331,10 +331,11 @@ func (c *Client) Ping(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// Accept any 2xx status code as success (200, 204, etc.)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("PRTG API health check failed with status %d", resp.StatusCode)
 	}
 
-	c.logger.Info().Msg("PRTG API connection successful")
+	c.logger.Info().Int("status", resp.StatusCode).Msg("PRTG API connection successful")
 	return nil
 }
