@@ -190,21 +190,34 @@ func TestClient_GetTimeSeriesCustom(t *testing.T) {
 }
 
 func TestClient_GetChannelsBySensor(t *testing.T) {
-	mockResponse := ChannelsResponse{
-		Channels: []Channel{
-			{
-				ID:        1,
-				ObjectID:  1234,
-				Name:      "CPU Load",
-				LastValue: "45.2 %",
-				Unit:      "%",
+	// PRTG API returns array directly, not wrapped in object
+	mockResponse := []Channel{
+		{
+			ID:   "1002.0",
+			Name: "CPU Load",
+			Basic: ChannelBasic{
+				DisplayUnit: "%",
+				UnitType:    "PERCENT",
+				Name:        "CPU Load",
 			},
-			{
-				ID:        2,
-				ObjectID:  1234,
-				Name:      "Memory Usage",
-				LastValue: "2048 MB",
-				Unit:      "MB",
+			LastMeasurement: &ChannelMeasurement{
+				Timestamp:    "2025-10-31T14:56:40Z",
+				Value:        45.2,
+				DisplayValue: 45.2,
+			},
+		},
+		{
+			ID:   "1002.1",
+			Name: "Memory Usage",
+			Basic: ChannelBasic{
+				DisplayUnit: "MB",
+				UnitType:    "BYTES_MEMORY",
+				Name:        "Memory Usage",
+			},
+			LastMeasurement: &ChannelMeasurement{
+				Timestamp:    "2025-10-31T14:56:40Z",
+				Value:        2048000000,
+				DisplayValue: 2048,
 			},
 		},
 	}
