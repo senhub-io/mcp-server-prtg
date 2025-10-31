@@ -48,7 +48,8 @@ type Group struct {
 	TreeDepth   int    `json:"tree_depth"`
 }
 
-// DeviceOverview represents a complete device view with its sensors.
+// DeviceOverview represents a device with its sensors and aggregated statistics.
+// Used by the prtg_device_overview MCP tool to provide a complete device status summary.
 type DeviceOverview struct {
 	Device       Device   `json:"device"`
 	Sensors      []Sensor `json:"sensors"`
@@ -58,9 +59,11 @@ type DeviceOverview struct {
 	WarnSensors  int      `json:"warning_sensors"`
 }
 
-// SensorStatus represents common PRTG sensor status values.
+// SensorStatus represents PRTG sensor status values.
+// Official PRTG status codes from documentation.
 const (
-	StatusUnknown            = 0
+	StatusUnknown            = 1
+	StatusCollecting         = 2
 	StatusUp                 = 3
 	StatusWarning            = 4
 	StatusDown               = 5
@@ -70,11 +73,19 @@ const (
 	StatusPausedBySchedule   = 9
 	StatusUnusual            = 10
 	StatusPausedByLicense    = 11
+	StatusPausedUntil        = 12
+	StatusDownAcknowledged   = 13
+	StatusDownPartial        = 14
 )
 
-// GetStatusText returns human-readable status text.
+// GetStatusText returns the human-readable name for a PRTG status code (1-14).
+// Returns "Unknown" for invalid status codes.
 func GetStatusText(status int) string {
 	switch status {
+	case StatusUnknown:
+		return "Unknown"
+	case StatusCollecting:
+		return "Collecting"
 	case StatusUp:
 		return "Up"
 	case StatusWarning:
@@ -93,6 +104,12 @@ func GetStatusText(status int) string {
 		return "Unusual"
 	case StatusPausedByLicense:
 		return "Paused (License)"
+	case StatusPausedUntil:
+		return "Paused Until"
+	case StatusDownAcknowledged:
+		return "Down (Acknowledged)"
+	case StatusDownPartial:
+		return "Down (Partial)"
 	default:
 		return "Unknown"
 	}

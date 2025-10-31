@@ -1,4 +1,4 @@
-package cliArgs
+package cliargs
 
 import "github.com/alexflint/go-arg"
 
@@ -48,6 +48,7 @@ func ParseWithVersion(version string) *ParsedArgs {
 		version: version,
 	}
 	arg.MustParse(args)
+
 	return &args.ParsedArgs
 }
 
