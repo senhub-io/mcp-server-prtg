@@ -89,26 +89,52 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_GetTimeSeries(t *testing.T) {
-	mockResponse := TimeSeriesResponse{
-		Headers: []string{"timestamp", "CPU Load", "Memory Usage"},
-		Data: [][]interface{}{
-			{"2025-10-31T10:00:00Z", 45.2, 2048.0},
-			{"2025-10-31T10:05:00Z", 48.5, 2100.0},
+	// Mock time series data - API returns array of arrays directly
+	mockTimeSeriesData := [][]interface{}{
+		{"2025-10-31T10:00:00Z", 45.2, 2048.0},
+		{"2025-10-31T10:05:00Z", 48.5, 2100.0},
+	}
+
+	// Mock channels data for channel names
+	mockChannels := []Channel{
+		{
+			ID:   "1234.0",
+			Name: "CPU Load",
+			Basic: ChannelBasic{
+				DisplayUnit: "%",
+				UnitType:    "PERCENT",
+				Name:        "CPU Load",
+			},
+		},
+		{
+			ID:   "1234.1",
+			Name: "Memory Usage",
+			Basic: ChannelBasic{
+				DisplayUnit: "MB",
+				UnitType:    "BYTES_MEMORY",
+				Name:        "Memory Usage",
+			},
 		},
 	}
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v2/experimental/timeseries/1234/short" {
-			t.Errorf("Unexpected path: %s", r.URL.Path)
-		}
-
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Error("Missing or incorrect Authorization header")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
-			t.Fatalf("Failed to encode response: %v", err)
+
+		// Route based on endpoint
+		if r.URL.Path == "/api/v2/experimental/timeseries/1234/short" {
+			if err := json.NewEncoder(w).Encode(mockTimeSeriesData); err != nil {
+				t.Fatalf("Failed to encode timeseries response: %v", err)
+			}
+		} else if r.URL.Path == "/api/v2/experimental/channels" {
+			if err := json.NewEncoder(w).Encode(mockChannels); err != nil {
+				t.Fatalf("Failed to encode channels response: %v", err)
+			}
+		} else {
+			t.Errorf("Unexpected path: %s", r.URL.Path)
 		}
 	}
 
@@ -136,31 +162,67 @@ func TestClient_GetTimeSeries(t *testing.T) {
 	if len(data.Headers) != 3 {
 		t.Errorf("len(Headers) = %d, want 3", len(data.Headers))
 	}
+
+	// Verify channel names are properly mapped
+	if data.Headers[0] != "timestamp" {
+		t.Errorf("Headers[0] = %s, want timestamp", data.Headers[0])
+	}
+	if data.Headers[1] != "CPU Load" {
+		t.Errorf("Headers[1] = %s, want CPU Load", data.Headers[1])
+	}
+	if data.Headers[2] != "Memory Usage" {
+		t.Errorf("Headers[2] = %s, want Memory Usage", data.Headers[2])
+	}
 }
 
 func TestClient_GetTimeSeriesCustom(t *testing.T) {
-	mockResponse := TimeSeriesResponse{
-		Headers: []string{"timestamp", "Traffic In", "Traffic Out"},
-		Data: [][]interface{}{
-			{"2025-10-30T00:00:00Z", 1024.0, 512.0},
+	// Mock time series data - API returns array of arrays directly
+	mockTimeSeriesData := [][]interface{}{
+		{"2025-10-30T00:00:00Z", 1024.0, 512.0},
+	}
+
+	// Mock channels data for channel names
+	mockChannels := []Channel{
+		{
+			ID:   "5678.0",
+			Name: "Traffic In",
+			Basic: ChannelBasic{
+				DisplayUnit: "Bytes",
+				UnitType:    "BYTES",
+				Name:        "Traffic In",
+			},
+		},
+		{
+			ID:   "5678.1",
+			Name: "Traffic Out",
+			Basic: ChannelBasic{
+				DisplayUnit: "Bytes",
+				UnitType:    "BYTES",
+				Name:        "Traffic Out",
+			},
 		},
 	}
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		if !contains(r.URL.Path, "/api/v2/experimental/timeseries/5678") {
-			t.Errorf("Unexpected path: %s", r.URL.Path)
-		}
-
-		// Check query parameters
-		start := r.URL.Query().Get("start")
-		end := r.URL.Query().Get("end")
-		if start == "" || end == "" {
-			t.Error("Missing start or end query parameters")
-		}
-
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
-			t.Fatalf("Failed to encode response: %v", err)
+
+		// Route based on endpoint
+		if contains(r.URL.Path, "/api/v2/experimental/timeseries/5678") {
+			// Check query parameters
+			start := r.URL.Query().Get("start")
+			end := r.URL.Query().Get("end")
+			if start == "" || end == "" {
+				t.Error("Missing start or end query parameters")
+			}
+			if err := json.NewEncoder(w).Encode(mockTimeSeriesData); err != nil {
+				t.Fatalf("Failed to encode timeseries response: %v", err)
+			}
+		} else if r.URL.Path == "/api/v2/experimental/channels" {
+			if err := json.NewEncoder(w).Encode(mockChannels); err != nil {
+				t.Fatalf("Failed to encode channels response: %v", err)
+			}
+		} else {
+			t.Errorf("Unexpected path: %s", r.URL.Path)
 		}
 	}
 
@@ -186,6 +248,14 @@ func TestClient_GetTimeSeriesCustom(t *testing.T) {
 
 	if len(data.DataPoints) != 1 {
 		t.Errorf("len(DataPoints) = %d, want 1", len(data.DataPoints))
+	}
+
+	// Verify channel names are properly mapped
+	if len(data.Headers) != 3 {
+		t.Errorf("len(Headers) = %d, want 3", len(data.Headers))
+	}
+	if data.Headers[0] != "timestamp" {
+		t.Errorf("Headers[0] = %s, want timestamp", data.Headers[0])
 	}
 }
 
