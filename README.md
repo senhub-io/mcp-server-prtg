@@ -7,6 +7,15 @@
 
 **MCP Server PRTG** is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes PRTG monitoring data through a standardized API. It enables LLMs (like LLM) to query sensor status, analyze alerts, and generate reports on your monitoring infrastructure in real-time.
 
+## Prerequisites
+
+**MCP Server PRTG** requires [PRTG Data Exporter](https://www.paessler.com/manuals/prtg_data_exporter) to be installed on the same server. PRTG Data Exporter continuously exports PRTG monitoring data to a local PostgreSQL database (`prtg_data_exporter`), which MCP Server PRTG queries to provide real-time monitoring insights.
+
+**Installation order:**
+1. Install PRTG Data Exporter (includes PostgreSQL 17)
+2. Install MCP Server PRTG on the same server
+3. Configure MCP Server PRTG to connect to the local `prtg_data_exporter` database
+
 ## Features
 
 - **Streamable HTTP Transport** - Modern MCP protocol (2025-03-26) with HTTP SSE streaming
