@@ -39,14 +39,39 @@ type TimeSeriesDataPoint struct {
 	Values    map[string]interface{} `json:"values"` // Channel name -> value
 }
 
-// Channel represents a PRTG channel (sensor measurement).
+// Channel represents a PRTG channel (sensor measurement) from API v2.
 type Channel struct {
-	ID          int    `json:"id"`
-	ObjectID    int    `json:"objid"`    // Sensor ID this channel belongs to
+	ID              string               `json:"id"`    // e.g., "1002.0"
+	Name            string               `json:"name"`
+	Kind            string               `json:"kind"`
+	Type            string               `json:"type"`
+	Basic           ChannelBasic         `json:"basic"`
+	LastMeasurement *ChannelMeasurement  `json:"last_measurement,omitempty"`
+	Parent          *ChannelParent       `json:"parent,omitempty"`
+}
+
+// ChannelBasic contains basic channel information.
+type ChannelBasic struct {
+	DisplayUnit string `json:"displayunit"`
+	UnitType    string `json:"unittype"`
 	Name        string `json:"name"`
-	LastValue   string `json:"lastvalue"`
-	LastMessage string `json:"lastmessage"`
-	Unit        string `json:"unit"`
+}
+
+// ChannelMeasurement represents the last measurement of a channel.
+type ChannelMeasurement struct {
+	Timestamp    string  `json:"timestamp"`
+	Value        float64 `json:"value"`
+	DisplayValue float64 `json:"display_value"`
+	Minimum      float64 `json:"minimum"`
+	Maximum      float64 `json:"maximum"`
+	Average      float64 `json:"average"`
+}
+
+// ChannelParent represents the parent sensor of a channel.
+type ChannelParent struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 // ChannelData represents current data for a channel.

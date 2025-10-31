@@ -374,20 +374,24 @@ func formatChannelsForLLM(sensorID int, channels []prtg.Channel) string {
 	output := fmt.Sprintf("# Current Channel Values - Sensor %d\n\n", sensorID)
 	output += fmt.Sprintf("Total channels: %d\n\n", len(channels))
 
-	output += "| Channel | Last Value | Unit | Last Message |\n"
-	output += "|---------|------------|------|-------------|\n"
+	output += "| Channel | Value | Unit | Timestamp |\n"
+	output += "|---------|-------|------|----------|\n"
 
 	for _, ch := range channels {
-		lastMsg := ch.LastMessage
-		if lastMsg == "" {
-			lastMsg = "-"
+		value := "N/A"
+		timestamp := "-"
+		unit := ch.Basic.DisplayUnit
+
+		if ch.LastMeasurement != nil {
+			value = fmt.Sprintf("%.2f", ch.LastMeasurement.DisplayValue)
+			timestamp = ch.LastMeasurement.Timestamp
 		}
 
 		output += fmt.Sprintf("| %s | %s | %s | %s |\n",
 			ch.Name,
-			ch.LastValue,
-			ch.Unit,
-			lastMsg)
+			value,
+			unit,
+			timestamp)
 	}
 
 	return output
