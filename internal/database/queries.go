@@ -633,7 +633,7 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 			g.prtg_server_address_id,
 			g.name,
 			g.is_probe_node,
-			g.parent_id,
+			g.self_group_id,
 			gp.path AS full_path,
 			g.tree_depth
 		FROM prtg_group g
@@ -652,7 +652,7 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 	}
 
 	if parentID != nil {
-		query += fmt.Sprintf(" AND g.parent_id = $%d", argPos)
+		query += fmt.Sprintf(" AND g.self_group_id = $%d", argPos)
 		args = append(args, *parentID)
 		argPos++
 	}
@@ -780,13 +780,13 @@ func (db *DB) GetHierarchy(ctx context.Context, groupName string, includeSensors
 				g.prtg_server_address_id,
 				g.name,
 				g.is_probe_node,
-				g.parent_id,
+				g.self_group_id,
 				gp.path AS full_path,
 				g.tree_depth
 			FROM prtg_group g
 			INNER JOIN prtg_group_path gp ON g.id = gp.group_id
 				AND g.prtg_server_address_id = gp.prtg_server_address_id
-			WHERE g.parent_id IS NULL
+			WHERE g.self_group_id IS NULL
 			ORDER BY g.name
 			LIMIT 10
 		`
@@ -947,7 +947,7 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 			g.prtg_server_address_id,
 			g.name,
 			g.is_probe_node,
-			g.parent_id,
+			g.self_group_id,
 			gp.path AS full_path,
 			g.tree_depth
 		FROM prtg_group g
@@ -1173,7 +1173,6 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 			d.name as device_name,
 			s.scanning_interval_seconds,
 			s.status,
-			s.status_text,
 			s.last_check_utc,
 			s.last_up_utc,
 			s.last_down_utc,
@@ -1181,7 +1180,7 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 			s.message,
 			s.uptime_since_seconds,
 			s.downtime_since_seconds,
-			s.full_path,
+			sp.path AS full_path,
 			COALESCE(
 				(SELECT STRING_AGG(t.name, ', ' ORDER BY t.name)
 				 FROM prtg_sensor_tag st
@@ -1191,6 +1190,8 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 				''
 			) as tags
 		FROM prtg_sensor s
+		INNER JOIN prtg_sensor_path sp ON s.id = sp.sensor_id
+			AND s.prtg_server_address_id = sp.prtg_server_address_id
 		LEFT JOIN prtg_device d ON s.prtg_device_id = d.id
 			AND s.prtg_server_address_id = d.prtg_server_address_id
 		WHERE s.sensor_type ILIKE '%business%process%'
@@ -1226,20 +1227,24 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 }
 
 // GetStatistics retrieves aggregated PRTG server statistics.
+// Uses PostgreSQL table statistics (pg_class.reltuples) for fast row count estimates
+// instead of exact COUNT(*) to prevent timeouts on large databases (100k+ rows).
+// The estimates are updated by ANALYZE/VACUUM and are accurate enough for dashboard statistics.
 func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	stats := &types.Statistics{
 		SensorsByStatus: make(map[string]int),
 		TopSensorTypes:  []types.SensorTypeCount{},
 	}
 
-	// Get total counts
+	// Get total counts - optimized query using table statistics
+	// This is much faster than COUNT(*) on large tables
 	countQuery := `
 		SELECT
-			(SELECT COUNT(*) FROM prtg_sensor) as total_sensors,
-			(SELECT COUNT(*) FROM prtg_device) as total_devices,
-			(SELECT COUNT(*) FROM prtg_group) as total_groups,
-			(SELECT COUNT(*) FROM prtg_tag) as total_tags,
-			(SELECT COUNT(*) FROM prtg_group WHERE is_probe_node = true) as total_probes
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_sensor'), 0) as total_sensors,
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_device'), 0) as total_devices,
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_group'), 0) as total_groups,
+			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_tag'), 0) as total_tags,
+			COALESCE((SELECT COUNT(*)::BIGINT FROM prtg_group WHERE is_probe_node = true), 0) as total_probes
 	`
 
 	err := db.QueryRow(ctx, countQuery).Scan(
