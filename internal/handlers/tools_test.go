@@ -26,6 +26,14 @@ func (m *MockDB) GetSensors(ctx context.Context, deviceName, sensorName string, 
 	return args.Get(0).([]types.Sensor), args.Error(1)
 }
 
+func (m *MockDB) GetSensorsExtended(ctx context.Context, deviceName, sensorName, sensorType, groupName string, status *int, tags, orderBy string, limit int) ([]types.Sensor, error) {
+	args := m.Called(ctx, deviceName, sensorName, sensorType, groupName, status, tags, orderBy, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.Sensor), args.Error(1)
+}
+
 func (m *MockDB) GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, error) {
 	args := m.Called(ctx, sensorID)
 	if args.Get(0) == nil {
@@ -56,6 +64,54 @@ func (m *MockDB) GetTopSensors(ctx context.Context, metric, sensorType string, l
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]types.Sensor), args.Error(1)
+}
+
+func (m *MockDB) GetHierarchy(ctx context.Context, groupName string, includeSensors bool, maxDepth int) (*types.HierarchyNode, error) {
+	args := m.Called(ctx, groupName, includeSensors, maxDepth)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.HierarchyNode), args.Error(1)
+}
+
+func (m *MockDB) Search(ctx context.Context, searchTerm string, limit int) (*types.SearchResults, error) {
+	args := m.Called(ctx, searchTerm, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.SearchResults), args.Error(1)
+}
+
+func (m *MockDB) GetGroups(ctx context.Context, groupName string, parentID *int, limit int) ([]types.Group, error) {
+	args := m.Called(ctx, groupName, parentID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.Group), args.Error(1)
+}
+
+func (m *MockDB) GetTags(ctx context.Context, tagName string, limit int) ([]types.Tag, error) {
+	args := m.Called(ctx, tagName, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.Tag), args.Error(1)
+}
+
+func (m *MockDB) GetBusinessProcesses(ctx context.Context, processName string, status *int, limit int) ([]types.Sensor, error) {
+	args := m.Called(ctx, processName, status, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]types.Sensor), args.Error(1)
+}
+
+func (m *MockDB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.Statistics), args.Error(1)
 }
 
 func (m *MockDB) ExecuteCustomQuery(ctx context.Context, query string, limit int) ([]map[string]interface{}, error) {
@@ -455,7 +511,7 @@ func TestHandleGetSensors_Defaults(t *testing.T) {
 		}
 
 		// Should use default limit of 1000 when limit <= 0
-		mockDB.On("GetSensors", mock.Anything, "", "", (*int)(nil), "", 1000).
+		mockDB.On("GetSensorsExtended", mock.Anything, "", "", "", "", (*int)(nil), "", "name", 1000).
 			Return(expectedSensors, nil)
 
 		request := createTestRequest(map[string]interface{}{
@@ -478,7 +534,7 @@ func TestHandleGetSensors_Defaults(t *testing.T) {
 
 		expectedSensors := []types.Sensor{}
 
-		mockDB.On("GetSensors", mock.Anything, "", "", (*int)(nil), "", 1000).
+		mockDB.On("GetSensorsExtended", mock.Anything, "", "", "", "", (*int)(nil), "", "name", 1000).
 			Return(expectedSensors, nil)
 
 		request := createTestRequest(map[string]interface{}{
@@ -628,7 +684,7 @@ func TestHandleGetSensors_ContextTimeout(t *testing.T) {
 		handler := NewToolHandler(mockDB, mockConfig, logger)
 
 		// Mock should receive a context with timeout
-		mockDB.On("GetSensors", mock.MatchedBy(func(ctx context.Context) bool {
+		mockDB.On("GetSensorsExtended", mock.MatchedBy(func(ctx context.Context) bool {
 			deadline, ok := ctx.Deadline()
 			if !ok {
 				return false
@@ -636,7 +692,7 @@ func TestHandleGetSensors_ContextTimeout(t *testing.T) {
 			// Should have a deadline within ~30 seconds from now
 			timeUntilDeadline := time.Until(deadline)
 			return timeUntilDeadline > 29*time.Second && timeUntilDeadline <= 30*time.Second
-		}), "", "", (*int)(nil), "", 1000).
+		}), "", "", "", "", (*int)(nil), "", "name", 1000).
 			Return([]types.Sensor{}, nil)
 
 		request := createTestRequest(map[string]interface{}{})

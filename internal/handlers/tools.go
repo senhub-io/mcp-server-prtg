@@ -1,5 +1,5 @@
 // Package handlers implements MCP (Model Context Protocol) tool handlers for PRTG monitoring data.
-// It provides 6 MCP tools: sensor queries, alerts, device overview, top sensors, and custom SQL.
+// It provides 12 MCP tools: sensors, sensor status, alerts, device overview, top sensors, hierarchy, search, groups, tags, business processes, statistics, and custom SQL.
 package handlers
 
 import (
@@ -24,10 +24,17 @@ type Config interface {
 // This interface allows mocking in tests while maintaining type safety.
 type DatabaseQuerier interface {
 	GetSensors(ctx context.Context, deviceName, sensorName string, status *int, tags string, limit int) ([]types.Sensor, error)
+	GetSensorsExtended(ctx context.Context, deviceName, sensorName, sensorType, groupName string, status *int, tags, orderBy string, limit int) ([]types.Sensor, error)
 	GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, error)
 	GetAlerts(ctx context.Context, hours int, status *int, deviceName string) ([]types.Sensor, error)
 	GetDeviceOverview(ctx context.Context, deviceName string) (*types.DeviceOverview, error)
 	GetTopSensors(ctx context.Context, metric, sensorType string, limit, hours int) ([]types.Sensor, error)
+	GetHierarchy(ctx context.Context, groupName string, includeSensors bool, maxDepth int) (*types.HierarchyNode, error)
+	Search(ctx context.Context, searchTerm string, limit int) (*types.SearchResults, error)
+	GetGroups(ctx context.Context, groupName string, parentID *int, limit int) ([]types.Group, error)
+	GetTags(ctx context.Context, tagName string, limit int) ([]types.Tag, error)
+	GetBusinessProcesses(ctx context.Context, processName string, status *int, limit int) ([]types.Sensor, error)
+	GetStatistics(ctx context.Context) (*types.Statistics, error)
 	ExecuteCustomQuery(ctx context.Context, query string, limit int) ([]map[string]interface{}, error)
 }
 
@@ -48,17 +55,18 @@ func NewToolHandler(db DatabaseQuerier, config Config, logger *zerolog.Logger) *
 	}
 }
 
-// RegisterTools registers all 6 MCP tools with the server.
+// RegisterTools registers all 12 MCP tools with the server.
 // Tools: prtg_get_sensors, prtg_get_sensor_status, prtg_get_alerts,
-// prtg_device_overview, prtg_top_sensors, prtg_query_sql.
+// prtg_device_overview, prtg_top_sensors, prtg_get_hierarchy, prtg_search,
+// prtg_get_groups, prtg_get_tags, prtg_get_business_processes, prtg_get_statistics, prtg_query_sql.
 //
 //nolint:funlen // Tool registration function must define all MCP tools with their complete schemas inline.
 func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 	// Tool 1: prtg_get_sensors
 	s.AddTool(mcp.Tool{
 		Name: "prtg_get_sensors",
-		Description: "Retrieve PRTG sensors with optional filters (device name, sensor name, status, tags). " +
-			"Returns current sensor status and metadata.",
+		Description: "Retrieve PRTG sensors with optional filters (device, sensor name, type, group, status, tags). " +
+			"Returns current sensor status and metadata. Supports ordering by various fields.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -70,6 +78,14 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 					"type":        "string",
 					"description": "Filter by sensor name (partial match, case-insensitive)",
 				},
+				"sensor_type": map[string]string{
+					"type":        "string",
+					"description": "Filter by sensor type (e.g., 'ping', 'http', 'snmp')",
+				},
+				"group_name": map[string]string{
+					"type":        "string",
+					"description": "Filter by group name (partial match, case-insensitive)",
+				},
 				"status": map[string]interface{}{
 					"type": "integer",
 					"description": "Filter by status (1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, " +
@@ -79,6 +95,12 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 				"tags": map[string]string{
 					"type":        "string",
 					"description": "Filter by tag name (partial match)",
+				},
+				"order_by": map[string]interface{}{
+					"type":        "string",
+					"description": "Order results by field: 'name' (default), 'status', 'priority', 'device', 'type', 'last_check'",
+					"enum":        []string{"name", "status", "priority", "device", "type", "last_check"},
+					"default":     "name",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
@@ -177,7 +199,141 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 		},
 	}, h.handleTopSensors)
 
-	// Tool 6: prtg_query_sql
+	// Tool 6: prtg_get_hierarchy
+	s.AddTool(mcp.Tool{
+		Name: "prtg_get_hierarchy",
+		Description: "Navigate the PRTG hierarchy tree structure. " +
+			"Returns groups, devices, and optionally sensors in a tree format. " +
+			"Useful for understanding the organization and structure of your PRTG installation.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"group_name": map[string]string{
+					"type":        "string",
+					"description": "Starting group name (leave empty for root groups)",
+				},
+				"include_sensors": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Include sensors in the output (default: false)",
+					"default":     false,
+				},
+				"max_depth": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum depth to traverse (0 = unlimited, default: 2)",
+					"default":     2,
+				},
+			},
+		},
+	}, h.handleGetHierarchy)
+
+	// Tool 7: prtg_search
+	s.AddTool(mcp.Tool{
+		Name: "prtg_search",
+		Description: "Universal search across groups, devices, and sensors. " +
+			"Searches by name, host, or sensor type. Returns all matching results organized by type.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"search_term": map[string]string{
+					"type":        "string",
+					"description": "Search term to find (case-insensitive, partial match)",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum results per category (default: 50)",
+					"default":     50,
+				},
+			},
+			Required: []string{"search_term"},
+		},
+	}, h.handleSearch)
+
+	// Tool 8: prtg_get_groups
+	s.AddTool(mcp.Tool{
+		Name: "prtg_get_groups",
+		Description: "List PRTG groups/probes with optional filtering. " +
+			"Groups organize devices in a hierarchical structure. Returns group information including paths and probe status.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"group_name": map[string]string{
+					"type":        "string",
+					"description": "Filter by group name (partial match, case-insensitive)",
+				},
+				"parent_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Filter by parent group ID (shows direct children)",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results (default: 100)",
+					"default":     100,
+				},
+			},
+		},
+	}, h.handleGetGroups)
+
+	// Tool 9: prtg_get_tags
+	s.AddTool(mcp.Tool{
+		Name: "prtg_get_tags",
+		Description: "List PRTG tags with usage statistics. " +
+			"Tags are labels applied to sensors for organization and filtering. Returns tag names and sensor counts.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"tag_name": map[string]string{
+					"type":        "string",
+					"description": "Filter by tag name (partial match, case-insensitive)",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results (default: 100)",
+					"default":     100,
+				},
+			},
+		},
+	}, h.handleGetTags)
+
+	// Tool 10: prtg_get_business_processes
+	s.AddTool(mcp.Tool{
+		Name: "prtg_get_business_processes",
+		Description: "List PRTG Business Process sensors with optional filtering. " +
+			"Business Process sensors aggregate the status of multiple source sensors to monitor complete business workflows. " +
+			"Returns sensor information including current status, priority, and associated metadata.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"process_name": map[string]string{
+					"type":        "string",
+					"description": "Filter by process name (partial match, case-insensitive)",
+				},
+				"status": map[string]interface{}{
+					"type": "integer",
+					"description": "Filter by status (1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, " +
+						"7=PausedByUser, 8=PausedByDependency, 9=PausedBySchedule, 10=Unusual, " +
+						"11=PausedByLicense, 12=PausedUntil, 13=DownAcknowledged, 14=DownPartial)",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of results (default: 100)",
+					"default":     100,
+				},
+			},
+		},
+	}, h.handleGetBusinessProcesses)
+
+	// Tool 11: prtg_get_statistics
+	s.AddTool(mcp.Tool{
+		Name:        "prtg_get_statistics",
+		Description: "Get aggregated PRTG server statistics including total counts, status breakdown, and sensor type distribution. " +
+			"Provides a comprehensive overview of your PRTG installation's health and composition.",
+		InputSchema: mcp.ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}, h.handleGetStatistics)
+
+	// Tool 12: prtg_query_sql
 	s.AddTool(mcp.Tool{
 		Name: "prtg_query_sql",
 		Description: "Execute a custom SQL query on the PRTG database (SELECT only). " +
@@ -217,8 +373,11 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 	var args struct {
 		DeviceName string `json:"device_name"`
 		SensorName string `json:"sensor_name"`
+		SensorType string `json:"sensor_type"`
+		GroupName  string `json:"group_name"`
 		Status     *int   `json:"status"`
 		Tags       string `json:"tags"`
+		OrderBy    string `json:"order_by"`
 		Limit      int    `json:"limit"`
 	}
 
@@ -230,48 +389,50 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 		args.Limit = 1000 // Default to reasonable limit, user can override
 	}
 
+	if args.OrderBy == "" {
+		args.OrderBy = "name"
+	}
+
 	h.logger.Debug().
 		Str("device_name", args.DeviceName).
 		Str("sensor_name", args.SensorName).
+		Str("sensor_type", args.SensorType).
+		Str("group_name", args.GroupName).
 		Interface("status", args.Status).
 		Str("tags", args.Tags).
+		Str("order_by", args.OrderBy).
 		Int("limit", args.Limit).
-		Msg("calling db.GetSensors")
+		Msg("calling db.GetSensorsExtended")
 
 	// Add timeout to parent context (preserves cancellation chain)
 	// This allows client cancellation while providing reasonable timeout for DB operations
 	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	sensors, err := h.db.GetSensors(dbCtx, args.DeviceName, args.SensorName, args.Status, args.Tags, args.Limit)
+	sensors, err := h.db.GetSensorsExtended(dbCtx, args.DeviceName, args.SensorName, args.SensorType, args.GroupName, args.Status, args.Tags, args.OrderBy, args.Limit)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("db.GetSensors failed")
+		h.logger.Error().Err(err).Msg("db.GetSensorsExtended failed")
 		return nil, fmt.Errorf("failed to get sensors: %w", err)
 	}
 
 	h.logger.Debug().Int("count", len(sensors)).Msg("db.GetSensors returned")
 
-	result, err := formatResult(sensors, len(sensors))
-	if err != nil {
-		h.logger.Error().Err(err).Msg("formatResult failed")
-		return nil, err
-	}
-
-	// Calculate response size
-	responseSize := 0
-
-	if len(result.Content) > 0 {
-		if textContent, ok := result.Content[0].(mcp.TextContent); ok {
-			responseSize = len(textContent.Text)
-		}
-	}
+	// Use visual formatting for sensors
+	formattedText := formatSensorsResponse(sensors)
 
 	h.logger.Info().
 		Int("sensors_count", len(sensors)).
-		Int("response_size_bytes", responseSize).
+		Int("response_size_bytes", len(formattedText)).
 		Msg("returning result to MCP client")
 
-	return result, nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleGetSensorStatus handles the prtg_get_sensor_status tool.
@@ -329,7 +490,17 @@ func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolR
 		return nil, fmt.Errorf("failed to get alerts: %w", err)
 	}
 
-	return formatResult(sensors, len(sensors))
+	// Use visual formatting for alerts
+	formattedText := formatAlertsResponse(sensors)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleDeviceOverview handles the prtg_device_overview tool.
@@ -357,7 +528,17 @@ func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.Call
 		return nil, fmt.Errorf("failed to get device overview: %w", err)
 	}
 
-	return formatResult(overview, overview.TotalSensors)
+	// Use visual formatting for device overview
+	formattedText := formatDeviceOverviewResponse(overview)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleTopSensors handles the prtg_top_sensors tool.
@@ -396,7 +577,290 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 		return nil, fmt.Errorf("failed to get top sensors: %w", err)
 	}
 
-	return formatResult(sensors, len(sensors))
+	// Use visual formatting for top sensors
+	formattedText := formatTopSensorsResponse(sensors, args.Metric)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
+}
+
+// handleGetHierarchy handles the prtg_get_hierarchy tool.
+func (h *ToolHandler) handleGetHierarchy(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_hierarchy")
+
+	var args struct {
+		GroupName      string `json:"group_name"`
+		IncludeSensors bool   `json:"include_sensors"`
+		MaxDepth       int    `json:"max_depth"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.MaxDepth < 0 {
+		args.MaxDepth = 2 // Default to 2 levels deep
+	}
+
+	h.logger.Debug().
+		Str("group_name", args.GroupName).
+		Bool("include_sensors", args.IncludeSensors).
+		Int("max_depth", args.MaxDepth).
+		Msg("calling db.GetHierarchy")
+
+	// Add timeout to parent context
+	dbCtx, cancel := context.WithTimeout(ctx, 60*time.Second) // Longer timeout for hierarchy traversal
+	defer cancel()
+
+	hierarchy, err := h.db.GetHierarchy(dbCtx, args.GroupName, args.IncludeSensors, args.MaxDepth)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("db.GetHierarchy failed")
+		return nil, fmt.Errorf("failed to get hierarchy: %w", err)
+	}
+
+	// Use visual formatting for hierarchy
+	formattedText := formatHierarchyResponse(hierarchy)
+
+	h.logger.Info().Msg("returning hierarchy result to MCP client")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
+}
+
+// handleSearch handles the prtg_search tool.
+func (h *ToolHandler) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_search")
+
+	var args struct {
+		SearchTerm string `json:"search_term"`
+		Limit      int    `json:"limit"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.SearchTerm == "" {
+		return nil, fmt.Errorf("search_term is required")
+	}
+
+	if args.Limit <= 0 {
+		args.Limit = 50
+	}
+
+	h.logger.Debug().
+		Str("search_term", args.SearchTerm).
+		Int("limit", args.Limit).
+		Msg("calling db.Search")
+
+	// Add timeout to parent context
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	results, err := h.db.Search(dbCtx, args.SearchTerm, args.Limit)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("db.Search failed")
+		return nil, fmt.Errorf("failed to search: %w", err)
+	}
+
+	// Use visual formatting for search results
+	formattedText := formatSearchResponse(results, args.SearchTerm)
+
+	h.logger.Info().
+		Int("groups_count", len(results.Groups)).
+		Int("devices_count", len(results.Devices)).
+		Int("sensors_count", len(results.Sensors)).
+		Msg("returning search results to MCP client")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
+}
+
+// handleGetGroups handles the prtg_get_groups tool.
+func (h *ToolHandler) handleGetGroups(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_groups")
+
+	var args struct {
+		GroupName string `json:"group_name"`
+		ParentID  *int   `json:"parent_id"`
+		Limit     int    `json:"limit"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.Limit <= 0 {
+		args.Limit = 100
+	}
+
+	h.logger.Debug().
+		Str("group_name", args.GroupName).
+		Interface("parent_id", args.ParentID).
+		Int("limit", args.Limit).
+		Msg("calling db.GetGroups")
+
+	// Add timeout to parent context
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	groups, err := h.db.GetGroups(dbCtx, args.GroupName, args.ParentID, args.Limit)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("db.GetGroups failed")
+		return nil, fmt.Errorf("failed to get groups: %w", err)
+	}
+
+	// Use visual formatting for groups
+	formattedText := formatGroupsResponse(groups)
+
+	h.logger.Info().
+		Int("groups_count", len(groups)).
+		Msg("returning groups to MCP client")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
+}
+
+// handleGetTags handles the prtg_get_tags tool.
+func (h *ToolHandler) handleGetTags(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_tags")
+
+	var args struct {
+		TagName string `json:"tag_name"`
+		Limit   int    `json:"limit"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.Limit <= 0 {
+		args.Limit = 100
+	}
+
+	// Add timeout to parent context
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	tags, err := h.db.GetTags(dbCtx, args.TagName, args.Limit)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("db.GetTags failed")
+		return nil, fmt.Errorf("failed to get tags: %w", err)
+	}
+
+	// Use visual formatting for tags
+	formattedText := formatTagsResponse(tags)
+
+	h.logger.Info().
+		Int("tags_count", len(tags)).
+		Msg("returning tags to MCP client")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
+}
+
+// handleGetBusinessProcesses handles the prtg_get_business_processes tool.
+func (h *ToolHandler) handleGetBusinessProcesses(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_business_processes")
+
+	var args struct {
+		ProcessName string `json:"process_name"`
+		Status      *int   `json:"status"`
+		Limit       int    `json:"limit"`
+	}
+
+	if err := parseArguments(request.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if args.Limit <= 0 {
+		args.Limit = 100
+	}
+
+	// Add timeout to parent context
+	dbCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	processes, err := h.db.GetBusinessProcesses(dbCtx, args.ProcessName, args.Status, args.Limit)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("db.GetBusinessProcesses failed")
+		return nil, fmt.Errorf("failed to get business processes: %w", err)
+	}
+
+	// Use visual formatting for business processes
+	formattedText := formatBusinessProcessesResponse(processes)
+
+	h.logger.Info().
+		Int("processes_count", len(processes)).
+		Msg("returning business processes to MCP client")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
+}
+
+// handleGetStatistics handles the prtg_get_statistics tool.
+func (h *ToolHandler) handleGetStatistics(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_statistics")
+
+	// Add timeout to parent context
+	dbCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	stats, err := h.db.GetStatistics(dbCtx)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("db.GetStatistics failed")
+		return nil, fmt.Errorf("failed to get statistics: %w", err)
+	}
+
+	// Use visual formatting for statistics
+	formattedText := formatStatisticsResponse(stats)
+
+	h.logger.Info().Msg("returning statistics to MCP client")
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedText,
+			},
+		},
+	}, nil
 }
 
 // handleCustomQuery handles the prtg_query_sql tool.
