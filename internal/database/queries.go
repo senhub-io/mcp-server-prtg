@@ -10,7 +10,8 @@ import (
 	"github.com/matthieu/mcp-server-prtg/internal/types"
 )
 
-// GetSensors retrieves sensors with optional filters
+// GetSensors retrieves sensors matching the given filters.
+// Results are ordered by sensor name. The limit parameter controls the maximum number of results.
 func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, status *int, tags string, limit int) ([]types.Sensor, error) {
 	// Simplified query without tags subquery for performance
 	query := `
@@ -46,6 +47,7 @@ func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, sta
 	// Add filters
 	if deviceName != "" {
 		query += fmt.Sprintf(" AND d.name ILIKE $%d", argPos)
+
 		args = append(args, "%"+deviceName+"%")
 		argPos++
 	}
@@ -91,8 +93,10 @@ func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, sta
 			Dur("duration_ms", queryDuration).
 			Str("query", query).
 			Msg("query failed")
+
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
+
 	defer rows.Close()
 
 	db.logger.Info().Dur("query_duration_ms", queryDuration).Msg("query executed, scanning rows")
@@ -112,10 +116,12 @@ func (db *DB) GetSensors(ctx context.Context, deviceName, sensorName string, sta
 		Dur("scan_ms", scanDuration).
 		Dur("total_ms", time.Since(startTime)).
 		Msg("GetSensors completed")
+
 	return sensors, nil
 }
 
-// GetSensorByID retrieves a single sensor by ID
+// GetSensorByID retrieves a single sensor by ID.
+// Returns sql.ErrNoRows if the sensor is not found.
 func (db *DB) GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, error) {
 	query := `
 		SELECT
@@ -217,7 +223,8 @@ func (db *DB) GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, e
 	return &sensor, nil
 }
 
-// GetAlerts retrieves sensors in alert state (non-UP status)
+// GetAlerts retrieves sensors in alert state (non-UP status).
+// Results are sorted by priority and severity (Down first, then Warning, etc.), limited to 100 results.
 func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, deviceName string) ([]types.Sensor, error) {
 	query := `
 		SELECT
@@ -276,7 +283,24 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
 		args = append(args, "%"+deviceName+"%")
 	}
 
-	query += " ORDER BY s.priority DESC, s.status, s.name LIMIT 100"
+	// Order by severity: Down statuses first, then Warning, then others
+	// Severity order: Down(5), DownPartial(14), DownAcknowledged(13), Warning(4), Unusual(10),
+	//                 NoProbe(6), Unknown(1), Collecting(2), then Paused statuses
+	query += ` ORDER BY
+		s.priority DESC,
+		CASE s.status
+			WHEN 5 THEN 1   -- Down (most critical)
+			WHEN 14 THEN 2  -- Down Partial
+			WHEN 13 THEN 3  -- Down Acknowledged
+			WHEN 4 THEN 4   -- Warning
+			WHEN 10 THEN 5  -- Unusual
+			WHEN 6 THEN 6   -- No Probe
+			WHEN 1 THEN 7   -- Unknown
+			WHEN 2 THEN 8   -- Collecting
+			ELSE 9          -- Paused statuses (7,8,9,11,12)
+		END,
+		s.name
+		LIMIT 100`
 
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
@@ -287,7 +311,8 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
 	return scanSensors(rows)
 }
 
-// GetDeviceOverview retrieves a device with all its sensors
+// GetDeviceOverview retrieves a device with all its sensors and aggregated statistics.
+// Returns sql.ErrNoRows if no device matches the given name.
 func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.DeviceOverview, error) {
 	// Get device info
 	deviceQuery := `
@@ -408,7 +433,8 @@ func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.
 	}, nil
 }
 
-// GetTopSensors retrieves top sensors by various metrics
+// GetTopSensors retrieves top sensors ranked by the given metric.
+// Valid metrics: "uptime", "downtime", "alerts". Results are limited by the limit parameter.
 func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limit, _ int) ([]types.Sensor, error) {
 	query := `
 		SELECT
@@ -461,6 +487,7 @@ func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limi
 	case "alerts":
 		// Order by non-UP status, then by priority
 		query += fmt.Sprintf(" AND s.status != $%d ORDER BY s.priority DESC, s.status", argPos)
+
 		args = append(args, types.StatusUp)
 		argPos++
 	default: // "uptime" or default
@@ -482,9 +509,9 @@ func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limi
 	return scanSensors(rows)
 }
 
-// ExecuteCustomQuery executes a custom SQL query (SELECT only)
-// WARNING: This function accepts raw SQL and should be used with extreme caution.
-// It is recommended to disable this in production environments.
+// ExecuteCustomQuery executes a custom SQL SELECT query with security validation.
+// Only SELECT queries are allowed - INSERT/UPDATE/DELETE/DROP are rejected.
+// This function should be disabled in production (set allow_custom_queries: false in config).
 func (db *DB) ExecuteCustomQuery(ctx context.Context, query string, limit int) ([]map[string]interface{}, error) {
 	// Security: Validate query is SELECT only
 	queryUpper := strings.ToUpper(strings.TrimSpace(query))
@@ -533,7 +560,7 @@ func (db *DB) ExecuteCustomQuery(ctx context.Context, query string, limit int) (
 	return scanGenericResults(rows)
 }
 
-// scanGenericResults scans generic SQL query results into maps
+// scanGenericResults scans generic SQL query results into maps.
 func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
 	// Get column names
 	columns, err := rows.Columns()
@@ -561,13 +588,14 @@ func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
 		for i, col := range columns {
 			row[col] = values[i]
 		}
+
 		results = append(results, row)
 	}
 
 	return results, rows.Err()
 }
 
-// scanSensors is a helper function to scan sensor rows
+// scanSensors is a helper function to scan sensor rows.
 func scanSensors(rows *sql.Rows) ([]types.Sensor, error) {
 	sensors := []types.Sensor{}
 

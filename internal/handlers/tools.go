@@ -1,3 +1,5 @@
+// Package handlers implements MCP (Model Context Protocol) tool handlers for PRTG monitoring data.
+// It provides 6 MCP tools: sensor queries, alerts, device overview, top sensors, and custom SQL.
 package handlers
 
 import (
@@ -8,24 +10,37 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/rs/zerolog"
+
+	"github.com/matthieu/mcp-server-prtg/internal/types"
 )
 
-// Config is an interface for accessing configuration settings
+// Config is an interface for accessing configuration settings.
 type Config interface {
 	AllowCustomQueries() bool
 }
 
-// ToolHandler handles MCP tool requests
+// DatabaseQuerier is an interface for database operations.
+// This interface allows mocking in tests while maintaining type safety.
+type DatabaseQuerier interface {
+	GetSensors(ctx context.Context, deviceName, sensorName string, status *int, tags string, limit int) ([]types.Sensor, error)
+	GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, error)
+	GetAlerts(ctx context.Context, hours int, status *int, deviceName string) ([]types.Sensor, error)
+	GetDeviceOverview(ctx context.Context, deviceName string) (*types.DeviceOverview, error)
+	GetTopSensors(ctx context.Context, metric, sensorType string, limit, hours int) ([]types.Sensor, error)
+	ExecuteCustomQuery(ctx context.Context, query string, limit int) ([]map[string]interface{}, error)
+}
+
+// ToolHandler handles MCP tool requests and dispatches them to the database layer.
+// Each tool request includes context, authentication, and parameter validation.
 type ToolHandler struct {
-	db     *database.DB
+	db     DatabaseQuerier
 	config Config
 	logger *zerolog.Logger
 }
 
-// NewToolHandler creates a new tool handler
-func NewToolHandler(db *database.DB, config Config, logger *zerolog.Logger) *ToolHandler {
+// NewToolHandler creates a new MCP tool handler with the given database, config, and logger.
+func NewToolHandler(db DatabaseQuerier, config Config, logger *zerolog.Logger) *ToolHandler {
 	return &ToolHandler{
 		db:     db,
 		config: config,
@@ -33,7 +48,11 @@ func NewToolHandler(db *database.DB, config Config, logger *zerolog.Logger) *Too
 	}
 }
 
-// RegisterTools registers all available tools with the MCP server
+// RegisterTools registers all 6 MCP tools with the server.
+// Tools: prtg_get_sensors, prtg_get_sensor_status, prtg_get_alerts,
+// prtg_device_overview, prtg_top_sensors, prtg_query_sql.
+//
+//nolint:funlen // Tool registration function must define all MCP tools with their complete schemas inline.
 func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 	// Tool 1: prtg_get_sensors
 	s.AddTool(mcp.Tool{
@@ -52,8 +71,10 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 					"description": "Filter by sensor name (partial match, case-insensitive)",
 				},
 				"status": map[string]interface{}{
-					"type":        "integer",
-					"description": "Filter by status (3=Up, 4=Warning, 5=Down, 7=Paused)",
+					"type": "integer",
+					"description": "Filter by status (1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, " +
+						"7=PausedByUser, 8=PausedByDependency, 9=PausedBySchedule, 10=Unusual, " +
+						"11=PausedByLicense, 12=PausedUntil, 13=DownAcknowledged, 14=DownPartial)",
 				},
 				"tags": map[string]string{
 					"type":        "string",
@@ -159,14 +180,18 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 	// Tool 6: prtg_query_sql
 	s.AddTool(mcp.Tool{
 		Name: "prtg_query_sql",
-		Description: "Execute a custom SQL query on the PRTG database (SELECT only). Use for advanced queries not covered by other tools.\n\n" +
+		Description: "Execute a custom SQL query on the PRTG database (SELECT only). " +
+			"Use for advanced queries not covered by other tools.\n\n" +
 			"IMPORTANT - Table Schema:\n" +
 			"- prtg_sensor: id, name, sensor_type, prtg_device_id, status, priority, message, last_check_utc, full_path\n" +
 			"- prtg_device: id, name\n" +
 			"- prtg_sensor_path: sensor_id, path\n" +
 			"- prtg_tag: id, name\n" +
 			"- prtg_sensor_tag: prtg_sensor_id, prtg_tag_id\n\n" +
-			"Use these EXACT table names in your queries. Status codes: 3=Up, 4=Warning, 5=Down, 7=Paused, 13=Unknown",
+			"Use these EXACT table names in your queries. " +
+			"Status codes: 1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, 6=NoProbe, " +
+			"7=PausedByUser, 8=PausedByDependency, 9=PausedBySchedule, 10=Unusual, " +
+			"11=PausedByLicense, 12=PausedUntil, 13=DownAcknowledged, 14=DownPartial",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -185,7 +210,7 @@ func (h *ToolHandler) RegisterTools(s *server.MCPServer) {
 	}, h.handleCustomQuery)
 }
 
-// handleGetSensors handles the prtg_get_sensors tool
+// handleGetSensors handles the prtg_get_sensors tool.
 func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_sensors")
 
@@ -234,6 +259,7 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 
 	// Calculate response size
 	responseSize := 0
+
 	if len(result.Content) > 0 {
 		if textContent, ok := result.Content[0].(mcp.TextContent); ok {
 			responseSize = len(textContent.Text)
@@ -248,7 +274,7 @@ func (h *ToolHandler) handleGetSensors(ctx context.Context, request mcp.CallTool
 	return result, nil
 }
 
-// handleGetSensorStatus handles the prtg_get_sensor_status tool
+// handleGetSensorStatus handles the prtg_get_sensor_status tool.
 func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_sensor_status")
 
@@ -276,7 +302,7 @@ func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.Cal
 	return formatResult(sensor, 1)
 }
 
-// handleGetAlerts handles the prtg_get_alerts tool
+// handleGetAlerts handles the prtg_get_alerts tool.
 func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_alerts")
 
@@ -306,7 +332,7 @@ func (h *ToolHandler) handleGetAlerts(ctx context.Context, request mcp.CallToolR
 	return formatResult(sensors, len(sensors))
 }
 
-// handleDeviceOverview handles the prtg_device_overview tool
+// handleDeviceOverview handles the prtg_device_overview tool.
 func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_device_overview")
 
@@ -334,7 +360,7 @@ func (h *ToolHandler) handleDeviceOverview(ctx context.Context, request mcp.Call
 	return formatResult(overview, overview.TotalSensors)
 }
 
-// handleTopSensors handles the prtg_top_sensors tool
+// handleTopSensors handles the prtg_top_sensors tool.
 func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_top_sensors")
 
@@ -373,14 +399,17 @@ func (h *ToolHandler) handleTopSensors(ctx context.Context, request mcp.CallTool
 	return formatResult(sensors, len(sensors))
 }
 
-// handleCustomQuery handles the prtg_query_sql tool
+// handleCustomQuery handles the prtg_query_sql tool.
 func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_query_sql")
 
 	// SECURITY: Check if custom queries are allowed (disabled by default for security)
 	if !h.config.AllowCustomQueries() {
 		h.logger.Warn().Msg("Custom SQL queries are disabled in configuration (allow_custom_queries: false)")
-		return nil, fmt.Errorf("custom SQL queries are disabled for security reasons - set 'allow_custom_queries: true' in config.yaml to enable (not recommended in production)")
+
+		return nil, fmt.Errorf(
+			"custom SQL queries are disabled for security reasons - " +
+				"set 'allow_custom_queries: true' in config.yaml to enable (not recommended in production)")
 	}
 
 	var args struct {
@@ -420,7 +449,7 @@ func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToo
 	return formatResult(results, len(results))
 }
 
-// parseArguments parses tool arguments from interface{} to target struct
+// parseArguments parses tool arguments from interface{} to target struct.
 func parseArguments(args, target interface{}) error {
 	data, err := json.Marshal(args)
 	if err != nil {
@@ -430,7 +459,7 @@ func parseArguments(args, target interface{}) error {
 	return json.Unmarshal(data, target)
 }
 
-// formatResult formats the response data as MCP tool result
+// formatResult formats the response data as MCP tool result.
 func formatResult(data interface{}, count int) (*mcp.CallToolResult, error) {
 	jsonData, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -438,7 +467,7 @@ func formatResult(data interface{}, count int) (*mcp.CallToolResult, error) {
 	}
 
 	return &mcp.CallToolResult{
-		Content: []interface{}{
+		Content: []mcp.Content{
 			mcp.TextContent{
 				Type: "text",
 				Text: fmt.Sprintf("Found %d result(s):\n\n%s", count, string(jsonData)),
