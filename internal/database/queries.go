@@ -1173,7 +1173,6 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 			d.name as device_name,
 			s.scanning_interval_seconds,
 			s.status,
-			s.status_text,
 			s.last_check_utc,
 			s.last_up_utc,
 			s.last_down_utc,
@@ -1181,7 +1180,7 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 			s.message,
 			s.uptime_since_seconds,
 			s.downtime_since_seconds,
-			s.full_path,
+			sp.path AS full_path,
 			COALESCE(
 				(SELECT STRING_AGG(t.name, ', ' ORDER BY t.name)
 				 FROM prtg_sensor_tag st
@@ -1191,6 +1190,8 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 				''
 			) as tags
 		FROM prtg_sensor s
+		INNER JOIN prtg_sensor_path sp ON s.id = sp.sensor_id
+			AND s.prtg_server_address_id = sp.prtg_server_address_id
 		LEFT JOIN prtg_device d ON s.prtg_device_id = d.id
 			AND s.prtg_server_address_id = d.prtg_server_address_id
 		WHERE s.sensor_type ILIKE '%business%process%'
