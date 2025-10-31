@@ -106,7 +106,7 @@ Common ports:
 
 **Type:** `string`
 **Optional:** Yes
-**Description:** Public URL for the SSE endpoint.
+**Description:** Public URL for the MCP endpoint.
 
 If your server is behind a reverse proxy or has a public domain, specify it here:
 
@@ -124,14 +124,14 @@ If not specified, the server will construct a URL from `bind_address` and `port`
 
 **Recommendation:** Always use `true` in production. TLS encrypts all communication including API keys.
 
-**IMPORTANT - mcp-proxy Limitation:**
-- mcp-proxy does **NOT** support the `--insecure` flag for bypassing SSL certificate verification
-- When using self-signed certificates with mcp-proxy, you have three options:
-  1. **Use HTTP instead** (set `enable_tls: false`) - Recommended for development
+**IMPORTANT - Self-Signed Certificates:**
+- When using self-signed certificates with mcp-remote, you have several options:
+  1. **Use HTTP instead** (set `enable_tls: false`) - Only for development
   2. **Use trusted CA certificates** (Let's Encrypt, etc.) - Required for production
-  3. **Add self-signed certificate to system trust store** - Advanced option
+  3. **Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env** - Not recommended for production
+  4. **Add self-signed certificate to system trust store** - Advanced option
 
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#certificate-verification-failed-with-mcp-proxy) for detailed instructions.
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#certificate-verification-failed) for detailed instructions.
 
 ### cert_file
 
@@ -157,7 +157,10 @@ Automatically generated on first run if `enable_tls` is true and no key exists.
 **Default:** `10`
 **Description:** HTTP timeouts for regular endpoints.
 
-**Note:** SSE endpoints use infinite timeouts (0) to maintain long-lived connections.
+**Note:** The `/mcp` endpoint uses optimized timeouts for Streamable HTTP:
+- ReadTimeout: 0 (no timeout for streaming connections)
+- WriteTimeout: 0 (no timeout for streaming connections)
+- IdleTimeout: 60 minutes (close inactive connections)
 
 ### allow_custom_queries
 
@@ -345,7 +348,7 @@ On first installation with `enable_tls: true`, the server automatically generate
 Self-signed certificates are suitable for:
 - Development and testing
 - Internal networks where clients can trust the certificate
-- Use with mcp-proxy (which supports self-signed certificates)
+- Use with mcp-remote (set NODE_TLS_REJECT_UNAUTHORIZED=0 for self-signed certificates)
 
 ### Using Custom Certificates
 
@@ -438,14 +441,16 @@ The server automatically sets security headers for HTTP responses:
 
 - `WWW-Authenticate: Bearer realm="MCP Server PRTG"` (on 401 responses)
 
-### SSE Transport Configuration
+### Streamable HTTP Transport Configuration
 
-SSE (Server-Sent Events) configuration is optimized for long-lived connections:
+Streamable HTTP transport (MCP 2025-03-26) is optimized for long-lived streaming connections:
 
-- **Read Timeout:** 0 (infinite)
-- **Write Timeout:** 0 (infinite)
-- **Idle Timeout:** 0 (infinite)
-- **Architecture:** v2 with internal server + authentication proxy
+- **Read Timeout:** 0 (no timeout for streaming)
+- **Write Timeout:** 0 (no timeout for streaming)
+- **Idle Timeout:** 60 minutes (close inactive connections)
+- **ReadHeaderTimeout:** 10 seconds (protection against slow-loris attacks)
+- **Heartbeat Interval:** 30 seconds (keeps connections alive)
+- **Architecture:** Single unified server with built-in authentication
 
 ### File Permissions
 

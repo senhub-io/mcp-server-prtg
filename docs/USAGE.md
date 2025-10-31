@@ -12,24 +12,20 @@ This guide covers how to use MCP Server PRTG with MCP Client, direct API access,
 
 ## MCP Client Setup
 
-MCP Server PRTG uses SSE (Server-Sent Events) transport, which requires [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy) to connect with MCP Client.
+MCP Server PRTG uses **Streamable HTTP transport** (MCP 2025-03-26), which is natively supported by [mcp-remote](https://github.com/modelcontextprotocol/mcp-remote).
 
 ### Prerequisites
 
 - MCP Server PRTG installed and running
-- Python 3.8 or higher
-- MCP Client application
+- Node.js and npm
+- MCP Client application (e.g., Claude Desktop)
 
-### Step 1: Install mcp-proxy
-
-```bash
-pip install mcp-proxy
-```
-
-Or with pipx (recommended):
+### Step 1: Install mcp-remote
 
 ```bash
-pipx install mcp-proxy
+# mcp-remote is automatically installed via npx
+# No separate installation required
+npx mcp-remote --version
 ```
 
 ### Step 2: Get Your API Key
@@ -64,13 +60,16 @@ Edit MCP Client configuration file:
 {
   "mcpServers": {
     "prtg": {
-      "command": "mcp-proxy",
+      "command": "npx",
       "args": [
-        "https://localhost:8443/sse",
-        "--headers",
-        "Authorization",
-        "Bearer a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-      ]
+        "mcp-remote",
+        "https://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+      }
     }
   }
 }
@@ -82,36 +81,43 @@ Edit MCP Client configuration file:
 {
   "mcpServers": {
     "prtg": {
-      "command": "mcp-proxy",
+      "command": "npx",
       "args": [
-        "https://prtg-mcp.example.com:8443/sse",
-        "--headers",
-        "Authorization",
-        "Bearer a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-      ]
+        "mcp-remote",
+        "https://prtg-mcp.example.com:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+      }
     }
   }
 }
 ```
 
-**For self-signed certificates (development):**
+**For HTTP (development only):**
 
 ```json
 {
   "mcpServers": {
     "prtg": {
-      "command": "mcp-proxy",
+      "command": "npx",
       "args": [
-        "https://localhost:8443/sse",
-        "--headers",
-        "Authorization",
-        "Bearer a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7",
-        "--insecure"
-      ]
+        "mcp-remote",
+        "http://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${PRTG_API_KEY}"
+      ],
+      "env": {
+        "PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+      }
     }
   }
 }
 ```
+
+**Note:** For production with self-signed certificates, add `NODE_TLS_REJECT_UNAUTHORIZED=0` to `env` (not recommended) or use trusted CA certificates.
 
 ### Step 4: Restart MCP Client
 
@@ -277,8 +283,7 @@ Authorization: Bearer your-api-key
 
 ### Endpoints
 
-**SSE Endpoint:** `GET /sse`
-**RPC Endpoint:** `POST /message`
+**MCP Endpoint:** `POST/GET /mcp` (Streamable HTTP)
 **Health Check:** `GET /health`
 **Status:** `GET /status`
 
@@ -308,7 +313,7 @@ Response:
 {
   "status": "running",
   "version": "1.0.2-beta",
-  "transport": "sse",
+  "transport": "streamable_http",
   "tls_enabled": true,
   "base_url": "https://localhost:8443",
   "mcp_tools": 6,
@@ -322,12 +327,12 @@ Response:
 
 ### MCP Tool Calls
 
-MCP Server PRTG implements the [Model Context Protocol](https://modelcontextprotocol.io). Tool calls use JSON-RPC 2.0 over the `/message` endpoint.
+MCP Server PRTG implements the [Model Context Protocol](https://modelcontextprotocol.io). Tool calls use JSON-RPC 2.0 over the `/mcp` endpoint (Streamable HTTP transport).
 
 **Example: List all sensors**
 
 ```bash
-curl -X POST https://localhost:8443/message \
+curl -X POST https://localhost:8443/mcp \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -346,9 +351,9 @@ curl -X POST https://localhost:8443/message \
 **Example: Get alerts**
 
 ```bash
-curl -X POST https://localhost:8443/message \
+curl -X POST https://localhost:8443/mcp \
   -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type": application/json" \
   -d '{
     "jsonrpc": "2.0",
     "id": 2,
@@ -365,7 +370,7 @@ curl -X POST https://localhost:8443/message \
 **Example: Device overview**
 
 ```bash
-curl -X POST https://localhost:8443/message \
+curl -X POST https://localhost:8443/mcp \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -384,7 +389,7 @@ curl -X POST https://localhost:8443/message \
 **Example: Custom SQL query**
 
 ```bash
-curl -X POST https://localhost:8443/message \
+curl -X POST https://localhost:8443/mcp \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -441,7 +446,7 @@ class PRTGMCPClient:
         }
 
         response = requests.post(
-            f"{self.base_url}/message",
+            f"{self.base_url}/mcp",
             headers=self.headers,
             json=payload,
             verify=self.verify_ssl
@@ -497,7 +502,7 @@ call_tool() {
     local tool_name="$1"
     local arguments="$2"
 
-    curl -s -k -X POST "${BASE_URL}/message" \
+    curl -s -k -X POST "${BASE_URL}/mcp" \
         -H "Authorization: Bearer ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d "{
@@ -558,7 +563,7 @@ class PRTGMCPClient {
       }
     };
 
-    const response = await this.client.post('/message', payload);
+    const response = await this.client.post('/mcp', payload);
     return response.data;
   }
 
@@ -638,7 +643,7 @@ function Invoke-PRTGTool {
         }
     } | ConvertTo-Json -Depth 10
 
-    $response = Invoke-RestMethod -Uri "$BaseUrl/message" `
+    $response = Invoke-RestMethod -Uri "$BaseUrl/mcp" `
         -Method Post `
         -Headers $headers `
         -Body $body
@@ -749,9 +754,9 @@ $device | ConvertTo-Json -Depth 10
 **Issue:** MCP tools don't appear in MCP Client
 
 **Solutions:**
-1. Verify mcp-proxy is installed: `mcp-proxy --version`
+1. Verify mcp-remote is accessible: `npx mcp-remote --version`
 2. Check MCP Client config file syntax (valid JSON)
-3. Ensure the URL is correct (include `/sse` endpoint)
+3. Ensure the URL is correct (include `/mcp` endpoint)
 4. Verify API key is correct
 5. Restart MCP Client completely (quit and reopen)
 
@@ -763,7 +768,7 @@ $device | ConvertTo-Json -Depth 10
 1. Verify server is running: `curl https://localhost:8443/health`
 2. Check firewall allows traffic on port 8443
 3. For remote servers, ensure public_url is correctly configured
-4. For self-signed certs, add `--insecure` flag to mcp-proxy
+4. For self-signed certs, add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env (not recommended for production)
 
 ### Authentication Failed
 
