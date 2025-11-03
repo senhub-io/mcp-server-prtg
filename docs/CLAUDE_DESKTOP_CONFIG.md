@@ -1,12 +1,26 @@
 # Claude Desktop Configuration
 
+This guide explains how to configure Claude Desktop to connect to your MCP Server PRTG instance using `mcp-remote`.
+
+## Architecture Overview
+
+```
+Claude Desktop → mcp-remote → MCP Server PRTG → PostgreSQL (PRTG Data Exporter)
+                                                → PRTG API v2 (PRTG Core Server)
+```
+
+**Important:**
+- MCP Server PRTG must be running as a service or daemon
+- Claude Desktop connects via HTTP/HTTPS using `mcp-remote`
+- You cannot use "stdio mode" because MCP Server PRTG requires PostgreSQL and PRTG API access
+
 ## Configuration File Location
 
 ### Windows
 ```
 %APPDATA%\Claude\claude_desktop_config.json
 ```
-Full path example: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.json`
+Full path: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.json`
 
 ### macOS
 ```
@@ -18,190 +32,184 @@ Full path example: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_
 ~/.config/Claude/claude_desktop_config.json
 ```
 
-## Configuration Modes
+## Basic Configuration
 
-There are two ways to configure the MCP server in Claude Desktop:
+### HTTPS with TLS (Recommended for Production)
 
-1. **Command Mode (Recommended)**: Claude Desktop launches and manages the server automatically
-2. **URL Mode**: You run the server manually and Claude Desktop connects to it
+```json
+{
+  "mcpServers": {
+    "prtg": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://<MCP_SERVER_HOST>:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+      ],
+      "env": {
+        "MCP_SERVER_API_KEY": "your-mcp-server-api-key-from-config-yaml"
+      }
+    }
+  }
+}
+```
+
+**Replace:**
+- `<MCP_SERVER_HOST>`: IP or hostname where MCP Server PRTG is running
+- `your-mcp-server-api-key-from-config-yaml`: API key from MCP Server PRTG `config.yaml` (NOT PRTG API v2 token!)
+
+### HTTP without TLS (Development/Testing Only)
+
+```json
+{
+  "mcpServers": {
+    "prtg": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://<MCP_SERVER_HOST>:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+      ],
+      "env": {
+        "MCP_SERVER_API_KEY": "your-mcp-server-api-key-from-config-yaml"
+      }
+    }
+  }
+}
+```
+
+⚠️ **Warning:** HTTP without TLS should only be used for local development/testing.
 
 ## Configuration Examples
 
-### Example 1: Command Mode - Auto-Launch (Recommended)
+### Example 1: Local Server (Same Machine)
 
-**Windows:**
 ```json
 {
   "mcpServers": {
     "prtg": {
-      "command": "C:\\path\\to\\mcp-server-prtg.exe",
-      "args": ["run", "--config", "C:\\path\\to\\config.yaml"],
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+      ],
       "env": {
-        "PRTG_DB_PASSWORD": "your-database-password"
+        "MCP_SERVER_API_KEY": "abc123def456ghi789",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }
     }
   }
 }
 ```
 
-**macOS/Linux:**
+**Note:** `NODE_TLS_REJECT_UNAUTHORIZED=0` is needed for self-signed certificates (development only).
+
+### Example 2: Remote Server with Custom Port
+
 ```json
 {
   "mcpServers": {
     "prtg": {
-      "command": "/path/to/mcp-server-prtg",
-      "args": ["run", "--config", "/path/to/config.yaml"],
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://prtg-mcp.company.com:9443/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+      ],
       "env": {
-        "PRTG_DB_PASSWORD": "your-database-password"
+        "MCP_SERVER_API_KEY": "prod-api-key-xyz"
       }
     }
   }
 }
 ```
 
-**Benefits:**
-- ✅ Claude Desktop starts/stops the server automatically
-- ✅ No need to manage server lifecycle manually
-- ✅ Server runs only when Claude Desktop is running
-- ✅ Logs are captured by Claude Desktop
-
-**Note:** With command mode, the server runs in stdio mode and doesn't need HTTP/TLS configuration.
-
-### Example 2: URL Mode - Manual Server (Remote Access)
-
-This mode requires you to start the server manually first.
-
-**HTTPS with TLS (Recommended for Production):**
+### Example 3: Multiple MCP Servers
 
 ```json
 {
   "mcpServers": {
     "prtg": {
-      "url": "https://your-server-address:8443/mcp",
-      "headers": {
-        "Authorization": "Bearer your-api-key-from-config-yaml"
-      }
-    }
-  }
-}
-```
-
-**Notes:**
-- Replace `your-server-address` with your actual server hostname or IP
-- Replace `your-api-key-from-config-yaml` with the `api_key` value from your `config.yaml`
-- Port `8443` is the default, change if you configured differently
-- The `/mcp` endpoint is mandatory (Streamable HTTP protocol)
-
-### Example 2: HTTP without TLS (Development/Testing Only)
-
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "url": "http://localhost:8443/mcp",
-      "headers": {
-        "Authorization": "Bearer your-api-key-from-config-yaml"
-      }
-    }
-  }
-}
-```
-
-**⚠️ Warning:** HTTP without TLS should only be used for local development/testing.
-
-### Example 3: Remote Server with Custom Port
-
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "url": "https://prtg-mcp.example.com:9443/mcp",
-      "headers": {
-        "Authorization": "Bearer abc123def456ghi789"
-      }
-    }
-  }
-}
-```
-
-### Example 4: Multiple MCP Servers
-
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "url": "https://prtg-server.local:8443/mcp",
-      "headers": {
-        "Authorization": "Bearer your-prtg-api-key"
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://prtg-server.local:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
+      ],
+      "env": {
+        "MCP_PRTG_API_KEY": "prtg-server-key"
       }
     },
-    "other-mcp-server": {
-      "url": "https://other-server.local:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer other-api-key"
+    "other-mcp": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://other-server.local:8080/mcp",
+        "--header",
+        "Authorization:Bearer ${OTHER_API_KEY}"
+      ],
+      "env": {
+        "OTHER_API_KEY": "other-server-key"
       }
     }
   }
 }
 ```
 
-## Finding Your API Key
+## Finding Your MCP Server API Key
 
-The API key is located in your server's `config.yaml` file:
+The API key is located in your **MCP Server PRTG** `config.yaml` file:
 
 ```yaml
 server:
-  api_key: "your-generated-api-key-here"
+  api_key: "your-mcp-server-api-key-here"
 ```
 
-If you don't have a config file yet, run:
+**Important:** This is the MCP Server authentication key, NOT the PRTG API v2 token!
 
-```bash
-# Windows
-mcp-server-prtg.exe run --config config.yaml
+### Key Distinction
 
-# Linux/macOS
-./mcp-server-prtg run --config config.yaml
+```yaml
+server:
+  api_key: "abc123..."        # ← THIS is for Claude Desktop (MCP_SERVER_API_KEY)
+
+prtg:
+  api_token: "xyz789..."      # ← This is for PRTG Core Server (internal use only)
 ```
-
-This will generate a new `config.yaml` with a random API key.
 
 ## Verifying Configuration
 
-### Step 1: Check Server is Running
-
-Open a terminal and test the health endpoint:
+### Step 1: Verify MCP Server is Running
 
 ```bash
-# Windows (PowerShell)
-curl http://localhost:8443/health
+# Test health endpoint
+curl https://localhost:8443/health
 
-# Linux/macOS
-curl http://localhost:8443/health
+# Expected response:
+{"status":"ok"}
 ```
-
-Expected response: `{"status":"ok"}`
 
 ### Step 2: Test Authentication
 
-Test the status endpoint with your API key:
-
 ```bash
-# Windows (PowerShell)
-curl -H "Authorization: Bearer YOUR_API_KEY" http://localhost:8443/status
+# Test with your API key
+curl -H "Authorization: Bearer YOUR_MCP_SERVER_API_KEY" \
+     https://localhost:8443/status
 
-# Linux/macOS
-curl -H "Authorization: Bearer YOUR_API_KEY" http://localhost:8443/status
-```
-
-Expected response:
-```json
+# Expected response:
 {
-  "version": "1.1.0",
+  "version": "1.2.2",
   "transport": "streamable-http",
   "protocol": "2025-03-26",
   "uptime": "1m30s",
-  "database": "connected"
+  "database": "connected",
+  "prtg_api": "enabled"
 }
 ```
 
@@ -212,243 +220,254 @@ After updating the configuration:
 1. **Quit Claude Desktop completely** (not just close the window)
 2. **Restart Claude Desktop**
 3. Open a new conversation
-4. Test with a query like: "Can you list the available MCP tools?"
+4. Test with: "List available PRTG tools"
 
 ## Troubleshooting
 
 ### "Connection Refused" Error
 
-**Possible causes:**
-1. Server is not running
-2. Wrong port in configuration
-3. Firewall blocking the connection
+**Causes:**
+- MCP Server PRTG is not running
+- Wrong hostname or port
+- Firewall blocking connection
 
 **Solution:**
-- Verify server is running: `curl http://localhost:8443/health`
-- Check server logs for errors
-- Verify port matches `server.address` in `config.yaml`
+```bash
+# Verify server is running
+curl https://localhost:8443/health
+
+# Check MCP server logs
+tail -f logs/mcp-server-prtg.log
+
+# Verify server is listening
+netstat -an | grep 8443
+```
 
 ### "Unauthorized" Error
 
-**Possible causes:**
-1. Wrong API key
-2. Missing `Authorization` header
-3. API key contains spaces or special characters
+**Causes:**
+- Wrong API key
+- Using PRTG API v2 token instead of MCP Server API key
+- Missing Authorization header
 
 **Solution:**
-- Verify API key matches exactly (no extra spaces)
-- Ensure you're using `Bearer YOUR_API_KEY` format
-- Check server logs for authentication attempts
+- Verify you're using the `server.api_key` from `config.yaml`
+- NOT the `prtg.api_token`
+- Check for extra spaces in the key
 
 ### "TLS Certificate Error"
 
-**Possible causes:**
-1. Self-signed certificate not trusted
-2. Certificate expired
-3. Hostname mismatch
+**Causes:**
+- Self-signed certificate not trusted
+- Certificate expired
+- Hostname mismatch
+
+**Solutions:**
+
+**For Development (Self-Signed Cert):**
+```json
+"env": {
+  "MCP_SERVER_API_KEY": "your-key",
+  "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+}
+```
+
+**For Production:**
+- Use a proper TLS certificate from a trusted CA
+- Or use HTTP (local network only)
+
+### "Cannot find module 'mcp-remote'"
+
+**Cause:** `mcp-remote` npm package not installed
 
 **Solution:**
-- For testing, use HTTP without TLS (local only)
-- For production, use a proper TLS certificate
-- Regenerate certificates if expired
+```bash
+# Install globally
+npm install -g mcp-remote
+
+# Or let npx handle it (slower first run)
+# npx will auto-download on first use
+```
 
 ### Server Not Appearing in Claude Desktop
 
-**Solution:**
-1. Verify JSON syntax is correct (use a JSON validator)
-2. Ensure file is saved as `claude_desktop_config.json`
-3. Restart Claude Desktop completely
-4. Check Claude Desktop logs for errors
+**Solutions:**
+1. Verify JSON syntax (use [jsonlint.com](https://jsonlint.com))
+2. Ensure file is named exactly `claude_desktop_config.json`
+3. Check file permissions (must be readable)
+4. Restart Claude Desktop completely
+5. Check Claude Desktop logs for errors
 
-## Advanced Configuration
+## Security Best Practices
 
-### Custom Timeouts (if supported by Claude Desktop)
+1. **Never commit API keys to version control**
+   - Use environment variables
+   - Add `claude_desktop_config.json` to `.gitignore`
 
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "url": "https://prtg-server.local:8443/mcp",
-      "headers": {
-        "Authorization": "Bearer your-api-key"
-      },
-      "timeout": 30000
-    }
-  }
-}
-```
+2. **Use HTTPS in production**
+   - Generate proper TLS certificates
+   - Or use reverse proxy (nginx, Caddy)
 
-### Environment-Specific Configuration
+3. **Rotate API keys regularly**
+   - Regenerate keys periodically
+   - Update all clients
 
-You can maintain separate configurations for different environments:
+4. **Restrict network access**
+   - Use firewall rules
+   - Bind to specific interfaces only
 
-**Development:**
-```json
-{
-  "mcpServers": {
-    "prtg-dev": {
-      "url": "http://localhost:8443/mcp",
-      "headers": {
-        "Authorization": "Bearer dev-api-key"
-      }
-    }
-  }
-}
-```
+5. **Monitor server logs**
+   - Watch for failed authentication attempts
+   - Set up alerts for unusual activity
 
-**Production:**
-```json
-{
-  "mcpServers": {
-    "prtg-prod": {
-      "url": "https://prtg.company.com:8443/mcp",
-      "headers": {
-        "Authorization": "Bearer prod-api-key"
-      }
-    }
-  }
-}
-```
-
-## Complete Example with Comments
-
-```json
-{
-  "mcpServers": {
-    // Server name (appears in Claude Desktop)
-    "prtg": {
-      // Server URL - MUST end with /mcp
-      // Format: https://hostname:port/mcp
-      "url": "https://prtg-server.local:8443/mcp",
-
-      // Headers sent with each request
-      "headers": {
-        // Bearer token authentication
-        // Get this from your config.yaml file
-        "Authorization": "Bearer your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-**Note:** JSON does not support comments. Remove all `//` comments before using.
-
-## Migration from SSE to Streamable HTTP
-
-If you were using the old SSE transport, only the endpoint needs to change:
-
-**Old Configuration (SSE - Deprecated):**
-```json
-"url": "https://localhost:8443/sse"
-```
-
-**New Configuration (Streamable HTTP):**
-```json
-"url": "https://localhost:8443/mcp"
-```
-
-Everything else remains the same!
+6. **Keep software updated**
+   - Update MCP Server PRTG regularly
+   - Update `mcp-remote` package
 
 ## Quick Setup Guide
 
-### 1. Start the Server
+### 1. Start MCP Server PRTG
 
-**Windows:**
-```powershell
-cd C:\path\to\mcp-server-prtg
-.\mcp-server-prtg.exe run --config config.yaml
-```
-
-**Linux/macOS:**
 ```bash
-cd /path/to/mcp-server-prtg
-./mcp-server-prtg run --config config.yaml
+# Windows (as service)
+mcp-server-prtg.exe start
+
+# Linux/macOS (as daemon)
+sudo systemctl start mcp-server-prtg
+
+# Or run in foreground for testing
+./mcp-server-prtg run
 ```
 
-### 2. Get Your API Key
+### 2. Get Your MCP Server API Key
 
 ```bash
 # Windows (PowerShell)
 type config.yaml | Select-String "api_key"
 
 # Linux/macOS
-grep api_key config.yaml
+grep "api_key" config.yaml
+```
+
+Output example:
+```yaml
+  api_key: "abc123def456ghi789"
 ```
 
 ### 3. Create Claude Desktop Config
 
 **Windows:**
 ```powershell
-# Create directory if it doesn't exist
+# Create directory
 New-Item -ItemType Directory -Force -Path "$env:APPDATA\Claude"
 
-# Edit the config file
+# Edit config
 notepad "$env:APPDATA\Claude\claude_desktop_config.json"
 ```
 
 **macOS:**
 ```bash
-# Create directory if it doesn't exist
+# Create directory
 mkdir -p ~/Library/Application\ Support/Claude
 
-# Edit the config file
+# Edit config
 nano ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
 **Linux:**
 ```bash
-# Create directory if it doesn't exist
+# Create directory
 mkdir -p ~/.config/Claude
 
-# Edit the config file
+# Edit config
 nano ~/.config/Claude/claude_desktop_config.json
 ```
 
-### 4. Paste This Configuration
+### 4. Paste Configuration
 
 ```json
 {
   "mcpServers": {
     "prtg": {
-      "url": "http://localhost:8443/mcp",
-      "headers": {
-        "Authorization": "Bearer PASTE_YOUR_API_KEY_HERE"
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://localhost:8443/mcp",
+        "--header",
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+      ],
+      "env": {
+        "MCP_SERVER_API_KEY": "PASTE_YOUR_KEY_HERE",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }
     }
   }
 }
 ```
 
-Replace `PASTE_YOUR_API_KEY_HERE` with your actual API key from step 2.
+Replace `PASTE_YOUR_KEY_HERE` with your MCP Server API key from step 2.
 
-### 5. Restart Claude Desktop
+### 5. Test Configuration
 
-- Quit Claude Desktop completely
-- Start Claude Desktop
-- Open a new conversation
-- Test: "What MCP tools are available?"
+1. Save the file
+2. Quit Claude Desktop completely
+3. Restart Claude Desktop
+4. Open new conversation
+5. Ask: "What PRTG tools are available?"
 
-## Security Best Practices
+## Common Mistakes
 
-1. **Never commit API keys to version control**
-2. **Use HTTPS in production** (generate proper TLS certificates)
-3. **Rotate API keys regularly**
-4. **Use firewall rules** to restrict access to the server
-5. **Monitor server logs** for suspicious activity
-6. **Keep the server updated** with latest releases
+### ❌ Wrong: Using PRTG API v2 Token
+
+```json
+"env": {
+  "MCP_SERVER_API_KEY": "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
+}
+```
+
+This is the PRTG API v2 token (from PRTG Core Server). It won't work!
+
+### ✅ Correct: Using MCP Server API Key
+
+```json
+"env": {
+  "MCP_SERVER_API_KEY": "abc123def456ghi789"
+}
+```
+
+This is from `config.yaml` → `server.api_key`.
+
+### ❌ Wrong: Connecting to PRTG Core Server
+
+```json
+"mcp-remote",
+"https://prtg.example.com:443/mcp"
+```
+
+This tries to connect to PRTG Core Server, not MCP Server PRTG!
+
+### ✅ Correct: Connecting to MCP Server PRTG
+
+```json
+"mcp-remote",
+"https://mcp-server-host:8443/mcp"
+```
+
+This connects to where MCP Server PRTG is running.
 
 ## Support
 
 For issues or questions:
 
-1. Check server logs: `logs/mcp-server-prtg.log`
-2. Verify configuration: `curl http://localhost:8443/health`
-3. Review: `docs/TROUBLESHOOTING.md`
-4. Open GitHub issue with logs and configuration (redact API keys!)
+1. Check MCP server logs: `logs/mcp-server-prtg.log`
+2. Verify server health: `curl https://localhost:8443/health`
+3. Test authentication: `curl -H "Authorization: Bearer KEY" https://localhost:8443/status`
+4. Review: [docs/TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
+5. Open [GitHub issue](https://github.com/senhub-io/mcp-server-prtg/issues) with logs (redact API keys!)
 
 ---
 
-**Last Updated**: 2025-10-28
+**Last Updated**: 2025-11-03
 **Protocol**: Streamable HTTP (MCP 2025-03-26)
 **Endpoint**: `/mcp`
+**Client**: `mcp-remote` (npm package)
