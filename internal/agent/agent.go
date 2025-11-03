@@ -10,6 +10,7 @@ import (
 	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
 	"github.com/matthieu/mcp-server-prtg/internal/database"
 	"github.com/matthieu/mcp-server-prtg/internal/handlers"
+	"github.com/matthieu/mcp-server-prtg/internal/prtg"
 	"github.com/matthieu/mcp-server-prtg/internal/server"
 	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
 	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
@@ -75,12 +76,59 @@ func NewAgent(args *cliargs.ParsedArgs) (*Agent, error) {
 		"1.0.0",
 	)
 
-	// Register MCP tools
+	// Register MCP tools (database-based)
 	toolHandler := handlers.NewToolHandler(db, config, baseLogger)
 	toolHandler.RegisterTools(mcpServer)
 
+	toolsCount := 12 // Base tools from database
+
+	// Initialize PRTG API client if enabled
+	if config.IsPRTGEnabled() {
+		moduleLogger.Info().
+			Str("base_url", config.GetPRTGBaseURL()).
+			Dur("timeout", config.GetPRTGTimeout()).
+			Bool("verify_ssl", config.IsPRTGSSLVerifyEnabled()).
+			Msg("Initializing PRTG API client")
+
+		prtgLogger := logger.NewModuleLogger(baseLogger, "prtg")
+		prtgClient, err := prtg.NewClient(prtg.ClientConfig{
+			BaseURL:   config.GetPRTGBaseURL(),
+			Token:     config.GetPRTGAPIToken(),
+			Timeout:   config.GetPRTGTimeout(),
+			VerifySSL: config.IsPRTGSSLVerifyEnabled(),
+			Logger:    prtgLogger.Logger,
+		})
+
+		if err != nil {
+			moduleLogger.Warn().
+				Err(err).
+				Msg("Failed to initialize PRTG API client - metrics tools will not be available")
+		} else {
+			// Test PRTG API connection
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			if err := prtgClient.Ping(ctx); err != nil {
+				moduleLogger.Warn().
+					Err(err).
+					Msg("PRTG API connection test failed - metrics tools may not work properly")
+			} else {
+				moduleLogger.Info().Msg("PRTG API connection successful")
+			}
+
+			// Register metrics tools
+			metricsHandler := handlers.NewMetricsToolHandler(prtgClient, toolHandler)
+			metricsHandler.RegisterMetricsTools(mcpServer)
+
+			toolsCount += 3 // Add 3 metrics tools
+			moduleLogger.Info().Msg("PRTG metrics tools registered")
+		}
+	} else {
+		moduleLogger.Info().Msg("PRTG API client disabled in configuration")
+	}
+
 	moduleLogger.Info().
-		Int("tools_count", 6).
+		Int("tools_count", toolsCount).
 		Msg("MCP tools registered")
 
 	// Create Streamable HTTP server (modern MCP transport)
