@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide covers how to use MCP Server PRTG with MCP Client, direct API access, and integration examples.
+This guide covers how to use MCP Server PRTG with MCP Clients (like Claude Desktop), direct API access, and integration examples.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ MCP Server PRTG uses **Streamable HTTP transport** (MCP 2025-03-26), which is na
 
 - MCP Server PRTG installed and running
 - Node.js and npm
-- MCP Client application (e.g., Claude Desktop)
+- MCP Client application (like Claude Desktop)
 
 ### Step 1: Install mcp-remote
 

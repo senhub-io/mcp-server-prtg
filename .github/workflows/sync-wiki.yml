@@ -1,0 +1,148 @@
+name: Sync Documentation to Wiki
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'docs/**/*.md'
+      - 'README.md'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clone wiki repository
+        run: |
+          git clone "https://x-access-token:${{ secrets.WIKI_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
+
+      - name: Sync documentation files
+        run: |
+          # Remove old files in wiki (except Home.md if it exists)
+          find wiki -name "*.md" ! -name "Home.md" -type f -delete
+
+          # Copy documentation files (excluding developer-only docs)
+          # Remove first H1 title from each file to avoid redundancy with wiki page title
+          if [ -d "docs" ]; then
+            for file in docs/*.md; do
+              filename=$(basename "$file")
+              # Exclude developer/internal documentation
+              if [ "$filename" != "ARCHITECTURE.md" ] && [ "$filename" != "RELEASE_PROCESS.md" ]; then
+                # Remove first H1 title (first line starting with "# ")
+                sed '0,/^# /d' "$file" > "wiki/$filename"
+              fi
+            done
+          fi
+
+          # Create custom Home page (intro only, not full README)
+          cat > wiki/Home.md << 'HOMEEOF'
+          **MCP Server PRTG** is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes PRTG monitoring data through a standardized API. It enables LLMs (like Claude) to query sensor status, analyze alerts, and generate reports on your monitoring infrastructure in real-time.
+
+          ## Prerequisites
+
+          **MCP Server PRTG** requires access to:
+          1. **PRTG Data Exporter** - PostgreSQL database (`prtg_data_exporter`) for sensor status and configuration
+          2. **PRTG Core Server** - API v2 (optional, for historical metrics and channel data)
+
+          ### Deployment Options
+
+          ```mermaid
+          graph LR
+              A[Claude Desktop] -->|HTTPS/TLS| B[MCP Server PRTG]
+              B -->|PostgreSQL| C[PRTG Data Exporter]
+              B -->|API v2| D[PRTG Core Server]
+
+              style A fill:#e1f5ff
+              style B fill:#fff4e1
+              style C fill:#e8f5e9
+              style D fill:#e8f5e9
+          ```
+
+          **Option A: Co-located (Recommended)**
+          - Install MCP Server PRTG on the same Windows server as PRTG Data Exporter
+          - Best performance with local PostgreSQL access
+          - No network latency
+
+          **Option B: Remote Deployment**
+          - Install MCP Server PRTG on any server (Linux, macOS, Windows)
+          - Requires network access to PostgreSQL (port 5432) and PRTG API v2 (port 1616)
+
+          ## Key Features
+
+          - 🔌 **Streamable HTTP Transport** - Modern MCP protocol with HTTP SSE streaming
+          - 🛠️ **15 MCP Tools** - 12 PostgreSQL tools + 3 PRTG API v2 tools
+          - 🔐 **Bearer Token Authentication** (RFC 6750)
+          - 🔒 **TLS/HTTPS Support** with automatic certificate generation
+          - 🪟 **Windows Service** - Easy installation and management
+          - 📝 **File Logging** with rotation
+          - 🔄 **Hot-reload** configuration
+          - 💻 **Multi-platform** - Windows, Linux, macOS
+
+          ## Getting Started
+
+          Follow the guides in order:
+
+          1. **[📥 Installation](INSTALLATION)** - Download and install the server
+          2. **[⚙️ Configuration](CONFIGURATION)** - Configure database and PRTG API access
+          3. **[🖥️ Claude Desktop Setup](CLAUDE_DESKTOP_CONFIG)** - Connect Claude Desktop to the server
+          4. **[🚀 Usage Guide](USAGE)** - Learn how to use MCP tools with Claude
+          5. **[🔧 Available Tools](TOOLS)** - Complete reference of all 15 MCP tools
+
+          ## Support
+
+          - 📖 **Documentation**: Browse the wiki sections on the left
+          - 🐛 **Issues**: [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues)
+          - 💬 **Discussions**: [GitHub Discussions](https://github.com/senhub-io/mcp-server-prtg/discussions)
+          - 📦 **Releases**: [GitHub Releases](https://github.com/senhub-io/mcp-server-prtg/releases)
+
+          ## License
+
+          MIT License - See [LICENSE](https://github.com/senhub-io/mcp-server-prtg/blob/main/LICENSE) for details.
+          HOMEEOF
+
+          # Create navigation sidebar with logical order
+          cat > wiki/_Sidebar.md << 'EOF'
+          # Documentation
+
+          ## Getting Started
+          * [🏠 Home](Home)
+          * [📥 Installation](INSTALLATION)
+          * [⚙️ Configuration](CONFIGURATION)
+          * [🖥️ Claude Desktop Setup](CLAUDE_DESKTOP_CONFIG)
+
+          ## Using the Server
+          * [🚀 Usage Guide](USAGE)
+          * [🔧 Available Tools](TOOLS)
+          * [🔍 Troubleshooting](TROUBLESHOOTING)
+          EOF
+
+      - name: Commit and push to wiki
+        working-directory: wiki
+        env:
+          WIKI_TOKEN: ${{ secrets.WIKI_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Configure remote with token
+          git remote set-url origin "https://x-access-token:${WIKI_TOKEN}@github.com/${{ github.repository }}.wiki.git"
+
+          git add .
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Sync documentation from ${GITHUB_REF#refs/heads/} @ ${{ github.sha }}"
+            git push origin master
+            echo "✅ Wiki synchronized successfully"
+          fi
