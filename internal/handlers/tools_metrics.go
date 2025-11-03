@@ -38,9 +38,11 @@ func (h *MetricsToolHandler) RegisterMetricsTools(s *server.MCPServer) {
 	// Tool 1: prtg_get_sensor_timeseries
 	s.AddTool(mcp.Tool{
 		Name: "prtg_get_sensor_timeseries",
-		Description: "Retrieve historical time series data for a PRTG sensor over predefined periods. " +
-			"Returns metrics data (CPU, memory, traffic, etc.) with timestamps. " +
-			"Use this to analyze sensor performance trends over time.",
+		Description: "Retrieve **HISTORICAL** time series data for analyzing trends over time. " +
+			"Returns time-stamped measurements showing how channel values evolved. " +
+			"**For CURRENT values, use prtg_get_channel_current_values instead.** " +
+			"Use cases: analyze performance degradation over 24h, identify when an issue started, " +
+			"compare metrics between time periods, detect patterns in historical data.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -62,9 +64,10 @@ func (h *MetricsToolHandler) RegisterMetricsTools(s *server.MCPServer) {
 	// Tool 2: prtg_get_sensor_history_custom
 	s.AddTool(mcp.Tool{
 		Name: "prtg_get_sensor_history_custom",
-		Description: "Retrieve sensor historical data for a custom date/time range. " +
-			"Use this when you need specific time windows (e.g., 'last Tuesday', 'between Oct 1-15'). " +
-			"Returns all channel measurements for the specified period.",
+		Description: "Retrieve **HISTORICAL** data for a specific date/time range. " +
+			"**For CURRENT values, use prtg_get_channel_current_values instead.** " +
+			"Use this when you need to analyze a specific incident timeframe (e.g., 'what happened last Tuesday between 2pm-4pm'). " +
+			"Useful for: incident investigation, comparing specific time windows, generating reports for past periods.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -88,9 +91,14 @@ func (h *MetricsToolHandler) RegisterMetricsTools(s *server.MCPServer) {
 	// Tool 3: prtg_get_channel_current_values
 	s.AddTool(mcp.Tool{
 		Name: "prtg_get_channel_current_values",
-		Description: "Get current values for all channels (measurements) of a sensor. " +
-			"Shows real-time metrics like CPU %, memory usage, network traffic, etc. " +
-			"Use this to see what a sensor is measuring right now.",
+		Description: "**PRIMARY TOOL for checking sensor current state and discovering available channels.** " +
+			"Returns ALL channels of a sensor with their current values, names, units, and last update time. " +
+			"Each PRTG sensor has multiple channels (measurements). Examples: " +
+			"SSL sensors → 'Days to Expiration', 'Response Time'; " +
+			"Server sensors → 'CPU Load', 'Memory Usage', 'Disk Space'; " +
+			"Network sensors → 'Traffic In', 'Traffic Out', 'Packet Loss'. " +
+			"**ALWAYS use this tool first** when asked about a sensor's current state, values, or status. " +
+			"Use prtg_get_sensor_timeseries only for historical trends.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
