@@ -46,26 +46,21 @@ jobs:
             cp README.md wiki/Home.md
           fi
 
-          # Create a sidebar if we have multiple docs
-          if [ -d "wiki" ] && [ -n "$(find wiki -name "*.md" -not -name "Home.md" 2>/dev/null)" ]; then
-            echo "# Documentation" > wiki/_Sidebar.md
-            echo "" >> wiki/_Sidebar.md
-            echo "## Main" >> wiki/_Sidebar.md
-            echo "* [Home](Home)" >> wiki/_Sidebar.md
-            echo "" >> wiki/_Sidebar.md
+          # Create navigation sidebar with logical order
+          cat > wiki/_Sidebar.md << 'EOF'
+          # Documentation
 
-            # List all markdown files
-            if [ -d "wiki" ]; then
-              for file in wiki/*.md; do
-                if [ -f "$file" ] && [ "$(basename "$file")" != "Home.md" ] && [ "$(basename "$file")" != "_Sidebar.md" ]; then
-                  filename=$(basename "$file" .md)
-                  # Convert filename to title (replace - and _ with spaces, capitalize)
-                  title=$(echo "$filename" | sed 's/[-_]/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2));}1')
-                  echo "* [$title]($filename)" >> wiki/_Sidebar.md
-                fi
-              done
-            fi
-          fi
+          ## Getting Started
+          * [🏠 Home](Home)
+          * [📥 Installation](INSTALLATION)
+          * [⚙️ Configuration](CONFIGURATION)
+          * [🖥️ Claude Desktop Setup](CLAUDE_DESKTOP_CONFIG)
+
+          ## Using the Server
+          * [🚀 Usage Guide](USAGE)
+          * [🔧 Available Tools](TOOLS)
+          * [🔍 Troubleshooting](TROUBLESHOOTING)
+          EOF
 
       - name: Commit and push to wiki
         working-directory: wiki
