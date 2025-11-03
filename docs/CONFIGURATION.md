@@ -1,5 +1,7 @@
 # Configuration Guide
 
+> 📚 This documentation is also available on the [GitHub Wiki](https://github.com/senhub-io/mcp-server-prtg/wiki).
+
 This guide covers all configuration options for MCP Server PRTG.
 
 ## Table of Contents
