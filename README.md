@@ -19,7 +19,10 @@
 ## Features
 
 - **Streamable HTTP Transport** - Modern MCP protocol (2025-03-26) with HTTP SSE streaming
-- **12 MCP Tools** to query PRTG data (sensors, alerts, hierarchy, groups, tags, business processes, statistics, SQL)
+- **15 MCP Tools** to query PRTG data:
+  - **12 tools** for PostgreSQL database (sensors, alerts, hierarchy, groups, tags, business processes, statistics, SQL)
+  - **3 tools** for PRTG API v2 (historical metrics, time series, channel values)
+- **PRTG API v2 Integration** - Query historical metrics and real-time channel data directly from PRTG
 - **Bearer Token Authentication** (RFC 6750)
 - **TLS/HTTPS Support** with automatic certificate generation
 - **Windows Service** - Installation and management via kardianos/service
@@ -88,9 +91,27 @@ database:
   name: prtg_data_exporter
   user: prtg_reader
   sslmode: disable
+prtg:
+  enabled: true
+  base_url: "https://prtg.example.com:1616"
+  api_token: "your-prtg-api-token"
+  timeout: 30
+  verify_ssl: true
 logging:
   level: info
 ```
+
+**PRTG API v2 Configuration (optional):**
+
+Enable PRTG API v2 to query historical metrics and real-time channel data:
+
+- `enabled`: Enable/disable PRTG API access (default: false)
+- `base_url`: PRTG server URL with API v2 port (typically 1616, not 443)
+- `api_token`: PRTG API v2 Bearer token (get from PRTG web interface)
+- `timeout`: HTTP request timeout in seconds (default: 30)
+- `verify_ssl`: Verify SSL certificates (set to false for self-signed certs)
+
+**Note:** PRTG API v2 configuration is optional. If not configured, only PostgreSQL-based tools will be available.
 
 **See:** [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for complete documentation
 
@@ -143,6 +164,8 @@ Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
 
 ## Available MCP Tools
 
+### PostgreSQL-Based Tools (12)
+
 | Tool | Description |
 |------|-------------|
 | `prtg_get_sensors` | List sensors with filters (name, status, tags) |
@@ -157,6 +180,14 @@ Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
 | `prtg_get_business_processes` | Query Business Process sensors |
 | `prtg_get_statistics` | Server-wide aggregated statistics |
 | `prtg_query_sql` | Custom SQL queries on PRTG database |
+
+### PRTG API v2 Tools (3)
+
+| Tool | Description |
+|------|-------------|
+| `prtg_get_channel_current_values` | **PRIMARY tool** for current sensor state - Get all channel values, units, and timestamps |
+| `prtg_get_sensor_timeseries` | Query historical time series data (live, short, medium, long periods) |
+| `prtg_get_sensor_history_custom` | Query historical data for custom date/time ranges |
 
 **See:** [docs/TOOLS.md](docs/TOOLS.md) for complete tool documentation
 
