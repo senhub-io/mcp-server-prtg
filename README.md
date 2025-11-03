@@ -9,17 +9,33 @@
 
 ## Prerequisites
 
-**MCP Server PRTG** requires [PRTG Data Exporter](https://www.paessler.com/manuals/prtg_data_exporter) to be installed on the same server. PRTG Data Exporter continuously exports PRTG monitoring data to a local PostgreSQL database (`prtg_data_exporter`), which MCP Server PRTG queries to provide real-time monitoring insights.
+**MCP Server PRTG** requires access to:
+1. **PRTG Data Exporter** - PostgreSQL database (`prtg_data_exporter`) for sensor status and configuration
+2. **PRTG Core Server** - API v2 (optional, for historical metrics and channel data)
 
-**Installation order:**
-1. Install PRTG Data Exporter (includes PostgreSQL 17)
-2. Install MCP Server PRTG on the same server
-3. Configure MCP Server PRTG to connect to the local `prtg_data_exporter` database
+### Deployment Options
+
+**Option A: Co-located (Recommended)**
+- Install MCP Server PRTG on the same Windows server as PRTG Data Exporter
+- Best performance with local PostgreSQL access
+- No network latency
+
+**Option B: Remote Deployment**
+- Install MCP Server PRTG on any server (Linux, macOS, Windows)
+- Requires network access to:
+  - PostgreSQL database (default port 5432)
+  - PRTG API v2 (default port 1616)
+- Configure firewall rules accordingly
+
+**Note:** PRTG Data Exporter is Windows-only, but MCP Server PRTG runs on any platform.
 
 ## Features
 
 - **Streamable HTTP Transport** - Modern MCP protocol (2025-03-26) with HTTP SSE streaming
-- **12 MCP Tools** to query PRTG data (sensors, alerts, hierarchy, groups, tags, business processes, statistics, SQL)
+- **15 MCP Tools** to query PRTG data:
+  - **12 tools** for PostgreSQL database (sensors, alerts, hierarchy, groups, tags, business processes, statistics, SQL)
+  - **3 tools** for PRTG API v2 (historical metrics, time series, channel values)
+- **PRTG API v2 Integration** - Query historical metrics and real-time channel data directly from PRTG
 - **Bearer Token Authentication** (RFC 6750)
 - **TLS/HTTPS Support** with automatic certificate generation
 - **Windows Service** - Installation and management via kardianos/service
@@ -78,25 +94,43 @@ On first installation, a `config.yaml` file is automatically generated with:
 ```yaml
 version: 1
 server:
-  api_key: "your-generated-api-key"
+  api_key: "your-mcp-server-api-key"  # MCP Server authentication key
   bind_address: "0.0.0.0"
   port: 8443
   enable_tls: true
 database:
-  host: localhost
+  host: localhost                     # PostgreSQL server (PRTG Data Exporter)
   port: 5432
   name: prtg_data_exporter
   user: prtg_reader
   sslmode: disable
+prtg:
+  enabled: true                       # Enable PRTG API v2 integration
+  base_url: "https://prtg.example.com:1616"  # PRTG Core Server API v2
+  api_token: "your-prtg-api-v2-token" # PRTG API v2 Bearer token
+  timeout: 30
+  verify_ssl: true
 logging:
   level: info
 ```
+
+**PRTG API v2 Configuration (optional):**
+
+Enable PRTG API v2 to query historical metrics and real-time channel data:
+
+- `enabled`: Enable/disable PRTG API access (default: false)
+- `base_url`: PRTG server URL with API v2 port (typically 1616, not 443)
+- `api_token`: PRTG API v2 Bearer token (get from PRTG web interface)
+- `timeout`: HTTP request timeout in seconds (default: 30)
+- `verify_ssl`: Verify SSL certificates (set to false for self-signed certs)
+
+**Note:** PRTG API v2 configuration is optional. If not configured, only PostgreSQL-based tools will be available.
 
 **See:** [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for complete documentation
 
 ## Usage with MCP Client
 
-Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
+Configure your MCP client (e.g., Claude Desktop) to connect to MCP Server PRTG using `mcp-remote`:
 
 ```json
 {
@@ -105,17 +139,21 @@ Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://<YOUR_SERVER>:8443/mcp",
+        "https://<MCP_SERVER_HOST>:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "YOUR_API_KEY_HERE"
+        "MCP_SERVER_API_KEY": "your-mcp-server-api-key"
       }
     }
   }
 }
 ```
+
+**Important:**
+- `<MCP_SERVER_HOST>`: IP or hostname where MCP Server PRTG is running (not PRTG Core Server)
+- `MCP_SERVER_API_KEY`: API key from MCP Server PRTG `config.yaml` (not PRTG API v2 token)
 
 **For HTTP (development only):**
 ```json
@@ -125,12 +163,12 @@ Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://<YOUR_SERVER>:8443/mcp",
+        "http://<MCP_SERVER_HOST>:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "YOUR_API_KEY_HERE"
+        "MCP_SERVER_API_KEY": "your-mcp-server-api-key"
       }
     }
   }
@@ -142,6 +180,8 @@ Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
 **See:** [docs/USAGE.md](docs/USAGE.md) for usage examples
 
 ## Available MCP Tools
+
+### PostgreSQL-Based Tools (12)
 
 | Tool | Description |
 |------|-------------|
@@ -157,6 +197,14 @@ Configure your MCP client (e.g., Claude Desktop) with `mcp-remote`:
 | `prtg_get_business_processes` | Query Business Process sensors |
 | `prtg_get_statistics` | Server-wide aggregated statistics |
 | `prtg_query_sql` | Custom SQL queries on PRTG database |
+
+### PRTG API v2 Tools (3)
+
+| Tool | Description |
+|------|-------------|
+| `prtg_get_channel_current_values` | **PRIMARY tool** for current sensor state - Get all channel values, units, and timestamps |
+| `prtg_get_sensor_timeseries` | Query historical time series data (live, short, medium, long periods) |
+| `prtg_get_sensor_history_custom` | Query historical data for custom date/time ranges |
 
 **See:** [docs/TOOLS.md](docs/TOOLS.md) for complete tool documentation
 

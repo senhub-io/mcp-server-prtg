@@ -74,6 +74,15 @@ feature branch → dev (beta release) → PR → main (production release)
    make release VERSION=X.Y.Z
    ```
 
+5. **Sync dev with main** (MANDATORY):
+   ```bash
+   git checkout dev
+   git merge main
+   git push origin dev
+   ```
+
+   **Why?** When a PR is merged via GitHub, a merge commit is created on main but doesn't exist on dev. This causes dev to be "1 commit behind main". Always sync after each release.
+
 ## Version Numbering
 
 Follow [Semantic Versioning](https://semver.org/):
@@ -170,6 +179,7 @@ When using the `release-manager` agent for releases:
 4. **Ask for confirmation** before any remote operations (push, tag, release)
 5. **Tag format**: Use `X.Y.Z` (no "v" prefix)
 6. **Use Makefile** commands when available
+7. **ALWAYS sync dev with main** after production release (MANDATORY)
 
 ## Example: Complete Release Flow
 
@@ -202,6 +212,11 @@ gh pr merge <PR#> --merge
 git checkout main
 git pull origin main
 make release VERSION=1.2.2
+
+# 8. Sync dev with main (MANDATORY)
+git checkout dev
+git merge main
+git push origin dev
 ```
 
 ## Troubleshooting
