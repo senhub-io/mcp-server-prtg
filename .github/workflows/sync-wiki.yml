@@ -56,15 +56,20 @@ jobs:
           ### Deployment Options
 
           ```mermaid
-          graph LR
-              A[Claude Desktop] -->|HTTPS/TLS| B[MCP Server PRTG]
-              B -->|PostgreSQL| C[PRTG Data Exporter]
-              B -->|API v2| D[PRTG Core Server]
+          graph TB
+              A["🖥️ MCP Clients<br/>(Claude Desktop, Cursor, etc.)"]
+              B["🔌 MCP Server PRTG<br/>(Go Binary)"]
+              C["🗄️ PRTG Data Exporter<br/>(PostgreSQL 17)"]
+              D["📊 PRTG Core Server<br/>(API v2)"]
 
-              style A fill:#e1f5ff
-              style B fill:#fff4e1
-              style C fill:#e8f5e9
-              style D fill:#e8f5e9
+              A -->|"🔐 HTTPS/TLS<br/>Bearer Auth"| B
+              B -->|"📡 PostgreSQL<br/>Port 5432"| C
+              B -.->|"📈 API v2 (optional)<br/>Port 1616"| D
+
+              style A fill:#667eea,stroke:#764ba2,stroke-width:3px,color:#fff
+              style B fill:#f093fb,stroke:#f5576c,stroke-width:4px,color:#fff
+              style C fill:#4facfe,stroke:#00f2fe,stroke-width:3px,color:#fff
+              style D fill:#43e97b,stroke:#38f9d7,stroke-width:2px,color:#fff,stroke-dasharray: 5 5
           ```
 
           **Option A: Co-located (Recommended)**
