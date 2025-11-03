@@ -5,7 +5,7 @@
 [![Go](https://img.shields.io/badge/go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-**MCP Server PRTG** is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes PRTG monitoring data through a standardized API. It enables LLMs (like LLM) to query sensor status, analyze alerts, and generate reports on your monitoring infrastructure in real-time.
+**MCP Server PRTG** is a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that exposes PRTG monitoring data through a standardized API. It enables LLMs (like Claude) to query sensor status, analyze alerts, and generate reports on your monitoring infrastructure in real-time.
 
 ## Prerequisites
 
@@ -128,9 +128,9 @@ Enable PRTG API v2 to query historical metrics and real-time channel data:
 
 **See:** [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for complete documentation
 
-## Usage with MCP Client
+## Usage with MCP Clients
 
-Configure your MCP client (e.g., Claude Desktop) to connect to MCP Server PRTG using `mcp-remote`:
+Configure your MCP Client (like Claude Desktop) to connect to MCP Server PRTG using `mcp-remote`:
 
 ```json
 {
