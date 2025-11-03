@@ -1,0 +1,77 @@
+name: Sync Documentation to Wiki
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'docs/**/*.md'
+      - 'README.md'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clone wiki repository
+        run: |
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
+
+      - name: Sync documentation files
+        run: |
+          # Remove old files in wiki (except Home.md if it exists)
+          find wiki -name "*.md" ! -name "Home.md" -type f -delete
+
+          # Copy documentation files
+          if [ -d "docs" ]; then
+            cp -r docs/* wiki/ 2>/dev/null || true
+          fi
+
+          # Copy README as Home page
+          if [ -f "README.md" ]; then
+            cp README.md wiki/Home.md
+          fi
+
+          # Create a sidebar if we have multiple docs
+          if [ -d "wiki" ] && [ -n "$(find wiki -name "*.md" -not -name "Home.md" 2>/dev/null)" ]; then
+            echo "# Documentation" > wiki/_Sidebar.md
+            echo "" >> wiki/_Sidebar.md
+            echo "## Main" >> wiki/_Sidebar.md
+            echo "* [Home](Home)" >> wiki/_Sidebar.md
+            echo "" >> wiki/_Sidebar.md
+
+            # List all markdown files
+            if [ -d "wiki" ]; then
+              for file in wiki/*.md; do
+                if [ -f "$file" ] && [ "$(basename "$file")" != "Home.md" ] && [ "$(basename "$file")" != "_Sidebar.md" ]; then
+                  filename=$(basename "$file" .md)
+                  # Convert filename to title (replace - and _ with spaces, capitalize)
+                  title=$(echo "$filename" | sed 's/[-_]/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2));}1')
+                  echo "* [$title]($filename)" >> wiki/_Sidebar.md
+                fi
+              done
+            fi
+          fi
+
+      - name: Commit and push to wiki
+        working-directory: wiki
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Sync documentation from ${GITHUB_REF#refs/heads/} @ ${{ github.sha }}"
+            git push origin master
+            echo "✅ Wiki synchronized successfully"
+          fi
