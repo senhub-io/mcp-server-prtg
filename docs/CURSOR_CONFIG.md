@@ -1,6 +1,12 @@
 # Cursor IDE Configuration
 
-> ⚠️ **Configuration Status**: Based on official Cursor MCP documentation. Not yet tested with MCP Server PRTG. Feedback welcome!
+> ⚠️ **UNTESTED CONFIGURATION**
+>
+> This configuration is based on official Cursor MCP documentation but has **not been tested** with MCP Server PRTG.
+>
+> **Status**: Community contribution - feedback needed!
+>
+> If you test this configuration successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues). Your experience will help improve this guide!
 
 Configure [Cursor IDE](https://cursor.com/) to connect to your MCP Server PRTG instance.
 
