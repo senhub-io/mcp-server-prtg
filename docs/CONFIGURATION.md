@@ -257,6 +257,124 @@ Options:
 
 **Production Recommendation:** Use `require` or higher for remote database connections.
 
+## PRTG API v2 Configuration
+
+PRTG API v2 integration enables querying historical metrics and real-time channel data directly from PRTG Core Server. This is **optional** - if not configured, only PostgreSQL-based tools will be available.
+
+**Configuration block:**
+```yaml
+prtg:
+  enabled: true
+  base_url: "https://prtg.example.com:1616"
+  api_token: "your-prtg-api-v2-token"
+  timeout: 30
+  verify_ssl: true
+```
+
+### enabled
+
+**Type:** `boolean`
+**Default:** `false`
+**Description:** Enable/disable PRTG API v2 integration.
+
+Set to `true` to enable the 3 PRTG API v2 tools:
+- `prtg_get_channel_current_values`
+- `prtg_get_sensor_timeseries`
+- `prtg_get_sensor_history_custom`
+
+### base_url
+
+**Type:** `string`
+**Required:** Yes (if `enabled: true`)
+**Description:** PRTG Core Server URL with API v2 endpoint.
+
+**Important:**
+- Use PRTG API v2 port (typically **1616**, NOT 443)
+- Include protocol (http:// or https://)
+- Do NOT include path (like /api/v2)
+
+**Examples:**
+```yaml
+# Cloud/hosted PRTG
+base_url: "https://prtg.example.com:1616"
+
+# On-premise PRTG (self-signed cert)
+base_url: "https://192.168.1.100:1616"
+
+# Development (HTTP without TLS)
+base_url: "http://localhost:1616"
+```
+
+### api_token
+
+**Type:** `string`
+**Required:** Yes (if `enabled: true`)
+**Description:** PRTG API v2 Bearer token.
+
+**How to get token:**
+1. Log in to PRTG Web Interface
+2. Go to **Setup** → **Account Settings** → **My Account**
+3. Navigate to **API Keys & Tokens**
+4. Create new API v2 token
+5. Copy the token value
+
+**Example:**
+```yaml
+api_token: "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
+```
+
+**⚠️ Important:** This is different from the MCP Server `api_key`:
+- `server.api_key` → Used by Claude Desktop to authenticate to **MCP Server PRTG**
+- `prtg.api_token` → Used by **MCP Server PRTG** to authenticate to **PRTG Core Server**
+
+### timeout
+
+**Type:** `integer`
+**Default:** `30`
+**Description:** HTTP request timeout in seconds for PRTG API calls.
+
+Increase for slow networks or large time series queries:
+```yaml
+timeout: 60  # For slow networks
+```
+
+### verify_ssl
+
+**Type:** `boolean`
+**Default:** `true`
+**Description:** Verify SSL/TLS certificates when connecting to PRTG API.
+
+**Options:**
+- `true` - Verify certificates (recommended for production)
+- `false` - Skip verification (use for self-signed certificates)
+
+**Example for self-signed certificates:**
+```yaml
+prtg:
+  enabled: true
+  base_url: "https://prtg.local:1616"
+  api_token: "..."
+  verify_ssl: false  # Self-signed cert
+```
+
+### Example: Full PRTG Configuration
+
+```yaml
+prtg:
+  enabled: true
+  base_url: "https://prtg.company.com:1616"
+  api_token: "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
+  timeout: 30
+  verify_ssl: true
+```
+
+### Example: Disabled PRTG API
+
+```yaml
+prtg:
+  enabled: false  # Only PostgreSQL tools available
+```
+
 ## Logging Configuration
 
 MCP Server PRTG uses structured logging with rotation support (via [lumberjack](https://github.com/natefinch/lumberjack)).
