@@ -30,9 +30,15 @@ jobs:
           # Remove old files in wiki (except Home.md if it exists)
           find wiki -name "*.md" ! -name "Home.md" -type f -delete
 
-          # Copy documentation files
+          # Copy documentation files (excluding developer-only docs)
           if [ -d "docs" ]; then
-            cp -r docs/* wiki/ 2>/dev/null || true
+            for file in docs/*.md; do
+              filename=$(basename "$file")
+              # Exclude developer/internal documentation
+              if [ "$filename" != "ARCHITECTURE.md" ] && [ "$filename" != "RELEASE_PROCESS.md" ]; then
+                cp "$file" wiki/
+              fi
+            done
           fi
 
           # Copy README as Home page
