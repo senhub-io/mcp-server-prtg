@@ -347,14 +347,14 @@ npx mcp-remote --version
 
 **2. Check MCP Client configuration:**
 ```bash
-# macOS
-cat ~/Library/Application\ Support/LLM/mcp_client_config.json
+# macOS (Claude Desktop)
+cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
 
 # Windows (PowerShell)
-Get-Content $env:APPDATA\LLM\mcp_client_config.json
+Get-Content $env:APPDATA\Claude\claude_desktop_config.json
 
 # Linux
-cat ~/.config/LLM/mcp_client_config.json
+cat ~/.config/Claude/claude_desktop_config.json
 ```
 
 **3. Check server is running:**
@@ -383,10 +383,10 @@ Ensure valid JSON syntax:
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "your-api-key-here"
+        "MCP_SERVER_API_KEY": "your-api-key-here"
       }
     }
   }
@@ -401,11 +401,11 @@ Ensure valid JSON syntax:
 
 **3. Restart MCP Client Completely**
 ```bash
-# macOS - Quit completely
-killall LLM
+# macOS - Quit completely (Claude Desktop)
+killall Claude
 
 # Windows - Task Manager
-# End all LLM.exe processes
+# End all Claude.exe processes
 
 # Then restart MCP Client
 ```
@@ -417,7 +417,7 @@ Get API key from config:
 grep api_key config.yaml
 ```
 
-Ensure it matches in `mcp_client_config.json`.
+Ensure it matches in `claude_desktop_config.json` (or your MCP client config).
 
 ### Tools Appear But Don't Work
 
@@ -428,14 +428,14 @@ Tools are visible but return errors when used.
 
 Check MCP Client logs:
 ```bash
-# macOS
-cat ~/Library/Logs/LLM/mcp*.log
+# macOS (Claude Desktop)
+cat ~/Library/Logs/Claude/mcp*.log
 
 # Windows
-Get-Content $env:APPDATA\LLM\logs\mcp*.log
+Get-Content $env:APPDATA\Claude\logs\mcp*.log
 
 # Linux
-cat ~/.config/LLM/logs/mcp*.log
+cat ~/.config/Claude/logs/mcp*.log
 ```
 
 #### Solutions
@@ -444,7 +444,7 @@ cat ~/.config/LLM/logs/mcp*.log
 
 Error: `Unauthorized` or `401`
 
-Solution: Verify API key matches between `config.yaml` and `mcp_client_config.json`
+Solution: Verify API key matches between `config.yaml` and `claude_desktop_config.json` (or your MCP client config)
 
 **2. Certificate Error (Self-Signed)**
 
@@ -460,10 +460,10 @@ Solution: Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env (development only):
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "your-api-key",
+        "MCP_SERVER_API_KEY": "your-api-key",
         "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }
     }
@@ -630,10 +630,10 @@ Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to environment variables:
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "your-api-key",
+        "MCP_SERVER_API_KEY": "your-api-key",
         "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }
     }
@@ -669,10 +669,10 @@ server:
         "mcp-remote",
         "http://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "your-api-key"
+        "MCP_SERVER_API_KEY": "your-api-key"
       }
     }
   }
@@ -702,10 +702,10 @@ Then use HTTPS without disabling verification:
         "mcp-remote",
         "https://your-domain.com:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "your-api-key"
+        "MCP_SERVER_API_KEY": "your-api-key"
       }
     }
   }
