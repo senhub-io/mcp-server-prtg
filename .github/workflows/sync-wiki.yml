@@ -124,10 +124,12 @@ jobs:
           * [⚙️ Configuration](CONFIGURATION)
 
           ## MCP Clients
-          * [🖥️ Claude Desktop](CLAUDE_DESKTOP_CONFIG)
-          * [💻 Continue.dev](CONTINUE_CONFIG)
-          * [⚡ Cursor](CURSOR_CONFIG)
-          * [🤖 Cline](CLINE_CONFIG)
+          * [🖥️ Claude Desktop](CLAUDE_DESKTOP_CONFIG) ✅
+          * [💻 Continue.dev](CONTINUE_CONFIG) ⚠️
+          * [⚡ Cursor](CURSOR_CONFIG) ⚠️
+          * [🤖 Cline](CLINE_CONFIG) ⚠️
+
+          **Legend**: ✅ Tested | ⚠️ Community config
 
           ## Using the Server
           * [🚀 Usage Guide](USAGE)

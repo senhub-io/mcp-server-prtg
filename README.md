@@ -212,10 +212,15 @@ Configure your MCP Client (like Claude Desktop) to connect to MCP Server PRTG us
 
 MCP Server PRTG works with any MCP-compatible client:
 
-- **[Claude Desktop](docs/CLAUDE_DESKTOP_CONFIG.md)** - Anthropic's official desktop app
-- **[Continue.dev](docs/CONTINUE_CONFIG.md)** - VS Code & JetBrains extension
-- **[Cursor](docs/CURSOR_CONFIG.md)** - AI-first code editor
-- **[Cline](docs/CLINE_CONFIG.md)** - Autonomous coding agent for VS Code
+**Tested & Validated:**
+- **[Claude Desktop](docs/CLAUDE_DESKTOP_CONFIG.md)** ✅ - Anthropic's official desktop app (fully tested)
+
+**Community Configurations** (based on official specs, not yet tested):
+- **[Continue.dev](docs/CONTINUE_CONFIG.md)** ⚠️ - VS Code & JetBrains extension
+- **[Cursor](docs/CURSOR_CONFIG.md)** ⚠️ - AI-first code editor
+- **[Cline](docs/CLINE_CONFIG.md)** ⚠️ - Autonomous coding agent for VS Code
+
+> 💡 **Feedback welcome!** If you test these configurations, please share your experience via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues).
 
 ## Documentation
 

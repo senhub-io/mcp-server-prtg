@@ -1,6 +1,12 @@
 # Continue.dev Configuration
 
-> ⚠️ **Configuration Status**: Based on official Continue.dev MCP documentation. Not yet tested with MCP Server PRTG. Feedback welcome!
+> ⚠️ **UNTESTED CONFIGURATION**
+>
+> This configuration is based on official Continue.dev MCP documentation but has **not been tested** with MCP Server PRTG.
+>
+> **Status**: Community contribution - feedback needed!
+>
+> If you test this configuration successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues). Your experience will help improve this guide!
 
 Configure [Continue.dev](https://continue.dev/) to connect to your MCP Server PRTG instance.
 
