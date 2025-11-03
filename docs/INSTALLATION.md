@@ -53,12 +53,20 @@ copy "C:\Users\<user>\Downloads\mcp-server-prtg_windows_amd64.exe" .\mcp-server-
 
 ### 4. Configure Service
 
-Edit the generated `config.yaml` file:
+The `install` command automatically generates a `config.yaml` file with a **unique API key** (UUID). This API key is used by MCP clients (like Claude Desktop) to authenticate.
+
+**📋 Check your API key:**
+```powershell
+type config.yaml
+# Look for: server.api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+**Minimal configuration (PostgreSQL only):**
 
 ```yaml
 version: 1
 server:
-  api_key: "<your-generated-api-key>"
+  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
   bind_address: "0.0.0.0"
   port: 8443
   enable_tls: true
@@ -67,13 +75,39 @@ database:
   port: 5432
   name: "prtg_data_exporter"
   user: "prtg_reader"
-  password: ""  # Can be provided via PRTG_DB_PASSWORD env var
+  password: ""  # Provide via PRTG_DB_PASSWORD env var (next step)
   sslmode: "disable"
 logging:
   level: "info"
 ```
 
-**Important:** Note the generated API key - you'll need it for MCP Client configuration.
+**With PRTG API v2 (optional - for historical metrics):**
+
+```yaml
+version: 1
+server:
+  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
+  bind_address: "0.0.0.0"
+  port: 8443
+  enable_tls: true
+database:
+  host: "localhost"
+  port: 5432
+  name: "prtg_data_exporter"
+  user: "prtg_reader"
+  password: ""
+  sslmode: "disable"
+prtg:
+  enabled: true
+  base_url: "https://your-prtg-server:1616"  # PRTG Core Server URL (port 1616)
+  api_token: "YOUR_PRTG_API_V2_TOKEN"        # Get from PRTG Web Interface
+  timeout: 30
+  verify_ssl: true
+logging:
+  level: "info"
+```
+
+> **Note:** For PRTG API v2 token, go to PRTG → **Setup** → **Account Settings** → **API Keys & Tokens**. See [CONFIGURATION.md](CONFIGURATION.md#prtg-api-v2-configuration) for details.
 
 ### 5. Configure Database Password
 
@@ -157,17 +191,24 @@ sudo ./mcp-server-prtg install
 
 ### 4. Configure Service
 
+The `install` command automatically generates a `config.yaml` file with a **unique API key**.
+
+**📋 Check your API key:**
 ```bash
-# Edit configuration
+sudo cat /opt/mcp-server-prtg/config.yaml | grep api_key
+```
+
+**Edit configuration:**
+```bash
 sudo nano /opt/mcp-server-prtg/config.yaml
 ```
 
-Minimal configuration:
+**Minimal configuration (PostgreSQL only):**
 
 ```yaml
 version: 1
 server:
-  api_key: "<api-key-generated-during-install>"
+  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
   bind_address: "0.0.0.0"
   port: 8443
   enable_tls: true
@@ -176,7 +217,34 @@ database:
   port: 5432
   name: "prtg_data_exporter"
   user: "prtg_reader"
+  password: ""  # Provide via PRTG_DB_PASSWORD env var (next step)
   sslmode: "require"  # Recommended for production
+logging:
+  level: "info"
+```
+
+**With PRTG API v2 (optional):**
+
+```yaml
+version: 1
+server:
+  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  bind_address: "0.0.0.0"
+  port: 8443
+  enable_tls: true
+database:
+  host: "localhost"
+  port: 5432
+  name: "prtg_data_exporter"
+  user: "prtg_reader"
+  password: ""
+  sslmode: "require"
+prtg:
+  enabled: true
+  base_url: "https://your-prtg-server:1616"
+  api_token: "YOUR_PRTG_API_V2_TOKEN"
+  timeout: 30
+  verify_ssl: true
 logging:
   level: "info"
 ```
@@ -277,11 +345,19 @@ sudo ./mcp-server-prtg install
 
 ### 4. Configuration
 
-Same process as Linux - edit `config.yaml`:
+The `install` command automatically generates `config.yaml` with a unique API key.
 
+**📋 Check your API key:**
+```bash
+sudo cat /usr/local/mcp-server-prtg/config.yaml | grep api_key
+```
+
+**Edit configuration:**
 ```bash
 sudo nano /usr/local/mcp-server-prtg/config.yaml
 ```
+
+Configuration is the same as Linux - see Linux section above for examples.
 
 ### 5. Environment Variable for Password
 
@@ -343,23 +419,33 @@ npx mcp-remote --version
 
 ### Test Streamable HTTP Connection
 
+**Important:** Use the `server.api_key` from your `config.yaml` file (the auto-generated UUID).
+
 ```bash
-# Test with curl (replace API_KEY and URL)
+# Test with curl (replace YOUR_API_KEY with the value from config.yaml)
 curl -k -N \
-  -H "Authorization: Bearer your-api-key" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
   https://your-server:8443/mcp
 
-# You should receive MCP connection
+# Expected: MCP protocol initialization messages
+```
+
+**Example:**
+```bash
+# If your config.yaml has: api_key: "a1b2c3d4-1234-5678-9abc-def012345678"
+curl -k -N \
+  -H "Authorization: Bearer a1b2c3d4-1234-5678-9abc-def012345678" \
+  https://localhost:8443/mcp
 ```
 
 ### Test with mcp-remote
 
 ```bash
-# Command line test
+# Command line test (replace YOUR_API_KEY)
 npx mcp-remote https://your-server:8443/mcp \
-  --header "Authorization:Bearer your-api-key"
+  --header "Authorization:Bearer YOUR_API_KEY"
 
-# Should display MCP connection
+# Should display MCP connection messages
 ```
 
 ### Verify Database
