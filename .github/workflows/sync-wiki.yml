@@ -122,7 +122,12 @@ jobs:
           * [🏠 Home](Home)
           * [📥 Installation](INSTALLATION)
           * [⚙️ Configuration](CONFIGURATION)
-          * [🖥️ Claude Desktop Setup](CLAUDE_DESKTOP_CONFIG)
+
+          ## MCP Clients
+          * [🖥️ Claude Desktop](CLAUDE_DESKTOP_CONFIG)
+          * [💻 Continue.dev](CONTINUE_CONFIG)
+          * [⚡ Cursor](CURSOR_CONFIG)
+          * [🤖 Cline](CLINE_CONFIG)
 
           ## Using the Server
           * [🚀 Usage Guide](USAGE)
