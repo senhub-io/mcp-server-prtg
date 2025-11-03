@@ -40,7 +40,6 @@ server:
   api_key: "your-generated-api-key"
   bind_address: "0.0.0.0"
   port: 8443
-  public_url: ""
   enable_tls: true
   cert_file: "./certs/server.crt"
   key_file: "./certs/server.key"
@@ -101,20 +100,6 @@ Common ports:
 - `8443` - Standard alternative HTTPS port
 - `443` - Standard HTTPS port (requires root/administrator privileges)
 - `8080` - Standard HTTP port
-
-### public_url
-
-**Type:** `string`
-**Optional:** Yes
-**Description:** Public URL for the MCP endpoint.
-
-If your server is behind a reverse proxy or has a public domain, specify it here:
-
-```yaml
-public_url: "https://prtg.example.com:8443"
-```
-
-If not specified, the server will construct a URL from `bind_address` and `port`.
 
 ### enable_tls
 
@@ -611,7 +596,6 @@ server:
   api_key: "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
   bind_address: "0.0.0.0"
   port: 8443
-  public_url: "https://prtg-mcp.example.com:8443"
   enable_tls: true
   cert_file: "/etc/ssl/certs/server.crt"
   key_file: "/etc/ssl/private/server.key"

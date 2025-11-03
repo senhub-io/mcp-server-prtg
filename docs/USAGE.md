@@ -784,7 +784,7 @@ $device | ConvertTo-Json -Depth 10
 **Solutions:**
 1. Verify server is running: `curl https://localhost:8443/health`
 2. Check firewall allows traffic on port 8443
-3. For remote servers, ensure public_url is correctly configured
+3. Verify the server URL matches your configuration (bind_address:port)
 4. For self-signed certs, add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env (not recommended for production)
 
 ### Authentication Failed
