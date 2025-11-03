@@ -26,7 +26,9 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 
 - **Streamable HTTP Transport**: Modern MCP protocol with HTTP SSE streaming
 - **MCP Protocol**: Full implementation of Model Context Protocol
+- **15 MCP Tools**: 12 PostgreSQL-based + 3 PRTG API v2 tools
 - **PostgreSQL Database**: Read-only access to PRTG monitoring data
+- **PRTG API v2 Integration**: Direct access to historical metrics and channel data
 - **Multi-platform Service**: Windows, Linux, and macOS support via kardianos/service
 - **TLS/HTTPS**: Built-in TLS with automatic certificate generation
 - **Hot-reload**: Dynamic configuration reloading without restarts
@@ -84,40 +86,53 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 ┌─────────────────────────────────────────────────────────────────┐
 │                       Tool Handlers                             │
 │                                                                 │
-│  • prtg_get_sensors                                            │
-│  • prtg_get_sensor_status                                      │
-│  • prtg_get_alerts                                             │
-│  • prtg_device_overview                                        │
-│  • prtg_top_sensors                                            │
-│  • prtg_query_sql (if enabled)                                │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-                      │ SQL queries
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Database Layer                             │
-│                      (jackc/pgx)                                │
+│  PostgreSQL-Based Tools (12):                                  │
+│    • prtg_get_sensors                                          │
+│    • prtg_get_sensor_status                                    │
+│    • prtg_get_alerts                                           │
+│    • prtg_device_overview                                      │
+│    • prtg_top_sensors                                          │
+│    • prtg_get_hierarchy                                        │
+│    • prtg_search                                               │
+│    • prtg_get_groups                                           │
+│    • prtg_get_tags                                             │
+│    • prtg_get_business_processes                               │
+│    • prtg_get_statistics                                       │
+│    • prtg_query_sql                                            │
 │                                                                 │
-│  • Connection pooling (25 connections)                         │
-│  • Query timeout management (30s)                              │
-│  • Result scanning and mapping                                 │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-                      │ PostgreSQL protocol
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      PostgreSQL Database                        │
-│                      (PRTG Data Exporter)                       │
-│                                                                 │
-│  Tables:                                                        │
-│    • prtg_sensor                                               │
-│    • prtg_device                                               │
-│    • prtg_sensor_path                                          │
-│    • prtg_device_path                                          │
-│    • prtg_tag                                                  │
-│    • prtg_sensor_tag                                           │
-│    • prtg_group                                                │
-└─────────────────────────────────────────────────────────────────┘
+│  PRTG API v2 Tools (3):                                        │
+│    • prtg_get_channel_current_values                           │
+│    • prtg_get_sensor_timeseries                                │
+│    • prtg_get_sensor_history_custom                            │
+└───────────┬──────────────────────────┬──────────────────────────┘
+            │                          │
+            │ SQL queries              │ HTTPS API calls
+            ▼                          ▼
+┌─────────────────────────┐  ┌─────────────────────────────────┐
+│    Database Layer       │  │      PRTG API Client            │
+│    (jackc/pgx)          │  │      (net/http)                 │
+│                         │  │                                 │
+│  • Connection pooling   │  │  • Bearer token auth            │
+│  • Query timeout (30s)  │  │  • Request timeout (30s)        │
+│  • Result scanning      │  │  • SSL verification             │
+└────────┬────────────────┘  │  • JSON parsing                 │
+         │                   └────────┬────────────────────────┘
+         │ PostgreSQL                 │ HTTPS (API v2)
+         │ protocol                   │ port 1616
+         ▼                            ▼
+┌──────────────────────┐     ┌────────────────────────────────┐
+│  PostgreSQL Database │     │      PRTG Core Server          │
+│  (PRTG Data Exporter)│     │      (API v2 Endpoint)         │
+│                      │     │                                │
+│  Tables:             │     │  Endpoints:                    │
+│    • prtg_sensor     │     │    • GET /api/v2/object/{id}/  │
+│    • prtg_device     │     │          channels              │
+│    • prtg_sensor_path│     │    • GET /api/v2/object/{id}/  │
+│    • prtg_device_path│     │          timeseries            │
+│    • prtg_tag        │     │    • POST /api/v2/session      │
+│    • prtg_sensor_tag │     │                                │
+│    • prtg_group      │     │                                │
+└──────────────────────┘     └────────────────────────────────┘
 ```
 
 ## Components
@@ -301,6 +316,105 @@ func scanSensors(rows *sql.Rows) ([]types.Sensor, error) {
         sensors = append(sensors, sensor)
     }
     return sensors, rows.Err()
+}
+```
+
+### PRTG API Layer
+
+**File**: `internal/prtg/client.go`, `internal/handlers/tools_metrics.go`
+
+The PRTG API layer provides direct access to PRTG Core Server's API v2 for historical metrics and real-time channel data.
+
+#### Client Configuration
+
+```go
+type Client struct {
+    baseURL    string            // PRTG server URL
+    apiToken   string            // Bearer token for PRTG API v2
+    httpClient *http.Client      // HTTP client with timeout
+    logger     *zerolog.Logger
+}
+
+// Configuration from config.yaml
+config := &ClientConfig{
+    BaseURL:   "https://prtg.example.com:1616",
+    APIToken:  "your-prtg-api-v2-token",
+    Timeout:   30 * time.Second,
+    VerifySSL: true,
+}
+```
+
+#### API Client Features
+
+**Authentication:**
+- Bearer token authentication (PRTG API v2 token)
+- Separate from MCP Server API key
+- Configured in `prtg.api_token` section
+
+**Endpoints:**
+```go
+// Get current channel values
+GET /api/v2/object/{sensorID}/channels
+
+// Get time series data (predefined periods)
+GET /api/v2/object/{sensorID}/timeseries?timeType={live|short|medium|long}
+
+// Get time series data (custom range)
+POST /api/v2/object/{sensorID}/timeseries
+Body: {
+  "start": "2025-10-30T00:00:00Z",
+  "end": "2025-10-31T23:59:59Z"
+}
+```
+
+**Error Handling:**
+```go
+func (c *Client) GetChannelsBySensor(ctx context.Context, sensorID int) ([]Channel, error) {
+    req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+    req.Header.Set("Authorization", "Bearer "+c.apiToken)
+
+    resp, err := c.httpClient.Do(req)
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("API request failed: %s", resp.Status)
+    }
+
+    var channels []Channel
+    json.NewDecoder(resp.Body).Decode(&channels)
+    return channels, nil
+}
+```
+
+**Timeout Configuration:**
+- Request timeout: 30 seconds (configurable)
+- Context-based cancellation
+- Proper cleanup on errors
+
+#### Integration with Tool Handlers
+
+The metrics tool handler uses the PRTG API client:
+
+```go
+type MetricsToolHandler struct {
+    prtgClient PRTGClient        // PRTG API client interface
+    handler    *ToolHandler      // Reference to main handler
+}
+
+// Tool registration
+func (h *MetricsToolHandler) RegisterMetricsTools(s *server.MCPServer) {
+    s.AddTool(mcp.Tool{
+        Name: "prtg_get_channel_current_values",
+        Description: "Get current channel values...",
+    }, h.handleGetChannelCurrentValues)
+
+    s.AddTool(mcp.Tool{
+        Name: "prtg_get_sensor_timeseries",
+        Description: "Get historical time series...",
+    }, h.handleGetSensorTimeSeries)
+
+    s.AddTool(mcp.Tool{
+        Name: "prtg_get_sensor_history_custom",
+        Description: "Get custom time range data...",
+    }, h.handleGetSensorHistoryCustom)
 }
 ```
 

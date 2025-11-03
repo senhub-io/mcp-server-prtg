@@ -49,10 +49,10 @@ api_key: "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
 
 Edit MCP Client configuration file:
 
-**Location:**
-- **macOS:** `~/Library/Application Support/LLM/mcp_client_config.json`
-- **Windows:** `%APPDATA%\LLM\mcp_client_config.json`
-- **Linux:** `~/.config/LLM/mcp_client_config.json`
+**Location (Claude Desktop):**
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
 **Configuration:**
 
@@ -65,10 +65,10 @@ Edit MCP Client configuration file:
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+        "MCP_SERVER_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
       }
     }
   }
@@ -86,10 +86,10 @@ Edit MCP Client configuration file:
         "mcp-remote",
         "https://prtg-mcp.example.com:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+        "MCP_SERVER_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
       }
     }
   }
@@ -107,10 +107,10 @@ Edit MCP Client configuration file:
         "mcp-remote",
         "http://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+        "MCP_SERVER_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
       }
     }
   }
@@ -124,17 +124,30 @@ Edit MCP Client configuration file:
 1. Quit MCP Client completely
 2. Restart MCP Client
 3. Open the MCP tools panel (hammer icon in the bottom-right corner)
-4. Verify that 6 PRTG tools are available
+4. Verify that 15 PRTG tools are available
 
 ### Verification
 
 In MCP Client, you should see these tools:
+
+**PostgreSQL-Based Tools (12):**
 - prtg_get_sensors
 - prtg_get_sensor_status
 - prtg_get_alerts
 - prtg_device_overview
 - prtg_top_sensors
+- prtg_get_hierarchy
+- prtg_search
+- prtg_get_groups
+- prtg_get_tags
+- prtg_get_business_processes
+- prtg_get_statistics
 - prtg_query_sql
+
+**PRTG API v2 Tools (3):**
+- prtg_get_channel_current_values
+- prtg_get_sensor_timeseries
+- prtg_get_sensor_history_custom
 
 ## Example Queries with LLM
 
@@ -312,13 +325,17 @@ Response:
 ```json
 {
   "status": "running",
-  "version": "1.0.2-beta",
+  "version": "1.2.2",
   "transport": "streamable_http",
   "tls_enabled": true,
   "base_url": "https://localhost:8443",
-  "mcp_tools": 6,
+  "mcp_tools": 15,
   "database": {
     "status": "connected",
+    "error": ""
+  },
+  "prtg_api": {
+    "status": "enabled",
     "error": ""
   },
   "timestamp": "2025-10-26T10:30:00Z"
