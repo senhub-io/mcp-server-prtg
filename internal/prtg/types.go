@@ -25,12 +25,12 @@ type TimeSeriesResponse struct {
 
 // TimeSeriesData represents parsed time series data with typed values.
 type TimeSeriesData struct {
-	ObjectID  int                      `json:"object_id"`
-	TimeType  TimeSeriesType           `json:"time_type,omitempty"`
-	StartTime *time.Time               `json:"start_time,omitempty"`
-	EndTime   *time.Time               `json:"end_time,omitempty"`
-	Headers   []string                 `json:"headers"`
-	DataPoints []TimeSeriesDataPoint   `json:"data_points"`
+	ObjectID   int                   `json:"object_id"`
+	TimeType   TimeSeriesType        `json:"time_type,omitempty"`
+	StartTime  *time.Time            `json:"start_time,omitempty"`
+	EndTime    *time.Time            `json:"end_time,omitempty"`
+	Headers    []string              `json:"headers"`
+	DataPoints []TimeSeriesDataPoint `json:"data_points"`
 }
 
 // TimeSeriesDataPoint represents a single data point in time series.
@@ -41,13 +41,13 @@ type TimeSeriesDataPoint struct {
 
 // Channel represents a PRTG channel (sensor measurement) from API v2.
 type Channel struct {
-	ID              string               `json:"id"`    // e.g., "1002.0"
-	Name            string               `json:"name"`
-	Kind            string               `json:"kind"`
-	Type            string               `json:"type"`
-	Basic           ChannelBasic         `json:"basic"`
-	LastMeasurement *ChannelMeasurement  `json:"last_measurement,omitempty"`
-	Parent          *ChannelParent       `json:"parent,omitempty"`
+	ID              string              `json:"id"` // e.g., "1002.0"
+	Name            string              `json:"name"`
+	Kind            string              `json:"kind"`
+	Type            string              `json:"type"`
+	Basic           ChannelBasic        `json:"basic"`
+	LastMeasurement *ChannelMeasurement `json:"last_measurement,omitempty"`
+	Parent          *ChannelParent      `json:"parent,omitempty"`
 }
 
 // ChannelBasic contains basic channel information.
