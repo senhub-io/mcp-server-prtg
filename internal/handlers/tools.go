@@ -448,7 +448,7 @@ func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.Cal
 	}
 
 	if args.SensorID <= 0 {
-		return nil, fmt.Errorf("sensor_id must be greater than 0")
+		return ErrInvalidSensorID(), nil
 	}
 
 	// Add timeout to parent context (preserves cancellation chain)
@@ -653,7 +653,7 @@ func (h *ToolHandler) handleSearch(ctx context.Context, request mcp.CallToolRequ
 	}
 
 	if args.SearchTerm == "" {
-		return nil, fmt.Errorf("search_term is required")
+		return ErrEmptySearchTerm(), nil
 	}
 
 	if args.Limit <= 0 {
@@ -870,10 +870,7 @@ func (h *ToolHandler) handleCustomQuery(ctx context.Context, request mcp.CallToo
 	// SECURITY: Check if custom queries are allowed (disabled by default for security)
 	if !h.config.AllowCustomQueries() {
 		h.logger.Warn().Msg("Custom SQL queries are disabled in configuration (allow_custom_queries: false)")
-
-		return nil, fmt.Errorf(
-			"custom SQL queries are disabled for security reasons - " +
-				"set 'allow_custom_queries: true' in config.yaml to enable (not recommended in production)")
+		return ErrCustomQueriesDisabled(), nil
 	}
 
 	var args struct {

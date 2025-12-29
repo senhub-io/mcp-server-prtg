@@ -34,6 +34,47 @@ MCP Server PRTG exposes 15 tools through the Model Context Protocol:
 
 All tools return JSON responses with consistent visual formatting including markdown tables and complete JSON data.
 
+### Pedagogical Error Handling
+
+MCP Server PRTG implements LLM-friendly error messages that guide users toward resolution. When errors occur, tools return structured guidance instead of technical error messages:
+
+**Error Message Format:**
+```
+❌ **Error Title**
+
+Plain English explanation of what went wrong.
+
+💡 **How to resolve:**
+1. Concrete action with example command
+2. Alternative approach with example
+3. Additional suggestion if applicable
+```
+
+**Example - Invalid Sensor ID:**
+```
+❌ **Invalid sensor_id**
+
+The sensor_id parameter must be a positive integer corresponding to an existing PRTG sensor.
+
+💡 **How to resolve:**
+1. Search by name: `prtg_search search_term="sensor_name"`
+2. List alerts (with IDs): `prtg_get_alerts`
+3. Explore a device: `prtg_device_overview device_name="device_name"`
+```
+
+**Benefits:**
+- **Self-Service**: LLMs can follow suggestions automatically
+- **Discovery**: Errors introduce users to related tools
+- **Examples**: Every suggestion includes concrete command syntax
+- **Learning**: Users understand correct usage patterns through examples
+
+**Common Error Types:**
+- Invalid parameters (sensor_id, time ranges)
+- Missing required parameters (search_term, device_name)
+- Resource not found (device, sensor)
+- Configuration restrictions (custom queries disabled)
+- Data sync issues (sensor exists in PRTG but not in database)
+
 ### Response Format
 
 All tools return results in this format:
@@ -245,13 +286,30 @@ Returns comprehensive information about a single sensor including current values
 }
 ```
 
-#### Error Response
+#### Error Responses
 
-If sensor ID is not found:
-```json
-{
-  "error": "failed to get sensor: sensor not found"
-}
+**Invalid sensor_id (≤0):**
+```
+❌ **Invalid sensor_id**
+
+The sensor_id parameter must be a positive integer corresponding to an existing PRTG sensor.
+
+💡 **How to resolve:**
+1. Search by name: `prtg_search search_term="sensor_name"`
+2. List alerts (with IDs): `prtg_get_alerts`
+3. Explore a device: `prtg_device_overview device_name="device_name"`
+```
+
+**Sensor not found in database:**
+```
+❌ **Sensor ID 12345 not found**
+
+This sensor_id does not exist or has been deleted in PRTG.
+
+💡 **How to resolve:**
+1. Data may be out of sync. Verify that the Data Exporter is active.
+2. Search sensor by name: `prtg_search search_term="name"`
+3. List active sensors: `prtg_get_sensors limit=50`
 ```
 
 #### Notes
@@ -457,11 +515,16 @@ Returns comprehensive information about a device, including all its sensors and 
 
 #### Error Response
 
-If device is not found:
-```json
-{
-  "error": "failed to get device overview: device not found"
-}
+**Device not found:**
+```
+❌ **Device 'web-server-01' not found**
+
+No device matches this name in the PRTG database.
+
+💡 **How to resolve:**
+1. Check spelling and search: `prtg_search search_term="web-server-01"`
+2. List all devices: `prtg_get_sensors limit=1` then check device_name
+3. Explore hierarchy: `prtg_get_hierarchy`
 ```
 
 #### Notes
@@ -662,6 +725,20 @@ Search for PRTG objects by name across all object types. Returns matching groups
     "search_term": "prod"
   }
 }
+```
+
+#### Error Response
+
+**Empty search term:**
+```
+❌ **Empty search term**
+
+The search_term parameter is required to perform a search.
+
+💡 **How to resolve:**
+1. Search for a device: `prtg_search search_term="server"`
+2. Search by type: `prtg_search search_term="ping"`
+3. Search by group: `prtg_search search_term="production"`
 ```
 
 #### Response Format
@@ -1031,6 +1108,18 @@ This tool implements multiple security measures:
 
 #### Error Responses
 
+**Custom queries disabled:**
+```
+❌ **Custom SQL queries disabled**
+
+For security reasons, prtg_query_sql is disabled by default.
+
+💡 **How to resolve:**
+1. Use predefined tools: prtg_get_sensors, prtg_get_alerts, etc.
+2. To enable: set allow_custom_queries=true in config.yaml (not recommended in production)
+3. Contact your administrator if needed
+```
+
 **Forbidden operation:**
 ```json
 {
@@ -1308,17 +1397,22 @@ Channels: CPU Load, Memory Usage, Disk I/O
 
 #### Error Responses
 
+**Invalid time range:**
+```
+❌ **Invalid time range**
+
+end_time must be after start_time. Expected format: RFC3339 (e.g., 2025-01-15T14:00:00Z)
+
+💡 **How to resolve:**
+1. Example for last 24h: start_time=2025-01-14T00:00:00Z, end_time=2025-01-15T00:00:00Z
+2. Use time_type instead for standard periods: `prtg_get_sensor_timeseries sensor_id=X time_type=short`
+3. Available time_type: live (minutes), short (24h), medium (7d), long (30d)
+```
+
 **Invalid time format:**
 ```json
 {
   "error": "Invalid start_time format (use RFC3339): parsing time \"2025-10-30\" as \"2006-01-02T15:04:05Z07:00\": cannot parse \"\" as \"T\""
-}
-```
-
-**End before start:**
-```json
-{
-  "error": "end_time must be after start_time"
 }
 ```
 
