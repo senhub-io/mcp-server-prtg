@@ -123,6 +123,11 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid parameters: %v", err)), nil
 	}
 
+	// Validate sensor_id
+	if params.SensorID <= 0 {
+		return ErrInvalidSensorID(), nil
+	}
+
 	// Validate time type
 	timeType := prtg.TimeSeriesType(params.TimeType)
 	validTypes := map[prtg.TimeSeriesType]bool{
@@ -169,6 +174,11 @@ func (h *MetricsToolHandler) handleGetSensorHistoryCustom(ctx context.Context, r
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid parameters: %v", err)), nil
 	}
 
+	// Validate sensor_id
+	if params.SensorID <= 0 {
+		return ErrInvalidSensorID(), nil
+	}
+
 	// Parse timestamps
 	startTime, err := time.Parse(time.RFC3339, params.StartTime)
 	if err != nil {
@@ -182,7 +192,7 @@ func (h *MetricsToolHandler) handleGetSensorHistoryCustom(ctx context.Context, r
 
 	// Validate time range
 	if endTime.Before(startTime) {
-		return mcp.NewToolResultError("end_time must be after start_time"), nil
+		return ErrInvalidTimeRange(), nil
 	}
 
 	h.handler.logger.Info().
@@ -215,6 +225,11 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 
 	if err := parseArguments(request.Params.Arguments, &params); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid parameters: %v", err)), nil
+	}
+
+	// Validate sensor_id
+	if params.SensorID <= 0 {
+		return ErrInvalidSensorID(), nil
 	}
 
 	h.handler.logger.Info().

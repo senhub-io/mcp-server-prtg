@@ -677,6 +677,153 @@ $device = Invoke-PRTGTool -ToolName "prtg_device_overview" -Arguments @{ device_
 $device | ConvertTo-Json -Depth 10
 ```
 
+## Error Handling
+
+### Pedagogical Error Messages
+
+MCP Server PRTG provides LLM-friendly error messages that guide users toward resolution. When errors occur, the system returns structured guidance with actionable suggestions.
+
+#### Example Scenarios
+
+**Scenario 1: Invalid Sensor ID**
+
+When you request a sensor with an invalid ID:
+
+```
+User: "Show me sensor 0"
+```
+
+**Response:**
+```
+❌ **Invalid sensor_id**
+
+The sensor_id parameter must be a positive integer corresponding to an existing PRTG sensor.
+
+💡 **How to resolve:**
+1. Search by name: `prtg_search search_term="sensor_name"`
+2. List alerts (with IDs): `prtg_get_alerts`
+3. Explore a device: `prtg_device_overview device_name="device_name"`
+```
+
+**What happens next:** The LLM reads the suggestions and automatically tries one of the recommended approaches.
+
+**Scenario 2: Device Not Found**
+
+When searching for a non-existent device:
+
+```
+User: "Show me device 'web-server-01'"
+```
+
+**Response:**
+```
+❌ **Device 'web-server-01' not found**
+
+No device matches this name in the PRTG database.
+
+💡 **How to resolve:**
+1. Check spelling and search: `prtg_search search_term="web-server-01"`
+2. List all devices: `prtg_get_sensors limit=1` then check device_name
+3. Explore hierarchy: `prtg_get_hierarchy`
+```
+
+**What happens next:** LLM tries prtg_search to find similarly named devices.
+
+**Scenario 3: Empty Search Term**
+
+When forgetting to provide a search term:
+
+```
+User: "Search PRTG"
+```
+
+**Response:**
+```
+❌ **Empty search term**
+
+The search_term parameter is required to perform a search.
+
+💡 **How to resolve:**
+1. Search for a device: `prtg_search search_term="server"`
+2. Search by type: `prtg_search search_term="ping"`
+3. Search by group: `prtg_search search_term="production"`
+```
+
+**What happens next:** LLM prompts user for what they want to search for, or infers from context.
+
+**Scenario 4: Invalid Time Range**
+
+When using incorrect time format:
+
+```
+User: "Show me sensor history from yesterday to today"
+```
+
+**Response:**
+```
+❌ **Invalid time range**
+
+end_time must be after start_time. Expected format: RFC3339 (e.g., 2025-01-15T14:00:00Z)
+
+💡 **How to resolve:**
+1. Example for last 24h: start_time=2025-01-14T00:00:00Z, end_time=2025-01-15T00:00:00Z
+2. Use time_type instead for standard periods: `prtg_get_sensor_timeseries sensor_id=X time_type=short`
+3. Available time_type: live (minutes), short (24h), medium (7d), long (30d)
+```
+
+**What happens next:** LLM converts relative dates to RFC3339 format or uses time_type parameter instead.
+
+**Scenario 5: Custom Queries Disabled**
+
+When trying to use SQL queries without proper configuration:
+
+```
+User: "Run a custom SQL query to find all down sensors"
+```
+
+**Response:**
+```
+❌ **Custom SQL queries disabled**
+
+For security reasons, prtg_query_sql is disabled by default.
+
+💡 **How to resolve:**
+1. Use predefined tools: prtg_get_sensors, prtg_get_alerts, etc.
+2. To enable: set allow_custom_queries=true in config.yaml (not recommended in production)
+3. Contact your administrator if needed
+```
+
+**What happens next:** LLM uses prtg_get_sensors with status filter instead.
+
+#### Benefits of Pedagogical Errors
+
+1. **Automatic Recovery**: LLMs can resolve errors without human intervention
+2. **Learning**: Users learn correct usage through concrete examples
+3. **Tool Discovery**: Errors introduce related tools users didn't know about
+4. **Context Preservation**: LLM maintains conversation flow while handling errors
+5. **Reduced Frustration**: Clear guidance instead of cryptic technical errors
+
+#### Error Categories
+
+**Validation Errors:**
+- Invalid parameter values
+- Missing required parameters
+- Parameter format issues
+
+**Resource Errors:**
+- Device/sensor not found
+- Data sync issues
+
+**Configuration Errors:**
+- Features disabled (custom queries)
+- Permission issues
+
+**Data Errors:**
+- Empty result sets
+- Timeout issues
+
+All error categories follow the same pedagogical format: clear title, explanation, and actionable suggestions.
+
 ## Best Practices
 
 ### Performance

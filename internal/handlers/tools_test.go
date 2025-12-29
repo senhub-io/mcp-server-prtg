@@ -289,9 +289,9 @@ func TestHandleGetSensorStatus(t *testing.T) {
 		})
 
 		result, err := handler.handleGetSensorStatus(context.Background(), request)
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "sensor_id must be greater than 0")
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Invalid sensor_id")
 
 		mockDB.AssertNotCalled(t, "GetSensorByID")
 	})
@@ -308,9 +308,9 @@ func TestHandleGetSensorStatus(t *testing.T) {
 		})
 
 		result, err := handler.handleGetSensorStatus(context.Background(), request)
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "sensor_id must be greater than 0")
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Invalid sensor_id")
 
 		mockDB.AssertNotCalled(t, "GetSensorByID")
 	})
@@ -325,9 +325,9 @@ func TestHandleGetSensorStatus(t *testing.T) {
 		request := createTestRequest(map[string]interface{}{})
 
 		result, err := handler.handleGetSensorStatus(context.Background(), request)
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "sensor_id must be greater than 0")
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Invalid sensor_id")
 
 		mockDB.AssertNotCalled(t, "GetSensorByID")
 	})
@@ -416,10 +416,10 @@ func TestHandleCustomQuery_Security(t *testing.T) {
 		})
 
 		result, err := handler.handleCustomQuery(context.Background(), request)
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "custom SQL queries are disabled")
-		assert.Contains(t, err.Error(), "allow_custom_queries: true")
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Custom SQL queries disabled")
+		assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "allow_custom_queries")
 
 		// Database should NOT be called when queries are disabled
 		mockDB.AssertNotCalled(t, "ExecuteCustomQuery")

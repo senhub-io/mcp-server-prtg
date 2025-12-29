@@ -137,6 +137,105 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 
 ## Components
 
+### Error Handling System
+
+**File**: `internal/handlers/errors.go`
+
+The error handling system provides pedagogical, LLM-friendly error messages designed to guide users toward resolution without requiring technical knowledge.
+
+#### ErrorGuidance Function
+
+Creates structured error messages with three components:
+
+```go
+func ErrorGuidance(title, explanation string, suggestions []string) *mcp.CallToolResult {
+    // Returns formatted error with:
+    // - Clear title (what went wrong)
+    // - Plain English explanation (why it happened)
+    // - Numbered action items (how to fix it)
+}
+```
+
+**Format:**
+```
+❌ **Error Title**
+
+Plain English explanation of what went wrong and why.
+
+💡 **How to resolve:**
+1. First suggested action with example
+2. Second suggested action with example
+3. Alternative approach if needed
+```
+
+#### Predefined Pedagogical Errors
+
+**ErrInvalidSensorID**
+- **When**: sensor_id parameter is invalid (≤0)
+- **Guidance**: Suggests prtg_search, prtg_get_alerts, prtg_device_overview with examples
+- **Goal**: Help user discover valid sensor IDs
+
+**ErrDeviceNotFound**
+- **When**: Device name doesn't match any devices
+- **Guidance**: Suggests checking spelling, using prtg_search, prtg_get_hierarchy
+- **Goal**: Help user find correct device name
+
+**ErrSensorNotFound**
+- **When**: Sensor ID exists but not found in database
+- **Guidance**: Explains data sync, suggests verifying Data Exporter, using prtg_search
+- **Goal**: Distinguish between invalid ID vs. sync issues
+
+**ErrEmptySearchTerm**
+- **When**: search_term parameter is empty or missing
+- **Guidance**: Provides concrete search examples (by device, type, group)
+- **Goal**: Show users how to use search effectively
+
+**ErrInvalidTimeRange**
+- **When**: end_time is before start_time or invalid RFC3339 format
+- **Guidance**: Explains RFC3339 format, shows examples, suggests time_type alternative
+- **Goal**: Help users format time parameters correctly
+
+**ErrCustomQueriesDisabled**
+- **When**: prtg_query_sql called but allow_custom_queries=false
+- **Guidance**: Explains security rationale, lists predefined alternatives, shows how to enable
+- **Goal**: Guide users to safer alternatives or controlled enablement
+
+#### Integration in Tool Handlers
+
+**Validation Pattern:**
+```go
+func (h *ToolHandler) handleGetSensorStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Parse arguments
+    var args struct {
+        SensorID int `json:"sensor_id"`
+    }
+
+    if err := parseArguments(request.Params.Arguments, &args); err != nil {
+        return nil, fmt.Errorf("invalid arguments: %w", err)
+    }
+
+    // Pedagogical validation
+    if args.SensorID <= 0 {
+        return ErrInvalidSensorID(), nil  // Returns helpful guidance, not error
+    }
+
+    // Continue with business logic...
+}
+```
+
+**Key Design Decision:**
+- Validation errors return `(*mcp.CallToolResult, nil)` instead of `(nil, error)`
+- This ensures error guidance is displayed to LLM as tool output
+- LLM can read and act on suggestions without manual intervention
+
+#### Benefits for LLM Users
+
+1. **Self-Service Resolution**: LLMs can follow suggestions without human intervention
+2. **Learning Through Examples**: Concrete examples teach correct usage patterns
+3. **Discovery**: Errors guide users to related tools they didn't know about
+4. **Context-Aware**: Suggestions are specific to the error situation
+5. **Actionable**: Every error includes specific commands to try next
+
 ### Streamable HTTP Transport Layer
 
 **File**: `internal/server/streamable_http_server.go`
