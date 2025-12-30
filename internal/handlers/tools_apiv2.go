@@ -103,10 +103,34 @@ func (h *APIv2ToolHandler) handleGetSensors(ctx context.Context, request mcptool
 	}
 	filters := make(map[string]interface{})
 
+	// Collect filter expressions to avoid map key collision
+	// Multiple filter expressions are passed as separate query parameters
+	var filterExpressions []string
+
 	if sensorName, ok := args["sensor_name"].(string); ok && sensorName != "" {
-		filters["filter"] = fmt.Sprintf("name contains \"%s\"", sensorName)
+		filterExpressions = append(filterExpressions, fmt.Sprintf("name contains \"%s\"", sensorName))
 	}
 
+	if deviceName, ok := args["device_name"].(string); ok && deviceName != "" {
+		// Filter by parent device name
+		filterExpressions = append(filterExpressions, fmt.Sprintf("parent.name contains \"%s\"", deviceName))
+	}
+
+	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
+		// Filter by group - PRTG sensors have a group field
+		filterExpressions = append(filterExpressions, fmt.Sprintf("group contains \"%s\"", groupName))
+	}
+
+	if tags, ok := args["tags"].(string); ok && tags != "" {
+		filterExpressions = append(filterExpressions, fmt.Sprintf("tags contains \"%s\"", tags))
+	}
+
+	// Pass filter expressions as a slice - buildQueryParams will create multiple filter parameters
+	if len(filterExpressions) > 0 {
+		filters["filter"] = filterExpressions
+	}
+
+	// Handle special filter parameters
 	if status, ok := args["status"].(float64); ok {
 		filters["filter_status"] = int(status)
 	}
@@ -115,14 +139,24 @@ func (h *APIv2ToolHandler) handleGetSensors(ctx context.Context, request mcptool
 		filters["filter_type"] = sensorType
 	}
 
-	if tags, ok := args["tags"].(string); ok && tags != "" {
-		filters["filter"] = fmt.Sprintf("tags contains \"%s\"", tags)
-	}
-
+	// Handle limit parameter
 	if limit, ok := args["limit"].(float64); ok {
 		filters["limit"] = int(limit)
 	} else {
 		filters["limit"] = 50
+	}
+
+	// Handle order_by parameter
+	if orderBy, ok := args["order_by"].(string); ok && orderBy != "" {
+		// Map user-friendly field names to PRTG API field names
+		sortField := orderBy
+		switch orderBy {
+		case "last_check":
+			sortField = "lastcheck"
+		case "device":
+			sortField = "parent.name"
+		}
+		filters["sort"] = sortField
 	}
 
 	// Call API

@@ -177,9 +177,16 @@ func buildQueryParams(filters map[string]interface{}) url.Values {
 					params.Add("filter", filterValue)
 				}
 			} else if key == "filter" {
-				// Direct filter expression
+				// Direct filter expression - can be string or slice of strings
 				if v, ok := value.(string); ok && v != "" {
 					params.Add("filter", v)
+				} else if filters, ok := value.([]string); ok {
+					// Support multiple filter expressions
+					for _, f := range filters {
+						if f != "" {
+							params.Add("filter", f)
+						}
+					}
 				}
 			}
 		}
