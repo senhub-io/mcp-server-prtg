@@ -23,6 +23,7 @@ var (
 
 const (
 	cmdRun       = "run"
+	cmdStdio     = "stdio"
 	cmdInstall   = "install"
 	cmdUninstall = "uninstall"
 	cmdStart     = "start"
@@ -53,6 +54,10 @@ func executeCommand(args *cliargs.ParsedArgs) error {
 	}
 
 	switch args.Command {
+	case cmdStdio:
+		// Run in stdio mode (MCP client plugin mode)
+		return runStdioMode()
+
 	case cmdRun:
 		// Run via service framework (handles both console and service mode)
 		return runService(args)
