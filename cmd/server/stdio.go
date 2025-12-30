@@ -30,19 +30,19 @@ func runStdioMode() error {
 	logger.Info().Msg("Starting MCP Server PRTG in stdio mode")
 
 	// Load configuration from environment variables
-	config, err := loadConfigFromEnv()
+	config, err := loadConfigFromEnv(&logger)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to load configuration")
+		logger.Error().Err(err).Msg("Failed to load configuration")
 		return err
 	}
 
 	// Validate required configuration
 	if config.PRTGURL == "" {
-		logger.Fatal().Msg("PRTG_URL environment variable is required")
+		logger.Error().Msg("PRTG_URL environment variable is required")
 		return fmt.Errorf("PRTG_URL is required")
 	}
 	if config.PRTGToken == "" {
-		logger.Fatal().Msg("PRTG_API_TOKEN environment variable is required")
+		logger.Error().Msg("PRTG_API_TOKEN environment variable is required")
 		return fmt.Errorf("PRTG_API_TOKEN is required")
 	}
 
@@ -61,7 +61,7 @@ func runStdioMode() error {
 		Logger:    &logger,
 	})
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to create PRTG client")
+		logger.Error().Err(err).Msg("Failed to create PRTG client")
 		return err
 	}
 
@@ -153,12 +153,12 @@ type Config struct {
 
 // loadConfigFromEnv loads configuration from environment variables.
 // This replaces the YAML config file for stdio mode.
-func loadConfigFromEnv() (*Config, error) {
+func loadConfigFromEnv(logger *zerolog.Logger) (*Config, error) {
 	config := &Config{
 		PRTGURL:     getEnv("PRTG_URL", ""),
 		PRTGToken:   getEnv("PRTG_API_TOKEN", ""),
 		PRTGEnabled: getEnvBool("PRTG_ENABLED", true),
-		Timeout:     getEnvInt("PRTG_TIMEOUT", 30),
+		Timeout:     getEnvInt("PRTG_TIMEOUT", 30, logger),
 		VerifySSL:   getEnvBool("PRTG_VERIFY_SSL", true),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 	}
@@ -175,11 +175,20 @@ func getEnv(key, defaultValue string) string {
 }
 
 // getEnvInt returns an environment variable as int or a default value.
-func getEnvInt(key string, defaultValue int) int {
+// Logs a warning to stderr if the value cannot be parsed as an integer.
+func getEnvInt(key string, defaultValue int, logger *zerolog.Logger) int {
 	if value := os.Getenv(key); value != "" {
 		var intValue int
 		if _, err := fmt.Sscanf(value, "%d", &intValue); err == nil {
 			return intValue
+		}
+		// Log warning for invalid value
+		if logger != nil {
+			logger.Warn().
+				Str("key", key).
+				Str("value", value).
+				Int("default", defaultValue).
+				Msg("Invalid integer value for environment variable, using default")
 		}
 	}
 	return defaultValue
