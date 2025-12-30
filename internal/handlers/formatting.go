@@ -131,9 +131,37 @@ func formatAlertsResponse(alerts []types.Sensor) string {
 		sb.WriteString(fmt.Sprintf("| ... | *%d more alerts* | ... | ... | ... | ... |\n", len(alerts)-25))
 	}
 
-	// 4. Hint for artifact
+	// 4. Contextual suggestions
 	sb.WriteString("\n---\n\n")
-	sb.WriteString("💾 **Complete dataset below** (downloadable for further analysis)\n\n")
+	sb.WriteString("**Next suggested actions:**\n")
+
+	// Find the most critical sensor (highest priority Down sensor)
+	var mostCriticalID int
+	highestPriority := 0
+	hasDownSensors := false
+
+	for _, alert := range alerts {
+		if alert.Status == 5 { // Down
+			hasDownSensors = true
+			if alert.Priority > highestPriority {
+				highestPriority = alert.Priority
+				mostCriticalID = alert.ID
+			}
+		}
+	}
+
+	if hasDownSensors && mostCriticalID > 0 {
+		sb.WriteString(fmt.Sprintf("- Investigate critical sensor: `prtg_get_sensor_status sensor_id=%d`\n", mostCriticalID))
+		sb.WriteString(fmt.Sprintf("- View historical data: `prtg_get_sensor_timeseries sensor_id=%d time_type=short`\n", mostCriticalID))
+		sb.WriteString(fmt.Sprintf("- Check current values: `prtg_get_channel_current_values sensor_id=%d`\n", mostCriticalID))
+	} else if len(alerts) > 0 {
+		// If only warnings, suggest checking trends
+		sb.WriteString("- Check sensor trends: `prtg_top_sensors metric=downtime hours=24`\n")
+		sb.WriteString("- Review overall statistics: `prtg_get_statistics`\n")
+	}
+
+	sb.WriteString("\n---\n\n")
+	sb.WriteString("**Complete dataset below** (downloadable for further analysis)\n\n")
 
 	// 5. Full JSON data
 	sb.WriteString("```json\n")
@@ -207,9 +235,39 @@ func formatSensorsResponse(sensors []types.Sensor) string {
 		sb.WriteString(fmt.Sprintf("| ... | *%d more sensors* | ... | ... | ... | ... |\n", len(sensors)-20))
 	}
 
-	// 4. Hint for artifact
+	// 4. Contextual suggestions
 	sb.WriteString("\n---\n\n")
-	sb.WriteString("💾 **Complete dataset below** (downloadable for further analysis)\n\n")
+	sb.WriteString("**Next suggested actions:**\n")
+
+	// Analyze the sensor list to provide relevant suggestions
+	downCount := statusCount[5]   // Down
+	warnCount := statusCount[4]   // Warning
+	pausedCount := statusCount[7] // Paused
+
+	if downCount > 0 {
+		sb.WriteString("- View critical alerts: `prtg_get_alerts status=5`\n")
+		sb.WriteString("- Check top problematic sensors: `prtg_top_sensors metric=downtime hours=24`\n")
+	} else if warnCount > 0 {
+		sb.WriteString("- Review warning sensors: `prtg_get_alerts status=4`\n")
+		sb.WriteString("- Analyze sensor trends: `prtg_top_sensors metric=alerts hours=24`\n")
+	} else if pausedCount > 0 {
+		sb.WriteString("- Review paused sensors and consider resuming monitoring\n")
+		sb.WriteString("- Check overall health: `prtg_get_statistics`\n")
+	}
+
+	// If we have sensor data, suggest inspecting a specific sensor
+	if len(sensors) > 0 {
+		firstSensorID := sensors[0].ID
+		sb.WriteString(fmt.Sprintf("- Inspect specific sensor: `prtg_get_sensor_status sensor_id=%d`\n", firstSensorID))
+	}
+
+	// General suggestions
+	if len(sensors) > 20 {
+		sb.WriteString("- Narrow results with filters: device_name, sensor_type, or tags\n")
+	}
+
+	sb.WriteString("\n---\n\n")
+	sb.WriteString("**Complete dataset below** (downloadable for further analysis)\n\n")
 
 	// 5. Full JSON data
 	sb.WriteString("```json\n")
@@ -350,9 +408,31 @@ func formatDeviceOverviewResponse(overview *types.DeviceOverview) string {
 		}
 	}
 
-	// 6. Full JSON data
+	// 6. Contextual suggestions
 	sb.WriteString("\n---\n\n")
-	sb.WriteString("💾 **Complete data below** (downloadable)\n\n")
+	sb.WriteString("**Next suggested actions:**\n")
+
+	if overview.DownSensors > 0 {
+		sb.WriteString(fmt.Sprintf("- View down sensors on this device: `prtg_get_alerts device_name=\"%s\" status=5`\n", overview.Device.Name))
+		sb.WriteString(fmt.Sprintf("- Check historical issues: `prtg_get_sensors device_name=\"%s\" order_by=status`\n", overview.Device.Name))
+	} else if overview.WarnSensors > 0 {
+		sb.WriteString(fmt.Sprintf("- Review warning sensors: `prtg_get_alerts device_name=\"%s\" status=4`\n", overview.Device.Name))
+	}
+
+	// Suggest inspecting specific sensors if available
+	if len(overview.Sensors) > 0 {
+		firstSensorID := overview.Sensors[0].ID
+		sb.WriteString(fmt.Sprintf("- Inspect a sensor in detail: `prtg_get_sensor_status sensor_id=%d`\n", firstSensorID))
+		sb.WriteString(fmt.Sprintf("- View sensor trends: `prtg_get_sensor_timeseries sensor_id=%d time_type=short`\n", firstSensorID))
+	}
+
+	// Suggest exploring related devices
+	if overview.Device.GroupName != "" {
+		sb.WriteString(fmt.Sprintf("- Explore other devices in group: `prtg_get_sensors group_name=\"%s\"`\n", overview.Device.GroupName))
+	}
+
+	sb.WriteString("\n---\n\n")
+	sb.WriteString("**Complete data below** (downloadable)\n\n")
 	sb.WriteString("```json\n")
 	jsonData, _ := json.MarshalIndent(overview, "", "  ")
 	sb.WriteString(string(jsonData))
@@ -666,9 +746,34 @@ func formatSearchResponse(results *types.SearchResults, searchTerm string) strin
 		sb.WriteString("\n")
 	}
 
-	// 6. Full JSON data
+	// 6. Contextual suggestions
 	sb.WriteString("---\n\n")
-	sb.WriteString("💾 **Complete search results below** (downloadable)\n\n")
+	sb.WriteString("**Next suggested actions:**\n")
+
+	// Suggest actions based on what was found
+	if len(results.Sensors) > 0 {
+		firstSensorID := results.Sensors[0].ID
+		sb.WriteString(fmt.Sprintf("- Inspect first sensor: `prtg_get_sensor_status sensor_id=%d`\n", firstSensorID))
+		sb.WriteString(fmt.Sprintf("- View sensor history: `prtg_get_sensor_timeseries sensor_id=%d time_type=short`\n", firstSensorID))
+	}
+
+	if len(results.Devices) > 0 {
+		firstDeviceName := results.Devices[0].Name
+		sb.WriteString(fmt.Sprintf("- Explore device sensors: `prtg_device_overview device_name=\"%s\"`\n", firstDeviceName))
+	}
+
+	if len(results.Groups) > 0 {
+		firstGroupName := results.Groups[0].Name
+		sb.WriteString(fmt.Sprintf("- View group hierarchy: `prtg_get_hierarchy group_name=\"%s\"`\n", firstGroupName))
+	}
+
+	// Suggest refining the search if too many results
+	if totalResults > 60 {
+		sb.WriteString("- Refine search with more specific terms for better results\n")
+	}
+
+	sb.WriteString("\n---\n\n")
+	sb.WriteString("**Complete search results below** (downloadable)\n\n")
 	sb.WriteString("```json\n")
 	jsonData, _ := json.MarshalIndent(results, "", "  ")
 	sb.WriteString(string(jsonData))
