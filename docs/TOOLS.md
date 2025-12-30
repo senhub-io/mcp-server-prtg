@@ -34,6 +34,69 @@ MCP Server PRTG exposes 15 tools through the Model Context Protocol:
 
 All tools return JSON responses with consistent visual formatting including markdown tables and complete JSON data.
 
+### LLM-Optimized Features
+
+**ASCII Visualizations (Time Series Tools)**
+
+Time series responses automatically include:
+- **Sparklines**: Compact ASCII charts showing trends (`▁▂▃▅▇▅▃▂▁`)
+- **Trend Indicators**: Direction analysis (UP, DOWN, FLAT)
+- **Compact Statistics**: Min, Max, Average, Current values
+- **Anomaly Detection**: Automatic outlier detection (>2 standard deviations)
+
+These visualizations help LLMs and users quickly understand patterns without analyzing raw numbers.
+
+**Contextual Suggestions**
+
+Many tools include "Next suggested actions" sections with context-aware MCP commands:
+- **formatAlertsResponse**: Suggests investigating critical sensors
+- **formatSensorsResponse**: Recommends filtering and inspection steps
+- **formatDeviceOverviewResponse**: Suggests device-specific actions
+- **formatSearchResponse**: Guides exploration of search results
+
+This enables LLMs to autonomously navigate the API and discover related tools without human intervention.
+
+### Pedagogical Error Handling
+
+MCP Server PRTG implements LLM-friendly error messages that guide users toward resolution. When errors occur, tools return structured guidance instead of technical error messages:
+
+**Error Message Format:**
+```
+❌ **Error Title**
+
+Plain English explanation of what went wrong.
+
+💡 **How to resolve:**
+1. Concrete action with example command
+2. Alternative approach with example
+3. Additional suggestion if applicable
+```
+
+**Example - Invalid Sensor ID:**
+```
+❌ **Invalid sensor_id**
+
+The sensor_id parameter must be a positive integer corresponding to an existing PRTG sensor.
+
+💡 **How to resolve:**
+1. Search by name: `prtg_search search_term="sensor_name"`
+2. List alerts (with IDs): `prtg_get_alerts`
+3. Explore a device: `prtg_device_overview device_name="device_name"`
+```
+
+**Benefits:**
+- **Self-Service**: LLMs can follow suggestions automatically
+- **Discovery**: Errors introduce users to related tools
+- **Examples**: Every suggestion includes concrete command syntax
+- **Learning**: Users understand correct usage patterns through examples
+
+**Common Error Types:**
+- Invalid parameters (sensor_id, time ranges)
+- Missing required parameters (search_term, device_name)
+- Resource not found (device, sensor)
+- Configuration restrictions (custom queries disabled)
+- Data sync issues (sensor exists in PRTG but not in database)
+
 ### Response Format
 
 All tools return results in this format:
@@ -245,13 +308,30 @@ Returns comprehensive information about a single sensor including current values
 }
 ```
 
-#### Error Response
+#### Error Responses
 
-If sensor ID is not found:
-```json
-{
-  "error": "failed to get sensor: sensor not found"
-}
+**Invalid sensor_id (≤0):**
+```
+❌ **Invalid sensor_id**
+
+The sensor_id parameter must be a positive integer corresponding to an existing PRTG sensor.
+
+💡 **How to resolve:**
+1. Search by name: `prtg_search search_term="sensor_name"`
+2. List alerts (with IDs): `prtg_get_alerts`
+3. Explore a device: `prtg_device_overview device_name="device_name"`
+```
+
+**Sensor not found in database:**
+```
+❌ **Sensor ID 12345 not found**
+
+This sensor_id does not exist or has been deleted in PRTG.
+
+💡 **How to resolve:**
+1. Data may be out of sync. Verify that the Data Exporter is active.
+2. Search sensor by name: `prtg_search search_term="name"`
+3. List active sensors: `prtg_get_sensors limit=50`
 ```
 
 #### Notes
@@ -457,11 +537,16 @@ Returns comprehensive information about a device, including all its sensors and 
 
 #### Error Response
 
-If device is not found:
-```json
-{
-  "error": "failed to get device overview: device not found"
-}
+**Device not found:**
+```
+❌ **Device 'web-server-01' not found**
+
+No device matches this name in the PRTG database.
+
+💡 **How to resolve:**
+1. Check spelling and search: `prtg_search search_term="web-server-01"`
+2. List all devices: `prtg_get_sensors limit=1` then check device_name
+3. Explore hierarchy: `prtg_get_hierarchy`
 ```
 
 #### Notes
@@ -662,6 +747,20 @@ Search for PRTG objects by name across all object types. Returns matching groups
     "search_term": "prod"
   }
 }
+```
+
+#### Error Response
+
+**Empty search term:**
+```
+❌ **Empty search term**
+
+The search_term parameter is required to perform a search.
+
+💡 **How to resolve:**
+1. Search for a device: `prtg_search search_term="server"`
+2. Search by type: `prtg_search search_term="ping"`
+3. Search by group: `prtg_search search_term="production"`
 ```
 
 #### Response Format
@@ -1031,6 +1130,18 @@ This tool implements multiple security measures:
 
 #### Error Responses
 
+**Custom queries disabled:**
+```
+❌ **Custom SQL queries disabled**
+
+For security reasons, prtg_query_sql is disabled by default.
+
+💡 **How to resolve:**
+1. Use predefined tools: prtg_get_sensors, prtg_get_alerts, etc.
+2. To enable: set allow_custom_queries=true in config.yaml (not recommended in production)
+3. Contact your administrator if needed
+```
+
 **Forbidden operation:**
 ```json
 {
@@ -1183,13 +1294,21 @@ Returns time-stamped measurements showing how channel values evolved over predef
 
 #### Response Format
 
-Returns a markdown table with time-stamped measurements:
+Returns a visual summary with sparklines, trends, and statistics, followed by a data table:
 
 ```
 # Time Series Data - Sensor 12345 (short)
 
 Total data points: 145
 Channels: Response Time, Traffic In, Traffic Out
+
+## Quick Trend
+
+**Sparkline (Response Time):** ▁▂▃▅▇▅▃▂▁ UP
+**Stats:** Min: 42.1 | Max: 48.6 | Avg: 44.5 | Current: 45.2
+
+WARNING: **1 anomaly/anomalies detected**
+- Index 87: 78.3 (expected: ~44.5)
 
 ## Measurements
 
@@ -1203,7 +1322,17 @@ Channels: Response Time, Traffic In, Traffic Out
 | 2025-10-25 10:35:00 | 44.67 | 1267890.12 | 978901.23 |
 ```
 
-**Note:** If more than 15 data points exist, the table shows the first 10 and last 5 points with "..." indicating truncation.
+**Visualization Elements:**
+
+- **Sparkline**: ASCII visualization using `▁▂▃▄▅▆▇█` characters showing value progression
+- **Trend Indicator**: `UP` (rising), `DOWN` (falling), or `FLAT` (stable) based on comparing first and second half averages
+- **Compact Stats**: Min, Max, Average, and Current value for quick reference
+- **Anomaly Detection**: Automatic detection of outliers (values >2 standard deviations from mean)
+
+**Note:**
+- If more than 15 data points exist, the table shows the first 10 and last 5 points with "..." indicating truncation
+- Visualizations are automatically generated for the first numeric channel in the response
+- Anomaly detection requires at least 10 data points
 
 #### Notes
 
@@ -1286,7 +1415,7 @@ Use RFC3339 format for timestamps:
 
 #### Response Format
 
-Returns a markdown table with time-stamped measurements:
+Returns a visual summary with sparklines, trends, and statistics, followed by a data table:
 
 ```
 # Time Series Data - Sensor 12345
@@ -1294,6 +1423,15 @@ Period: 2025-10-29 14:00:00 to 2025-10-29 16:00:00
 
 Total data points: 48
 Channels: CPU Load, Memory Usage, Disk I/O
+
+## Quick Trend
+
+**Sparkline (CPU Load):** ▁▂▃▄▅▇██▇▅▃▂ DOWN
+**Stats:** Min: 43.2 | Max: 68.9 | Avg: 52.4 | Current: 43.2
+
+WARNING: **2 anomaly/anomalies detected**
+- Index 12: 68.9 (expected: ~52.4)
+- Index 24: 35.1 (expected: ~52.4)
 
 ## Measurements
 
@@ -1306,19 +1444,31 @@ Channels: CPU Load, Memory Usage, Disk I/O
 | 2025-10-29 15:55:00 | 43.21 | 77.65 | 1198.90 |
 ```
 
+**Visualization Elements:**
+
+- **Sparkline**: ASCII visualization showing value progression over the custom time range
+- **Trend Indicator**: Direction analysis comparing first and second half of the period
+- **Compact Stats**: Statistical summary for quick context
+- **Anomaly Detection**: Highlights unusual spikes or drops during the period
+
 #### Error Responses
+
+**Invalid time range:**
+```
+❌ **Invalid time range**
+
+end_time must be after start_time. Expected format: RFC3339 (e.g., 2025-01-15T14:00:00Z)
+
+💡 **How to resolve:**
+1. Example for last 24h: start_time=2025-01-14T00:00:00Z, end_time=2025-01-15T00:00:00Z
+2. Use time_type instead for standard periods: `prtg_get_sensor_timeseries sensor_id=X time_type=short`
+3. Available time_type: live (minutes), short (24h), medium (7d), long (30d)
+```
 
 **Invalid time format:**
 ```json
 {
   "error": "Invalid start_time format (use RFC3339): parsing time \"2025-10-30\" as \"2006-01-02T15:04:05Z07:00\": cannot parse \"\" as \"T\""
-}
-```
-
-**End before start:**
-```json
-{
-  "error": "end_time must be after start_time"
 }
 ```
 

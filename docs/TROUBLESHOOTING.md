@@ -10,6 +10,7 @@ Common issues and their solutions for MCP Server PRTG.
 - [Connection Issues](#connection-issues)
 - [Authentication Issues](#authentication-issues)
 - [TLS/Certificate Issues](#tls-certificate-issues)
+- [Error Handling and Validation](#error-handling-and-validation)
 - [Performance Issues](#performance-issues)
 - [Configuration Issues](#configuration-issues)
 - [Logging and Diagnostics](#logging-and-diagnostics)
@@ -794,6 +795,181 @@ https://localhost:8443/mcp  # Instead of IP address
 **Option 2: Generate certificate with correct SANs**
 
 Regenerate certificate with additional Subject Alternative Names including your server's IP or hostname.
+
+## Error Handling and Validation
+
+### Understanding Pedagogical Errors
+
+MCP Server PRTG uses pedagogical error messages designed to guide LLM users toward resolution. These errors are not bugs - they're helpful guidance.
+
+#### Symptom
+LLM returns a message like:
+```
+❌ **Invalid sensor_id**
+
+The sensor_id parameter must be a positive integer corresponding to an existing PRTG sensor.
+
+💡 **How to resolve:**
+1. Search by name: `prtg_search search_term="sensor_name"`
+2. List alerts (with IDs): `prtg_get_alerts`
+3. Explore a device: `prtg_device_overview device_name="device_name"`
+```
+
+#### What This Means
+This is **working as designed**. The error message:
+- Explains what went wrong in plain English
+- Provides numbered action items to resolve the issue
+- Includes concrete examples of correct usage
+
+#### What the LLM Should Do
+The LLM should:
+1. Read the suggestions
+2. Automatically try one of the recommended approaches
+3. Continue the conversation without human intervention
+
+#### Common Pedagogical Errors
+
+**ErrInvalidSensorID**
+- **Trigger**: sensor_id parameter is ≤0 or invalid
+- **Self-Resolution**: LLM uses prtg_search or prtg_get_alerts to discover valid IDs
+
+**ErrDeviceNotFound**
+- **Trigger**: Device name doesn't match any devices
+- **Self-Resolution**: LLM uses prtg_search to find similarly named devices
+
+**ErrEmptySearchTerm**
+- **Trigger**: search_term parameter is missing or empty
+- **Self-Resolution**: LLM prompts user or infers search term from context
+
+**ErrInvalidTimeRange**
+- **Trigger**: Time range format is invalid or end_time before start_time
+- **Self-Resolution**: LLM converts to RFC3339 format or uses time_type parameter
+
+**ErrCustomQueriesDisabled**
+- **Trigger**: Attempting prtg_query_sql when allow_custom_queries=false
+- **Self-Resolution**: LLM uses predefined tools (prtg_get_sensors, prtg_get_alerts, etc.)
+
+### Validation Errors vs. System Errors
+
+**Validation Errors** (Pedagogical):
+- Returned as tool output (not JSON-RPC errors)
+- Include ❌ emoji and 💡 suggestions
+- LLM can read and act on them
+- Examples: invalid parameters, missing fields, resource not found
+
+**System Errors** (Technical):
+- Returned as JSON-RPC error responses
+- Indicate server/infrastructure issues
+- Require human intervention
+- Examples: database connection failed, timeout, internal server error
+
+#### When to Report Issues
+
+**DO NOT report as bugs:**
+- ❌ **Invalid sensor_id** - This is validation guidance
+- ❌ **Device not found** - This is search assistance
+- ❌ **Empty search term** - This is parameter validation
+- ❌ **Custom queries disabled** - This is security configuration
+
+**DO report as bugs:**
+- Database connection errors
+- Server crashes or panics
+- Incorrect data returned
+- Timeouts or performance issues
+- Authentication failures (when credentials are correct)
+
+### Handling Specific Validation Scenarios
+
+#### Scenario: LLM Gets "Invalid sensor_id"
+
+**Expected Behavior:**
+1. LLM reads the pedagogical error
+2. LLM tries suggested action (e.g., prtg_search)
+3. LLM finds valid sensor ID
+4. LLM retries original query with correct ID
+
+**If LLM doesn't self-resolve:**
+- Check LLM configuration (context window, tool use enabled)
+- Verify LLM can read error message format
+- Try rephrasing the original query
+
+#### Scenario: LLM Gets "Device not found"
+
+**Expected Behavior:**
+1. LLM tries prtg_search with similar name
+2. LLM shows user matching devices
+3. User or LLM selects correct device
+4. Query succeeds
+
+**If device truly doesn't exist:**
+- Check PRTG Data Exporter is running
+- Verify device exists in PRTG web interface
+- Check database sync status
+
+#### Scenario: Custom Queries Disabled
+
+**Expected Behavior:**
+1. LLM reads that prtg_query_sql is disabled
+2. LLM uses predefined tool instead
+3. Query succeeds with alternate approach
+
+**To enable custom queries (not recommended in production):**
+```yaml
+# config.yaml
+server:
+  allow_custom_queries: true
+```
+
+Then restart:
+```bash
+./mcp-server-prtg restart
+```
+
+### Troubleshooting Error Handling
+
+#### LLM Doesn't Follow Suggestions
+
+**Diagnosis:**
+- Check if LLM can see error message content
+- Verify tool use is enabled in LLM client
+- Check LLM's context window isn't full
+
+**Solutions:**
+1. Rephrase query more explicitly
+2. Manually follow suggested actions
+3. Restart LLM client session
+
+#### Errors Don't Include Suggestions
+
+**Diagnosis:**
+- This indicates a system error, not validation error
+- Check server logs for details
+
+**Solutions:**
+```bash
+# Check recent logs
+tail -50 logs/mcp-server-prtg.log
+
+# Enable debug logging
+# Edit config.yaml
+logging:
+  level: debug
+
+# Restart server
+./mcp-server-prtg restart
+```
+
+#### Same Error Repeats
+
+**Diagnosis:**
+- LLM may be in a loop
+- Underlying issue may need resolution
+
+**Solutions:**
+1. Check if suggested tools are available
+2. Verify database has data (prtg_get_statistics)
+3. Try a different approach manually
+4. Restart LLM client session
 
 ## Performance Issues
 
