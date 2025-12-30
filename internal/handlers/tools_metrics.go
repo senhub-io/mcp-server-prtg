@@ -123,6 +123,11 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid parameters: %v", err)), nil
 	}
 
+	// Validate sensor_id
+	if params.SensorID <= 0 {
+		return ErrInvalidSensorID(), nil
+	}
+
 	// Validate time type
 	timeType := prtg.TimeSeriesType(params.TimeType)
 	validTypes := map[prtg.TimeSeriesType]bool{
@@ -169,6 +174,11 @@ func (h *MetricsToolHandler) handleGetSensorHistoryCustom(ctx context.Context, r
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid parameters: %v", err)), nil
 	}
 
+	// Validate sensor_id
+	if params.SensorID <= 0 {
+		return ErrInvalidSensorID(), nil
+	}
+
 	// Parse timestamps
 	startTime, err := time.Parse(time.RFC3339, params.StartTime)
 	if err != nil {
@@ -182,7 +192,7 @@ func (h *MetricsToolHandler) handleGetSensorHistoryCustom(ctx context.Context, r
 
 	// Validate time range
 	if endTime.Before(startTime) {
-		return mcp.NewToolResultError("end_time must be after start_time"), nil
+		return ErrInvalidTimeRange(), nil
 	}
 
 	h.handler.logger.Info().
@@ -217,6 +227,11 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 		return mcp.NewToolResultError(fmt.Sprintf("Invalid parameters: %v", err)), nil
 	}
 
+	// Validate sensor_id
+	if params.SensorID <= 0 {
+		return ErrInvalidSensorID(), nil
+	}
+
 	h.handler.logger.Info().
 		Int("sensor_id", params.SensorID).
 		Msg("Fetching channel current values from PRTG API")
@@ -239,6 +254,25 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 	formatted := formatChannelsForLLM(params.SensorID, channels)
 
 	return mcp.NewToolResultText(formatted), nil
+}
+
+// extractChannelValues extracts numeric values from a specific channel
+func extractChannelValues(data *prtg.TimeSeriesData, channelName string) []float64 {
+	var values []float64
+	for _, point := range data.DataPoints {
+		if val, ok := point.Values[channelName]; ok {
+			// Try to convert to float64
+			switch v := val.(type) {
+			case float64:
+				values = append(values, v)
+			case int:
+				values = append(values, float64(v))
+			case int64:
+				values = append(values, float64(v))
+			}
+		}
+	}
+	return values
 }
 
 // formatTimeSeriesForLLM formats time series data in a readable format for LLMs.
@@ -264,6 +298,38 @@ func formatTimeSeriesForLLM(data *prtg.TimeSeriesData) string {
 	// Summary
 	output += fmt.Sprintf("Total data points: %d\n", len(data.DataPoints))
 	output += fmt.Sprintf("Channels: %s\n\n", formatChannelNames(data.Headers))
+
+	// Add sparkline and statistics for the first numeric channel
+	if len(data.Headers) > 1 {
+		// Try to extract values from the first channel (skip timestamp at index 0)
+		firstChannel := data.Headers[1]
+		values := extractChannelValues(data, firstChannel)
+
+		if len(values) > 0 {
+			output += "## Quick Trend\n\n"
+			output += fmt.Sprintf("**Sparkline (%s):** %s %s\n",
+				firstChannel,
+				Sparkline(values, 40),
+				TrendIndicator(values))
+			output += fmt.Sprintf("**Stats:** %s\n\n", CompactStats(values))
+
+			// Detect anomalies
+			anomalies := DetectAnomalies(values)
+			if len(anomalies) > 0 {
+				output += fmt.Sprintf("WARNING: **%d anomaly/anomalies detected**\n", len(anomalies))
+				maxDisplay := 3
+				if len(anomalies) < maxDisplay {
+					maxDisplay = len(anomalies)
+				}
+				for i := 0; i < maxDisplay; i++ {
+					a := anomalies[i]
+					output += fmt.Sprintf("- Index %d: %.1f (expected: ~%.1f)\n",
+						a.Index, a.Value, a.Expected)
+				}
+				output += "\n"
+			}
+		}
+	}
 
 	// Data table (show first 10 and last 5 if more than 15 points)
 	output += "## Measurements\n\n"
