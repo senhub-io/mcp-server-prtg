@@ -233,12 +233,12 @@ func (h *APIv2ToolHandler) handleGetAlerts(ctx context.Context, request mcptool.
 
 	// Filter for non-Up status
 	if status, ok := args["status"].(float64); ok {
-		// Use filter_status which will be converted to status=WARNING format by buildQueryParams
+		// Use filter_status which will be converted to status=warning format by buildQueryParams
 		filters["filter_status"] = int(status)
 	} else {
 		// Default: get all non-Up sensors (Warning, Down, Unknown, Unusual, etc.)
-		// PRTG API v2 filter syntax: status != up
-		filters["filter"] = "status != UP"
+		// PRTG API v2 filter syntax: status != up (lowercase enumeration token)
+		filters["filter"] = "status != up"
 	}
 
 	if deviceName, ok := args["device_name"].(string); ok && deviceName != "" {

@@ -151,14 +151,15 @@ func buildQueryParams(filters map[string]interface{}) url.Values {
 			if strings.HasPrefix(key, "filter_") {
 				field := strings.TrimPrefix(key, "filter_")
 
-				// Special handling for status field - use uppercase string
-				// PRTG API v2 experimental endpoints use string status ("UP", "DOWN", "WARNING")
+				// Special handling for status field - use lowercase enumeration token
+				// PRTG API v2 filter syntax: "status=up" (lowercase, no quotes)
+				// Ref: https://www.paessler.com/support/prtg/api/v2/overview/index.html
 				if field == "status" {
 					if statusCode, ok := toInt(value); ok {
 						statusName := statusCodeToName(statusCode)
 						if statusName != "" {
-							// Use uppercase status string directly
-							filterValue := fmt.Sprintf("status=%s", strings.ToUpper(statusName))
+							// Use lowercase status token for filters (e.g., "up", "down", "warning")
+							filterValue := fmt.Sprintf("status=%s", strings.ToLower(statusName))
 							params.Add("filter", filterValue)
 						}
 					}
