@@ -36,6 +36,9 @@
   - **12 tools** for PostgreSQL database (sensors, alerts, hierarchy, groups, tags, business processes, statistics, SQL)
   - **3 tools** for PRTG API v2 (historical metrics, time series, channel values)
 - **PRTG API v2 Integration** - Query historical metrics and real-time channel data directly from PRTG
+- **ASCII Visualizations** - Automatic sparklines, trend indicators, and statistics in time series responses
+- **Contextual Suggestions** - Smart "next actions" recommendations based on sensor status
+- **Pedagogical Error Messages** - LLM-friendly error guidance with actionable suggestions
 - **Bearer Token Authentication** (RFC 6750)
 - **TLS/HTTPS Support** with automatic certificate generation
 - **Windows Service** - Installation and management via kardianos/service
