@@ -187,13 +187,13 @@ type SensorSetting struct {
 
 // Device represents a PRTG device from API v2.
 type Device struct {
-	ID       string          `json:"id"`
-	Name     string          `json:"name"`
-	Host     string          `json:"host,omitempty"`
-	Status   SensorStatus    `json:"status"`
-	Parent   *ObjectParent   `json:"parent,omitempty"`
-	Position int             `json:"position,omitempty"`
-	Summary  *StatusSummary  `json:"sensor_status_summary,omitempty"`
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Host     string         `json:"host,omitempty"`
+	Status   SensorStatus   `json:"status"`
+	Parent   *ObjectParent  `json:"parent,omitempty"`
+	Position int            `json:"position,omitempty"`
+	Summary  *StatusSummary `json:"sensor_status_summary,omitempty"`
 }
 
 // Group represents a PRTG group from API v2.
@@ -213,15 +213,15 @@ type ObjectParent struct {
 
 // StatusSummary represents a summary of sensor statuses.
 type StatusSummary struct {
-	Up                int `json:"up,omitempty"`
-	Down              int `json:"down,omitempty"`
-	Warning           int `json:"warning,omitempty"`
-	Paused            int `json:"paused,omitempty"`
-	Unusual           int `json:"unusual,omitempty"`
-	Unknown           int `json:"unknown,omitempty"`
-	DownAcknowledged  int `json:"down_acknowledged,omitempty"`
-	DownPartial       int `json:"down_partial,omitempty"`
-	Total             int `json:"total,omitempty"`
+	Up               int `json:"up,omitempty"`
+	Down             int `json:"down,omitempty"`
+	Warning          int `json:"warning,omitempty"`
+	Paused           int `json:"paused,omitempty"`
+	Unusual          int `json:"unusual,omitempty"`
+	Unknown          int `json:"unknown,omitempty"`
+	DownAcknowledged int `json:"down_acknowledged,omitempty"`
+	DownPartial      int `json:"down_partial,omitempty"`
+	Total            int `json:"total,omitempty"`
 }
 
 // PRTGObject represents a generic PRTG object (sensor, device, group, probe).

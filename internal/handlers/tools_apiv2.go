@@ -16,7 +16,7 @@ import (
 // APIv2ToolHandler handles all MCP tools that use PRTG API v2.
 // These tools work without database and can be used in stdio mode.
 type APIv2ToolHandler struct {
-	prtgClient PRTGClient
+	prtgClient  PRTGClient
 	mainHandler *ToolHandler
 }
 
@@ -262,7 +262,10 @@ func (h *APIv2ToolHandler) toolGetAlerts() mcptool.Tool {
 func (h *APIv2ToolHandler) handleGetAlerts(ctx context.Context, request mcptool.CallToolRequest) (*mcptool.CallToolResult, error) {
 	h.mainHandler.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_alerts")
 
-	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		args = make(map[string]interface{})
+	}
 	filters := make(map[string]interface{})
 
 	// Filter for non-Up status
@@ -424,7 +427,10 @@ func (h *APIv2ToolHandler) toolGetHierarchy() mcptool.Tool {
 func (h *APIv2ToolHandler) handleGetHierarchy(ctx context.Context, request mcptool.CallToolRequest) (*mcptool.CallToolResult, error) {
 	h.mainHandler.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_hierarchy")
 
-	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		args = make(map[string]interface{})
+	}
 	filters := make(map[string]interface{})
 
 	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
@@ -549,7 +555,10 @@ func (h *APIv2ToolHandler) toolGetGroups() mcptool.Tool {
 func (h *APIv2ToolHandler) handleGetGroups(ctx context.Context, request mcptool.CallToolRequest) (*mcptool.CallToolResult, error) {
 	h.mainHandler.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_groups")
 
-	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		args = make(map[string]interface{})
+	}
 	filters := make(map[string]interface{})
 
 	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
@@ -611,7 +620,10 @@ func (h *APIv2ToolHandler) toolGetTags() mcptool.Tool {
 func (h *APIv2ToolHandler) handleGetTags(ctx context.Context, request mcptool.CallToolRequest) (*mcptool.CallToolResult, error) {
 	h.mainHandler.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_tags")
 
-	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		args = make(map[string]interface{})
+	}
 	filters := make(map[string]interface{})
 	filters["limit"] = 1000
 
@@ -684,7 +696,10 @@ func (h *APIv2ToolHandler) toolGetBusinessProcesses() mcptool.Tool {
 func (h *APIv2ToolHandler) handleGetBusinessProcesses(ctx context.Context, request mcptool.CallToolRequest) (*mcptool.CallToolResult, error) {
 	h.mainHandler.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_get_business_processes")
 
-	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		args = make(map[string]interface{})
+	}
 	filters := make(map[string]interface{})
 
 	// Filter for business process sensor kind
@@ -761,7 +776,10 @@ func (h *APIv2ToolHandler) toolTopSensors() mcptool.Tool {
 func (h *APIv2ToolHandler) handleTopSensors(ctx context.Context, request mcptool.CallToolRequest) (*mcptool.CallToolResult, error) {
 	h.mainHandler.logger.Info().Interface("arguments", request.Params.Arguments).Msg("handling prtg_top_sensors")
 
-	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		args = make(map[string]interface{})
+	}
 	filters := make(map[string]interface{})
 
 	limit := 10
