@@ -14,9 +14,19 @@ import (
 
 // PRTGClient interface for PRTG API operations.
 type PRTGClient interface {
+	// Metrics operations
 	GetTimeSeries(ctx context.Context, objectID int, timeType prtg.TimeSeriesType) (*prtg.TimeSeriesData, error)
 	GetTimeSeriesCustom(ctx context.Context, objectID int, start, end time.Time) (*prtg.TimeSeriesData, error)
 	GetChannelsBySensor(ctx context.Context, sensorID int) ([]prtg.Channel, error)
+
+	// API v2 operations
+	GetSensors(ctx context.Context, filters map[string]interface{}) ([]prtg.Sensor, error)
+	GetSensorByID(ctx context.Context, sensorID int) (*prtg.Sensor, error)
+	GetDeviceByID(ctx context.Context, deviceID int, includes ...string) (*prtg.Device, error)
+	GetGroups(ctx context.Context, filters map[string]interface{}) ([]prtg.Group, error)
+	GetObjects(ctx context.Context, filters map[string]interface{}) ([]prtg.PRTGObject, error)
+	GetObjectCounts(ctx context.Context) (*prtg.SensorCount, error)
+	GetStatusSummary(ctx context.Context) (*prtg.StatusSummary, error)
 }
 
 // MetricsToolHandler handles MCP tool requests for PRTG metrics/historical data.
