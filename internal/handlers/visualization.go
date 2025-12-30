@@ -73,7 +73,17 @@ func TrendIndicator(values []float64) string {
 	firstAvg := firstHalf / float64(mid)
 	secondAvg := secondHalf / float64(len(values)-mid)
 
-	diff := (secondAvg - firstAvg) / firstAvg * 100
+	// Handle division by zero when firstAvg is 0
+	diff := 0.0
+	if firstAvg != 0 {
+		diff = (secondAvg - firstAvg) / firstAvg * 100
+	} else if secondAvg > 0 {
+		return "UP"
+	} else if secondAvg < 0 {
+		return "DOWN"
+	} else {
+		return "FLAT"
+	}
 
 	if diff > 10 {
 		return "UP"
