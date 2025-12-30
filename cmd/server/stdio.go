@@ -96,13 +96,13 @@ func runStdioMode() error {
 
 	// Initialize PRTG API v2 tools
 	if config.PRTGEnabled {
-		// Register metrics tools (timeseries, history, channels)
+		// Register metrics tools (timeseries, channels)
 		metricsHandler := handlers.NewMetricsToolHandler(prtgClient, toolHandler)
 		metricsHandler.RegisterMetricsTools(mcpServer)
-		toolsCount += 3
+		toolsCount += 2
 
 		logger.Info().
-			Int("tools_count", 3).
+			Int("tools_count", 2).
 			Msg("PRTG API v2 metrics tools registered")
 
 		// Register database-replacement API v2 tools

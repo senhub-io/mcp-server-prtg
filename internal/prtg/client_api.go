@@ -149,10 +149,32 @@ func buildQueryParams(filters map[string]interface{}) url.Values {
 		default:
 			// Handle filter parameters
 			if strings.HasPrefix(key, "filter_") {
-				// filter_status=3 -> filter=status=3
 				field := strings.TrimPrefix(key, "filter_")
-				filterValue := fmt.Sprintf("%s=%v", field, value)
-				params.Add("filter", filterValue)
+
+				// Special handling for status field - use uppercase string
+				// PRTG API v2 experimental endpoints use string status ("UP", "DOWN", "WARNING")
+				if field == "status" {
+					if statusCode, ok := toInt(value); ok {
+						statusName := statusCodeToName(statusCode)
+						if statusName != "" {
+							// Use uppercase status string directly
+							filterValue := fmt.Sprintf("status=%s", strings.ToUpper(statusName))
+							params.Add("filter", filterValue)
+						}
+					}
+				} else if field == "type" {
+					// Special handling for type field - PRTG uses "kind" field with prefix
+					// User passes "http" but PRTG stores "osk.http" in kind field
+					// Use contains to match the suffix
+					if v, ok := value.(string); ok && v != "" {
+						filterValue := fmt.Sprintf("kind contains \"%s\"", v)
+						params.Add("filter", filterValue)
+					}
+				} else {
+					// filter_field=value -> filter=field=value
+					filterValue := fmt.Sprintf("%s=%v", field, value)
+					params.Add("filter", filterValue)
+				}
 			} else if key == "filter" {
 				// Direct filter expression
 				if v, ok := value.(string); ok && v != "" {
@@ -180,4 +202,41 @@ func toInt(value interface{}) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// statusCodeToName converts PRTG status codes to enumerated names.
+// Based on PRTG API v2 documentation.
+func statusCodeToName(code int) string {
+	switch code {
+	case 1:
+		return "Unknown"
+	case 2:
+		return "Collecting"
+	case 3:
+		return "Up"
+	case 4:
+		return "Warning"
+	case 5:
+		return "Down"
+	case 6:
+		return "NoProbe"
+	case 7:
+		return "PausedByUser"
+	case 8:
+		return "PausedByDependency"
+	case 9:
+		return "PausedBySchedule"
+	case 10:
+		return "Unusual"
+	case 11:
+		return "PausedByLicense"
+	case 12:
+		return "PausedUntil"
+	case 13:
+		return "DownAcknowledged"
+	case 14:
+		return "DownPartial"
+	default:
+		return ""
+	}
 }

@@ -104,7 +104,7 @@ func (h *APIv2ToolHandler) handleGetSensors(ctx context.Context, request mcptool
 	filters := make(map[string]interface{})
 
 	if sensorName, ok := args["sensor_name"].(string); ok && sensorName != "" {
-		filters["filter"] = fmt.Sprintf("name~%s", sensorName)
+		filters["filter"] = fmt.Sprintf("name contains \"%s\"", sensorName)
 	}
 
 	if status, ok := args["status"].(float64); ok {
@@ -116,7 +116,7 @@ func (h *APIv2ToolHandler) handleGetSensors(ctx context.Context, request mcptool
 	}
 
 	if tags, ok := args["tags"].(string); ok && tags != "" {
-		filters["filter"] = fmt.Sprintf("tags~%s", tags)
+		filters["filter"] = fmt.Sprintf("tags contains \"%s\"", tags)
 	}
 
 	if limit, ok := args["limit"].(float64); ok {
@@ -231,16 +231,18 @@ func (h *APIv2ToolHandler) handleGetAlerts(ctx context.Context, request mcptool.
 	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
 	filters := make(map[string]interface{})
 
-	// Filter for non-Up status (status != 3)
+	// Filter for non-Up status
 	if status, ok := args["status"].(float64); ok {
+		// Use filter_status which will be converted to status=WARNING format by buildQueryParams
 		filters["filter_status"] = int(status)
 	} else {
-		// Default: get Warning (4) or Down (5) sensors
-		filters["filter"] = "status>=4"
+		// Default: get all non-Up sensors (Warning, Down, Unknown, Unusual, etc.)
+		// PRTG API v2 filter syntax: status != up
+		filters["filter"] = "status != UP"
 	}
 
 	if deviceName, ok := args["device_name"].(string); ok && deviceName != "" {
-		filters["filter"] = fmt.Sprintf("parent.name~%s", deviceName)
+		filters["filter"] = fmt.Sprintf("parent.name contains \"%s\"", deviceName)
 	}
 
 	filters["limit"] = 100
@@ -299,7 +301,7 @@ func (h *APIv2ToolHandler) handleDeviceOverview(ctx context.Context, request mcp
 
 	// Search for devices by name
 	filters := map[string]interface{}{
-		"filter": fmt.Sprintf("name~%s", deviceName),
+		"filter": fmt.Sprintf("name contains \"%s\"", deviceName),
 		"limit":  10,
 	}
 
@@ -392,7 +394,7 @@ func (h *APIv2ToolHandler) handleGetHierarchy(ctx context.Context, request mcpto
 	filters := make(map[string]interface{})
 
 	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
-		filters["filter"] = fmt.Sprintf("name~%s", groupName)
+		filters["filter"] = fmt.Sprintf("name contains \"%s\"", groupName)
 	}
 
 	filters["limit"] = 100
@@ -460,7 +462,7 @@ func (h *APIv2ToolHandler) handleSearch(ctx context.Context, request mcptool.Cal
 	}
 
 	filters := map[string]interface{}{
-		"filter": fmt.Sprintf("name~%s", searchTerm),
+		"filter": fmt.Sprintf("name contains \"%s\"", searchTerm),
 		"limit":  limit,
 	}
 
@@ -517,7 +519,7 @@ func (h *APIv2ToolHandler) handleGetGroups(ctx context.Context, request mcptool.
 	filters := make(map[string]interface{})
 
 	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
-		filters["filter"] = fmt.Sprintf("name~%s", groupName)
+		filters["filter"] = fmt.Sprintf("name contains \"%s\"", groupName)
 	}
 
 	if parentID, ok := args["parent_id"].(float64); ok {
@@ -651,11 +653,12 @@ func (h *APIv2ToolHandler) handleGetBusinessProcesses(ctx context.Context, reque
 	args, ok := request.Params.Arguments.(map[string]interface{}); if !ok { args = make(map[string]interface{}) }
 	filters := make(map[string]interface{})
 
-	// Filter for business process sensor type
-	filters["filter_type"] = "businessprocess"
+	// Filter for business process sensor kind
+	// Note: Business Process sensors use kind "businessprocess", not type
+	filters["filter"] = "kind contains \"businessprocess\""
 
 	if processName, ok := args["process_name"].(string); ok && processName != "" {
-		filters["filter"] = fmt.Sprintf("name~%s", processName)
+		filters["filter"] = fmt.Sprintf("name contains \"%s\"", processName)
 	}
 
 	if status, ok := args["status"].(float64); ok {

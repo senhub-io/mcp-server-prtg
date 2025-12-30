@@ -1,6 +1,10 @@
 package prtg
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // TimeSeriesType represents the predefined time periods for PRTG time series data.
 type TimeSeriesType string
@@ -109,6 +113,70 @@ type SensorStatus struct {
 	Code  int    `json:"code"`  // 1=Unknown, 2=Collecting, 3=Up, 4=Warning, 5=Down, etc.
 	Name  string `json:"name"`  // "Up", "Down", "Warning", etc.
 	Since string `json:"since"` // ISO 8601 timestamp
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for SensorStatus.
+// The API v2 returns status in two different formats:
+// - String: "UP", "DOWN", "WARNING" (from /api/v2/experimental/sensors)
+// - Object: {"code": 3, "name": "Up", "since": "2025-12-30T..."} (from /api/v2/sensors/{id})
+func (s *SensorStatus) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first
+	var statusString string
+	if err := json.Unmarshal(data, &statusString); err == nil {
+		// It's a string - convert to structured format
+		s.Name = statusString
+		s.Code = statusNameToCode(statusString)
+		s.Since = ""
+		return nil
+	}
+
+	// Try to unmarshal as object
+	type Alias SensorStatus // Prevent infinite recursion
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+	return json.Unmarshal(data, &aux)
+}
+
+// statusNameToCode converts status name to code.
+func statusNameToCode(name string) int {
+	// Normalize to uppercase for comparison
+	switch strings.ToUpper(name) {
+	case "UNKNOWN":
+		return 1
+	case "COLLECTING":
+		return 2
+	case "UP":
+		return 3
+	case "WARNING":
+		return 4
+	case "DOWN":
+		return 5
+	case "NOPROBE":
+		return 6
+	case "PAUSEDBYUSER":
+		return 7
+	case "PAUSEDBYDEPENDENCY":
+		return 8
+	case "PAUSEDBYSCHEDULE":
+		return 9
+	case "UNUSUAL":
+		return 10
+	case "PAUSEDBYLICENSE":
+		return 11
+	case "PAUSEDUNTIL":
+		return 12
+	case "DOWNACKNOWLEDGED":
+		return 13
+	case "DOWNPARTIAL":
+		return 14
+	case "CONNECTED": // For probes
+		return 3 // Treat as "Up"
+	default:
+		return 1 // Unknown
+	}
 }
 
 // SensorSetting contains sensor settings.
