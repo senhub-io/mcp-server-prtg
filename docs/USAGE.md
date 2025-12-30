@@ -677,6 +677,153 @@ $device = Invoke-PRTGTool -ToolName "prtg_device_overview" -Arguments @{ device_
 $device | ConvertTo-Json -Depth 10
 ```
 
+## LLM-Optimized Features
+
+### ASCII Visualizations
+
+MCP Server PRTG automatically includes visual representations in time series responses to help LLMs and users quickly understand trends and patterns.
+
+#### Sparklines
+
+Compact ASCII charts showing value progression:
+
+```
+**Sparkline (Response Time):** ▁▂▃▅▇▅▃▂▁ UP
+```
+
+- Uses Unicode block characters: `▁▂▃▄▅▆▇█`
+- Shows the shape of the trend at a glance
+- Trend indicator: `UP` (rising), `DOWN` (falling), `FLAT` (stable)
+
+#### Compact Statistics
+
+Quick statistical summary for context:
+
+```
+**Stats:** Min: 12.3 | Max: 45.6 | Avg: 28.9 | Current: 32.1
+```
+
+Helps understand if current values are within normal range.
+
+#### Anomaly Detection
+
+Automatic detection of outliers:
+
+```
+WARNING: **2 anomaly/anomalies detected**
+- Index 42: 98.5 (expected: ~30.2)
+- Index 67: 5.1 (expected: ~29.8)
+```
+
+- Uses 2 standard deviations threshold
+- Highlights unusual spikes or drops
+- Helps identify data quality issues or real events
+
+**Example Time Series Response:**
+
+When you query historical data with `prtg_get_sensor_timeseries` or `prtg_get_sensor_history_custom`, you'll see:
+
+```
+# Time Series Data - Sensor 12345 (short)
+
+Total data points: 145
+Channels: Response Time, Traffic In, Traffic Out
+
+## Quick Trend
+
+**Sparkline (Response Time):** ▁▂▃▅▇▅▃▂▁ UP
+**Stats:** Min: 42.1 | Max: 48.6 | Avg: 44.5 | Current: 45.2
+
+WARNING: **1 anomaly/anomalies detected**
+- Index 87: 78.3 (expected: ~44.5)
+
+## Measurements
+[data table follows...]
+```
+
+**Benefits:**
+- LLMs can "see" trends without analyzing raw numbers
+- Reduced token usage compared to describing numerical patterns
+- Automatic anomaly detection highlights issues
+- Quick assessment of metric direction and health
+
+### Contextual Suggestions
+
+MCP Server PRTG provides intelligent "next actions" recommendations based on the current query results. This helps LLMs navigate efficiently without human guidance.
+
+#### How It Works
+
+After each query, the response includes a "Next suggested actions" section with context-aware MCP commands:
+
+**Example 1: Alert Response with Critical Sensors**
+
+```
+---
+
+**Next suggested actions:**
+- Investigate critical sensor: `prtg_get_sensor_status sensor_id=12345`
+- View historical data: `prtg_get_sensor_timeseries sensor_id=12345 time_type=short`
+- Check current values: `prtg_get_channel_current_values sensor_id=12345`
+```
+
+**Example 2: Sensor List with Warnings**
+
+```
+---
+
+**Next suggested actions:**
+- View critical alerts: `prtg_get_alerts status=5`
+- Check top problematic sensors: `prtg_top_sensors metric=downtime hours=24`
+- Inspect specific sensor: `prtg_get_sensor_status sensor_id=67890`
+```
+
+**Example 3: Device Overview**
+
+```
+---
+
+**Next suggested actions:**
+- View down sensors on this device: `prtg_get_alerts device_name="web-prod-01" status=5`
+- Inspect a sensor in detail: `prtg_get_sensor_status sensor_id=54321`
+- View sensor trends: `prtg_get_sensor_timeseries sensor_id=54321 time_type=short`
+- Explore other devices in group: `prtg_get_sensors group_name="Production"`
+```
+
+**Example 4: Search Results**
+
+```
+---
+
+**Next suggested actions:**
+- Inspect first sensor: `prtg_get_sensor_status sensor_id=11111`
+- View sensor history: `prtg_get_sensor_timeseries sensor_id=11111 time_type=short`
+- Explore device sensors: `prtg_device_overview device_name="api-server-01"`
+- View group hierarchy: `prtg_get_hierarchy group_name="Production"`
+```
+
+#### Suggestion Logic
+
+The system analyzes the response data to provide relevant suggestions:
+
+**Alert-Based:**
+- Down sensors → Investigate critical sensors, check historical trends
+- Warning sensors → Review trends and patterns
+- All healthy → Monitor statistics and overall health
+
+**Context-Based:**
+- Large result sets → Suggest narrowing filters
+- Search results → Suggest exploring first matches in detail
+- Device overview → Recommend inspecting specific sensors
+- Hierarchy → Suggest drilling down into groups/devices
+
+#### Benefits for LLM Automation
+
+1. **Autonomous Navigation**: LLMs can follow suggestions without asking users
+2. **Workflow Discovery**: Learn available tools through contextual recommendations
+3. **Efficiency**: Reduces back-and-forth with logical next steps
+4. **Priority Guidance**: Highlights most critical items first
+5. **Tool Integration**: Suggests using complementary tools together
+
 ## Error Handling
 
 ### Pedagogical Error Messages

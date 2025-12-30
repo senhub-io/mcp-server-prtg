@@ -137,6 +137,147 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 
 ## Components
 
+### Visualization System
+
+**File**: `internal/handlers/visualization.go`
+
+The visualization system provides ASCII-based visual representations of time series data to help LLMs and users quickly understand trends and patterns.
+
+#### Visualization Functions
+
+**Sparkline (Compact Time Series)**
+
+Generates compact ASCII sparklines for visualizing trends:
+
+```go
+func Sparkline(values []float64, maxWidth int) string
+```
+
+- Uses Unicode block characters: `▁▂▃▄▅▆▇█`
+- Automatically scales values to fit the range
+- Samples data if needed to fit within maxWidth
+- Example output: `▁▂▃▅▇▅▃▂▁` (shows value progression)
+
+**TrendIndicator (Direction Analysis)**
+
+Analyzes trend direction by comparing first and second half averages:
+
+```go
+func TrendIndicator(values []float64) string
+```
+
+- Returns: `UP` (rising >10%), `DOWN` (falling >10%), or `FLAT` (stable)
+- Helps LLMs quickly identify if metrics are improving or degrading
+- Example output: `UP ↗` or `DOWN ↘` or `FLAT →`
+
+**CompactStats (Statistical Summary)**
+
+Generates compact statistical summaries:
+
+```go
+func CompactStats(values []float64) string
+```
+
+- Returns: Min, Max, Average, and Current value
+- Example: `Min: 12.3 | Max: 45.6 | Avg: 28.9 | Current: 32.1`
+- Provides context for understanding if current values are normal
+
+**DetectAnomalies (Outlier Detection)**
+
+Detects anomalous values using 2 standard deviations threshold:
+
+```go
+func DetectAnomalies(values []float64) []Anomaly
+```
+
+- Identifies outliers that deviate significantly from the mean
+- Returns index, actual value, and expected value
+- Helps LLMs identify data quality issues or unusual events
+- Requires at least 10 data points for statistical significance
+
+**HealthBar (Visual Progress)**
+
+Creates visual health/progress bars:
+
+```go
+func HealthBar(percentage float64, width int) string
+```
+
+- Example: `[████████░░] 80%`
+- Uses filled blocks `█` and empty blocks `░`
+- Useful for uptime percentages and capacity metrics
+
+#### Integration in Time Series Responses
+
+Time series tools (`prtg_get_sensor_timeseries`, `prtg_get_sensor_history_custom`) automatically include visualizations:
+
+```
+## Quick Trend
+
+**Sparkline (Response Time):** ▁▂▃▅▇▅▃▂▁ UP ↗
+**Stats:** Min: 12.3 | Max: 45.6 | Avg: 28.9 | Current: 32.1
+
+WARNING: **2 anomaly/anomalies detected**
+- Index 42: 98.5 (expected: ~30.2)
+- Index 67: 5.1 (expected: ~29.8)
+```
+
+#### Benefits for LLM Efficiency
+
+1. **Visual Pattern Recognition**: LLMs can "see" trends in sparklines without analyzing raw numbers
+2. **Quick Assessment**: Trend indicators provide instant direction context
+3. **Anomaly Awareness**: Automatic detection highlights data quality issues
+4. **Reduced Token Usage**: Visual summaries convey information more efficiently than large tables
+5. **Enhanced Context**: Statistics provide baseline for understanding current values
+
+### Contextual Suggestions System
+
+**File**: `internal/handlers/formatting.go`
+
+The contextual suggestion system provides intelligent "next actions" recommendations based on the current state of sensors, alerts, and queries. This helps LLMs navigate the API efficiently without human intervention.
+
+#### Integration Points
+
+Contextual suggestions are automatically added to these tool responses:
+
+1. **formatAlertsResponse** - Suggests investigating critical sensors
+2. **formatSensorsResponse** - Recommends next filtering or inspection steps
+3. **formatDeviceOverviewResponse** - Suggests device-specific actions
+4. **formatSearchResponse** - Guides users to explore search results
+
+#### Suggestion Logic
+
+**Alert-Based Suggestions:**
+
+```go
+// When critical sensors are down
+if hasDownSensors && mostCriticalID > 0 {
+    sb.WriteString(fmt.Sprintf("- Investigate critical sensor: `prtg_get_sensor_status sensor_id=%d`\n", mostCriticalID))
+    sb.WriteString(fmt.Sprintf("- View historical data: `prtg_get_sensor_timeseries sensor_id=%d time_type=short`\n", mostCriticalID))
+    sb.WriteString(fmt.Sprintf("- Check current values: `prtg_get_channel_current_values sensor_id=%d`\n", mostCriticalID))
+}
+```
+
+**Status-Based Suggestions:**
+
+- **Down sensors detected**: Suggest viewing alerts and checking top problematic sensors
+- **Warning sensors only**: Recommend reviewing trends and analyzing patterns
+- **All systems operational**: Suggest statistical overview and monitoring
+
+**Context-Aware Examples:**
+
+- Search results → Suggest exploring first results in detail
+- Device overview → Recommend inspecting specific sensors and viewing trends
+- Large result sets → Suggest narrowing filters for better results
+
+#### Benefits for LLM Automation
+
+1. **Autonomous Navigation**: LLMs can follow suggestions without asking user for next steps
+2. **Workflow Discovery**: New users learn available tools through contextual recommendations
+3. **Efficiency**: Reduces back-and-forth by suggesting logical next actions
+4. **Priority Guidance**: Highlights most critical items to investigate first
+5. **Tool Integration**: Suggests using multiple complementary tools for comprehensive analysis
+
 ### Error Handling System
 
 **File**: `internal/handlers/errors.go`
