@@ -90,11 +90,8 @@ func runStdioMode() error {
 	// Initialize tool handler (no database in stdio mode, API v2 only)
 	toolHandler := handlers.NewToolHandler(nil, nil, &logger)
 
-	// Register database-free tools (if any)
-	// For now, only metrics tools work in stdio mode
-	// TODO: Migrate all tools to API v2 to work without database
-	toolHandler.RegisterTools(mcpServer)
-
+	// DO NOT register database tools in stdio mode - they will crash with nil DB
+	// Only metrics tools (API v2) are registered below
 	toolsCount := 0 // Will be updated as we register tools
 
 	// Initialize metrics tools (PRTG API v2)
