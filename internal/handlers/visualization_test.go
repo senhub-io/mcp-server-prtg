@@ -64,6 +64,9 @@ func TestTrendIndicator(t *testing.T) {
 		{"slight_rise", []float64{10, 10, 11, 11}, "FLAT"},
 		{"steep_rise", []float64{10, 10, 25, 30}, "UP"},
 		{"steep_fall", []float64{30, 25, 10, 10}, "DOWN"},
+		{"zero_to_positive", []float64{0, 0, 5, 5}, "UP"},
+		{"zero_to_negative", []float64{0, 0, -5, -5}, "DOWN"},
+		{"all_zeros", []float64{0, 0, 0, 0}, "FLAT"},
 	}
 
 	for _, tt := range tests {

@@ -34,6 +34,28 @@ MCP Server PRTG exposes 15 tools through the Model Context Protocol:
 
 All tools return JSON responses with consistent visual formatting including markdown tables and complete JSON data.
 
+### LLM-Optimized Features
+
+**ASCII Visualizations (Time Series Tools)**
+
+Time series responses automatically include:
+- **Sparklines**: Compact ASCII charts showing trends (`▁▂▃▅▇▅▃▂▁`)
+- **Trend Indicators**: Direction analysis (UP, DOWN, FLAT)
+- **Compact Statistics**: Min, Max, Average, Current values
+- **Anomaly Detection**: Automatic outlier detection (>2 standard deviations)
+
+These visualizations help LLMs and users quickly understand patterns without analyzing raw numbers.
+
+**Contextual Suggestions**
+
+Many tools include "Next suggested actions" sections with context-aware MCP commands:
+- **formatAlertsResponse**: Suggests investigating critical sensors
+- **formatSensorsResponse**: Recommends filtering and inspection steps
+- **formatDeviceOverviewResponse**: Suggests device-specific actions
+- **formatSearchResponse**: Guides exploration of search results
+
+This enables LLMs to autonomously navigate the API and discover related tools without human intervention.
+
 ### Pedagogical Error Handling
 
 MCP Server PRTG implements LLM-friendly error messages that guide users toward resolution. When errors occur, tools return structured guidance instead of technical error messages:
@@ -1272,13 +1294,21 @@ Returns time-stamped measurements showing how channel values evolved over predef
 
 #### Response Format
 
-Returns a markdown table with time-stamped measurements:
+Returns a visual summary with sparklines, trends, and statistics, followed by a data table:
 
 ```
 # Time Series Data - Sensor 12345 (short)
 
 Total data points: 145
 Channels: Response Time, Traffic In, Traffic Out
+
+## Quick Trend
+
+**Sparkline (Response Time):** ▁▂▃▅▇▅▃▂▁ UP
+**Stats:** Min: 42.1 | Max: 48.6 | Avg: 44.5 | Current: 45.2
+
+WARNING: **1 anomaly/anomalies detected**
+- Index 87: 78.3 (expected: ~44.5)
 
 ## Measurements
 
@@ -1292,7 +1322,17 @@ Channels: Response Time, Traffic In, Traffic Out
 | 2025-10-25 10:35:00 | 44.67 | 1267890.12 | 978901.23 |
 ```
 
-**Note:** If more than 15 data points exist, the table shows the first 10 and last 5 points with "..." indicating truncation.
+**Visualization Elements:**
+
+- **Sparkline**: ASCII visualization using `▁▂▃▄▅▆▇█` characters showing value progression
+- **Trend Indicator**: `UP` (rising), `DOWN` (falling), or `FLAT` (stable) based on comparing first and second half averages
+- **Compact Stats**: Min, Max, Average, and Current value for quick reference
+- **Anomaly Detection**: Automatic detection of outliers (values >2 standard deviations from mean)
+
+**Note:**
+- If more than 15 data points exist, the table shows the first 10 and last 5 points with "..." indicating truncation
+- Visualizations are automatically generated for the first numeric channel in the response
+- Anomaly detection requires at least 10 data points
 
 #### Notes
 
@@ -1375,7 +1415,7 @@ Use RFC3339 format for timestamps:
 
 #### Response Format
 
-Returns a markdown table with time-stamped measurements:
+Returns a visual summary with sparklines, trends, and statistics, followed by a data table:
 
 ```
 # Time Series Data - Sensor 12345
@@ -1383,6 +1423,15 @@ Period: 2025-10-29 14:00:00 to 2025-10-29 16:00:00
 
 Total data points: 48
 Channels: CPU Load, Memory Usage, Disk I/O
+
+## Quick Trend
+
+**Sparkline (CPU Load):** ▁▂▃▄▅▇██▇▅▃▂ DOWN
+**Stats:** Min: 43.2 | Max: 68.9 | Avg: 52.4 | Current: 43.2
+
+WARNING: **2 anomaly/anomalies detected**
+- Index 12: 68.9 (expected: ~52.4)
+- Index 24: 35.1 (expected: ~52.4)
 
 ## Measurements
 
@@ -1394,6 +1443,13 @@ Channels: CPU Load, Memory Usage, Disk I/O
 | ... | ... | ... | ... |
 | 2025-10-29 15:55:00 | 43.21 | 77.65 | 1198.90 |
 ```
+
+**Visualization Elements:**
+
+- **Sparkline**: ASCII visualization showing value progression over the custom time range
+- **Trend Indicator**: Direction analysis comparing first and second half of the period
+- **Compact Stats**: Statistical summary for quick context
+- **Anomaly Detection**: Highlights unusual spikes or drops during the period
 
 #### Error Responses
 
