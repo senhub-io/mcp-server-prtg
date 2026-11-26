@@ -43,7 +43,7 @@ jobs:
           fi
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
 
@@ -102,7 +102,7 @@ jobs:
           dist/mcp-server-prtg_linux_amd64 --version || true
 
       - name: Create Production Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: Release ${{ env.TAG }}
