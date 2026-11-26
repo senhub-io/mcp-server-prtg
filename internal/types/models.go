@@ -84,7 +84,7 @@ type SearchResults struct {
 // Tag represents a PRTG tag with usage statistics.
 type Tag struct {
 	ID          int    `json:"id"`
-	ServerID    int    `json:"server_id"`
+	ServerID    int    `json:"server_id,omitempty"`
 	Name        string `json:"name"`
 	SensorCount int    `json:"sensor_count"`
 }
@@ -119,6 +119,8 @@ type Statistics struct {
 	TopSensorTypes      []SensorTypeCount `json:"top_sensor_types"`
 	AvgSensorsPerDevice float64           `json:"avg_sensors_per_device"`
 	TotalProbes         int               `json:"total_probes"`
+	LastCollectionUTC   *time.Time        `json:"last_collection_utc,omitempty"`
+	CollectionErrors    bool              `json:"collection_has_errors,omitempty"`
 }
 
 // SensorTypeCount represents a count of sensors by type.
