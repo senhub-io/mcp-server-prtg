@@ -27,11 +27,19 @@ Complete installation guide for MCP Server PRTG on different platforms.
 
 ## Windows Installation
 
-### 1. Download Binary
+### Windows (MSI, recommended)
+
+The recommended way to install MCP Server PRTG on Windows is the MSI package published with each [GitHub release](https://github.com/senhub-io/mcp-server-prtg/releases). It installs the binary, registers the Windows service and supports in-place updates and rollbacks. See [DEPLOYMENT.md](DEPLOYMENT.md#windows-msi) for installation, configuration, updates and rollbacks.
+
+### Manual installation
+
+Manual installation with `mcp-server-prtg.exe install` remains possible, for example on hosts where the MSI cannot be used.
+
+#### 1. Download Binary
 
 Download `mcp-server-prtg_windows_amd64.exe` from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases).
 
-### 2. Create Installation Directory
+#### 2. Create Installation Directory
 
 ```powershell
 # Create application directory
@@ -42,7 +50,7 @@ cd "C:\Program Files\mcp-server-prtg"
 copy "C:\Users\<user>\Downloads\mcp-server-prtg_windows_amd64.exe" .\mcp-server-prtg.exe
 ```
 
-### 3. Install as Windows Service
+#### 3. Install as Windows Service
 
 ```powershell
 # Install service (automatically generates config.yaml)
@@ -51,9 +59,9 @@ copy "C:\Users\<user>\Downloads\mcp-server-prtg_windows_amd64.exe" .\mcp-server-
 # Service is now installed but not started
 ```
 
-### 4. Configure Service
+#### 4. Configure Service
 
-The `install` command automatically generates a `config.yaml` file with a **unique API key** (UUID). This API key is used by MCP clients (like Claude Desktop) to authenticate.
+The `install` command automatically generates a `config.yaml` file with a **unique API key** (UUID). This API key is used by MCP clients (like Claude Desktop) to authenticate with the `Authorization: Bearer <api_key>` header. The server refuses to start if `server.api_key` is empty or shorter than 16 characters.
 
 **📋 Check your API key:**
 ```powershell
@@ -64,7 +72,7 @@ type config.yaml
 **Minimal configuration (PostgreSQL only):**
 
 ```yaml
-version: 1
+config_version: 1
 server:
   api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
   bind_address: "0.0.0.0"
@@ -84,7 +92,7 @@ logging:
 **With PRTG API v2 (optional - for historical metrics):**
 
 ```yaml
-version: 1
+config_version: 1
 server:
   api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
   bind_address: "0.0.0.0"
@@ -109,7 +117,7 @@ logging:
 
 > **Note:** For PRTG API v2 token, go to PRTG → **Setup** → **Account Settings** → **API Keys & Tokens**. See [CONFIGURATION.md](CONFIGURATION.md#prtg-api-v2-configuration) for details.
 
-### 5. Configure Database Password
+#### 5. Configure Database Password
 
 ```powershell
 # Option 1: System environment variable
@@ -122,7 +130,7 @@ $env:PRTG_DB_PASSWORD = "your-password"
 # Edit config.yaml and set database.password
 ```
 
-### 6. Start Service
+#### 6. Start Service
 
 ```powershell
 # Start service
@@ -132,7 +140,7 @@ $env:PRTG_DB_PASSWORD = "your-password"
 .\mcp-server-prtg.exe status
 ```
 
-### 7. Verify Logs
+#### 7. Verify Logs
 
 ```powershell
 # Logs are in
@@ -142,7 +150,7 @@ type .\logs\mcp-server-prtg.log
 # logging.level: debug
 ```
 
-### Windows Service Management
+#### Windows Service Management
 
 ```powershell
 # Start
@@ -206,7 +214,7 @@ sudo nano /opt/mcp-server-prtg/config.yaml
 **Minimal configuration (PostgreSQL only):**
 
 ```yaml
-version: 1
+config_version: 1
 server:
   api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
   bind_address: "0.0.0.0"
@@ -226,7 +234,7 @@ logging:
 **With PRTG API v2 (optional):**
 
 ```yaml
-version: 1
+config_version: 1
 server:
   api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   bind_address: "0.0.0.0"

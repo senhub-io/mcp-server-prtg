@@ -124,7 +124,7 @@ Edit MCP Client configuration file:
 1. Quit MCP Client completely
 2. Restart MCP Client
 3. Open the MCP tools panel (hammer icon in the bottom-right corner)
-4. Verify that 15 PRTG tools are available
+4. Verify that the PRTG tools are available (14 tools when `prtg.enabled: true`, 12 otherwise)
 
 ### Verification
 
@@ -142,12 +142,11 @@ In MCP Client, you should see these tools:
 - prtg_get_tags
 - prtg_get_business_processes
 - prtg_get_statistics
-- prtg_query_sql
+- prtg_query_sql (returns an error unless `allow_custom_queries: true`)
 
-**PRTG API v2 Tools (3):**
+**PRTG API v2 Tools (2, when `prtg.enabled: true`):**
 - prtg_get_channel_current_values
 - prtg_get_sensor_timeseries
-- prtg_get_sensor_history_custom
 
 ## Example Queries with LLM
 
@@ -288,11 +287,13 @@ You can interact with MCP Server PRTG directly using HTTP requests (useful for a
 
 ### Authentication
 
-All requests require Bearer token authentication:
+Requests to `/mcp` and `/status` require Bearer token authentication:
 
 ```
 Authorization: Bearer your-api-key
 ```
+
+Only the `Authorization` header is accepted (no `?token=` query parameter). After 5 failed attempts within one minute from the same client address, the server answers HTTP 429 for 5 minutes. Behind a reverse proxy, all clients share the proxy address.
 
 ### Endpoints
 
@@ -309,8 +310,7 @@ curl https://localhost:8443/health
 Response:
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2025-10-26T10:30:00Z"
+  "status": "ok"
 }
 ```
 
@@ -324,21 +324,11 @@ curl -H "Authorization: Bearer your-api-key" \
 Response:
 ```json
 {
-  "status": "running",
   "version": "1.2.2",
-  "transport": "streamable_http",
-  "tls_enabled": true,
-  "base_url": "https://localhost:8443",
-  "mcp_tools": 15,
-  "database": {
-    "status": "connected",
-    "error": ""
-  },
-  "prtg_api": {
-    "status": "enabled",
-    "error": ""
-  },
-  "timestamp": "2025-10-26T10:30:00Z"
+  "transport": "streamable-http",
+  "protocol": "2025-03-26",
+  "uptime": "2h15m30s",
+  "database": "connected"
 }
 ```
 
@@ -721,7 +711,7 @@ WARNING: **2 anomaly/anomalies detected**
 
 **Example Time Series Response:**
 
-When you query historical data with `prtg_get_sensor_timeseries` or `prtg_get_sensor_history_custom`, you'll see:
+When you query historical data with `prtg_get_sensor_timeseries`, you'll see:
 
 ```
 # Time Series Data - Sensor 12345 (short)
@@ -898,29 +888,7 @@ The search_term parameter is required to perform a search.
 
 **What happens next:** LLM prompts user for what they want to search for, or infers from context.
 
-**Scenario 4: Invalid Time Range**
-
-When using incorrect time format:
-
-```
-User: "Show me sensor history from yesterday to today"
-```
-
-**Response:**
-```
-❌ **Invalid time range**
-
-end_time must be after start_time. Expected format: RFC3339 (e.g., 2025-01-15T14:00:00Z)
-
-💡 **How to resolve:**
-1. Example for last 24h: start_time=2025-01-14T00:00:00Z, end_time=2025-01-15T00:00:00Z
-2. Use time_type instead for standard periods: `prtg_get_sensor_timeseries sensor_id=X time_type=short`
-3. Available time_type: live (minutes), short (24h), medium (7d), long (30d)
-```
-
-**What happens next:** LLM converts relative dates to RFC3339 format or uses time_type parameter instead.
-
-**Scenario 5: Custom Queries Disabled**
+**Scenario 4: Custom Queries Disabled**
 
 When trying to use SQL queries without proper configuration:
 
@@ -1100,7 +1068,7 @@ All error categories follow the same pedagogical format: clear title, explanatio
 2. Add more specific filters (device_name, sensor_name)
 3. Check database performance and indexes
 4. Increase query timeout if needed
-5. Use prtg_query_sql with LIMIT clauses
+5. Use prtg_query_sql with LIMIT clauses (results are capped at 1000 rows and queries time out after 15 seconds)
 
 ## See Also
 

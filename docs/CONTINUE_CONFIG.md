@@ -172,22 +172,21 @@ Once connected, Continue.dev will have access to all MCP Server PRTG tools:
 
 **PostgreSQL-based tools (12):**
 - `prtg_get_sensors` - Query sensors with filters
-- `prtg_get_alerts` - Get active alerts
-- `prtg_get_devices` - List devices
+- `prtg_get_sensor_status` - Detailed sensor status
+- `prtg_get_alerts` - Sensors in alert state (not Up)
+- `prtg_device_overview` - Device summary with its sensors
+- `prtg_top_sensors` - Top sensors by uptime, downtime or alerts
+- `prtg_get_hierarchy` - Group, device and sensor tree
+- `prtg_search` - Search groups, devices and sensors
 - `prtg_get_groups` - List groups
-- `prtg_get_probes` - List probes
-- `prtg_get_channels` - Get sensor channels
 - `prtg_get_tags` - List tags
-- `prtg_get_sensor_history` - Historical data
-- `prtg_get_notifications` - Notification settings
 - `prtg_get_business_processes` - Business process status
 - `prtg_get_statistics` - System statistics
-- `prtg_custom_query` - Custom SQL queries (if enabled)
+- `prtg_query_sql` - Custom SQL queries (only if `allow_custom_queries: true`)
 
-**PRTG API v2 tools (3):**
-- `prtg_get_channel_current_values` - Real-time channel values
-- `prtg_get_sensor_timeseries` - Time series data
-- `prtg_get_sensor_history_custom` - Custom historical queries
+**PRTG API v2 tools (2, when `prtg.enabled: true`):**
+- `prtg_get_channel_current_values` - Current channel values
+- `prtg_get_sensor_timeseries` - Time series data for a predefined period (`live`, `short`, `medium`, `long`)
 
 ## Troubleshooting
 
@@ -252,7 +251,7 @@ Continue will use `prtg_get_alerts` and analyze results.
 Continue: Show sensor 12345 data from the last 24 hours
 ```
 
-Continue will use `prtg_get_sensor_history` or PRTG API v2 tools.
+Continue will use `prtg_get_sensor_timeseries` with `time_type=short`.
 
 ## Configuration Examples
 

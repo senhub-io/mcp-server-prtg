@@ -78,6 +78,13 @@ Automatically generated during installation as a UUID v4. This key must be provi
 Authorization: Bearer your-generated-api-key
 ```
 
+Only the `Authorization` header is accepted; the key cannot be passed as a URL query parameter.
+
+**Requirements and protections:**
+- The server refuses to start if `api_key` is empty or shorter than 16 characters (the generated key is a 36-character UUID).
+- The key is compared in constant time.
+- Failed authentication attempts are rate limited per client address (TCP peer address; IPv6 addresses are grouped by /64; `X-Forwarded-For` and `X-Real-IP` are ignored): after 5 failures within one minute, the address receives HTTP 429 for 5 minutes. Behind a reverse proxy, all clients share the proxy address and therefore the same limit.
+
 **Security Note:** Keep this key secure. File permissions are automatically set to `0600` (owner read/write only).
 
 ### bind_address
@@ -121,7 +128,7 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#certificate-verification-failed) for
 ### cert_file
 
 **Type:** `string`
-**Default:** `"./certs/server.crt"`
+**Default:** `certs/server.crt` in a `certs` folder next to the configuration file
 **Description:** Path to TLS certificate file (PEM format).
 
 Automatically generated on first run if `enable_tls` is true and no certificate exists.
@@ -129,7 +136,7 @@ Automatically generated on first run if `enable_tls` is true and no certificate 
 ### key_file
 
 **Type:** `string`
-**Default:** `"./certs/server.key"`
+**Default:** `certs/server.key` in a `certs` folder next to the configuration file
 **Description:** Path to TLS private key file (PEM format).
 
 Automatically generated on first run if `enable_tls` is true and no key exists.
@@ -162,9 +169,13 @@ Automatically generated on first run if `enable_tls` is true and no key exists.
 
 **Protections in place:**
 - Only SELECT queries allowed (INSERT, UPDATE, DELETE, DROP blocked)
-- Query result limit enforced (max 1000 rows)
-- Dangerous keywords blacklisted (`DROP`, `DELETE`, `UPDATE`, etc.)
-- Query timeout (30 seconds)
+- Queries run in a read-only transaction with a 15-second statement timeout
+- Results capped at 1 to 1000 rows (default 100), regardless of any `LIMIT` in the query
+- Multiple statements and SQL comments are rejected
+- References to PRTG Data Exporter configuration and credential tables (`prtg_server_address`, `target_database`, `grafana_*`, `licensing_*`, `setting`, `audit_trail`) are rejected
+- Functions `pg_*`, `dblink*`, `lo_*`, `current_setting` and `set_config` are rejected
+
+**Recommendation:** If you enable this tool, connect with a dedicated PostgreSQL role that only has `SELECT` on the `prtg_*` data tables (see [user](#user)).
 
 **Example:**
 ```yaml
@@ -218,6 +229,8 @@ GRANT USAGE ON SCHEMA public TO prtg_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO prtg_reader;
 ```
 
+If you enable `allow_custom_queries`, prefer a dedicated role with `SELECT` on the `prtg_*` data tables only, so that the PRTG Data Exporter configuration and credential tables stay out of reach.
+
 ### password
 
 **Type:** `string`
@@ -246,6 +259,8 @@ Options:
 
 PRTG API v2 integration enables querying historical metrics and real-time channel data directly from PRTG Core Server. This is **optional** - if not configured, only PostgreSQL-based tools will be available.
 
+**Request guard:** To protect the PRTG Core Server, all PRTG API v2 calls go through a request guard. Responses are cached (30 seconds for sensor lists and statuses, 60 seconds for channels and devices, 5 minutes for groups, objects and non-live time series), identical concurrent requests are coalesced into a single call, and at most 2 requests are in flight at a time by default.
+
 **Configuration block:**
 ```yaml
 prtg:
@@ -262,10 +277,9 @@ prtg:
 **Default:** `false`
 **Description:** Enable/disable PRTG API v2 integration.
 
-Set to `true` to enable the 3 PRTG API v2 tools:
+Set to `true` to enable the 2 PRTG API v2 tools:
 - `prtg_get_channel_current_values`
 - `prtg_get_sensor_timeseries`
-- `prtg_get_sensor_history_custom`
 
 ### base_url
 
@@ -440,10 +454,10 @@ export PRTG_DB_PASSWORD="secure_password"
 
 ### Automatic Self-Signed Certificates
 
-On first installation with `enable_tls: true`, the server automatically generates self-signed certificates:
+On first installation with `enable_tls: true`, the server automatically generates self-signed certificates. They are written to a `certs` folder next to the configuration file; with the default `./config.yaml` beside the binary, this is the `certs` folder beside the binary:
 
-- **Certificate:** `./certs/server.crt`
-- **Private Key:** `./certs/server.key`
+- **Certificate:** `certs/server.crt` (in a `certs` folder next to the configuration file)
+- **Private Key:** `certs/server.key` (in the same folder)
 - **Validity:** 1 year
 - **Subject:** CN=localhost, O=MCP Server PRTG
 - **SANs:** localhost, 127.0.0.1, ::1
@@ -536,13 +550,7 @@ These settings are optimized for typical workloads and cannot currently be confi
 
 ### Query Timeouts
 
-Database queries have a 30-second timeout to prevent long-running queries from blocking the server. This is hard-coded and cannot be changed.
-
-### Security Headers
-
-The server automatically sets security headers for HTTP responses:
-
-- `WWW-Authenticate: Bearer realm="MCP Server PRTG"` (on 401 responses)
+Database queries have a 30-second timeout to prevent long-running queries from blocking the server. This is hard-coded and cannot be changed. Custom queries run through `prtg_query_sql` have a stricter 15-second statement timeout.
 
 ### Streamable HTTP Transport Configuration
 
@@ -571,7 +579,7 @@ The server automatically sets secure file permissions:
 ```yaml
 config_version: 1
 server:
-  api_key: "dev-key-123"
+  api_key: "dev-key-0123456789abcdef"  # At least 16 characters
   bind_address: "127.0.0.1"
   port: 8443
   enable_tls: false
@@ -623,7 +631,7 @@ logging:
 ```yaml
 config_version: 1
 server:
-  api_key: "docker-api-key"
+  api_key: "f47ac10b-58cc-4372-a567-0e02b2c3d479"  # At least 16 characters
   bind_address: "0.0.0.0"
   port: 8443
   enable_tls: true

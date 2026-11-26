@@ -99,6 +99,8 @@ chmod 600 config.yaml
 
 Error: `failed to load certificate` or `no such file or directory`
 
+Generated certificates live in a `certs` folder next to the configuration file (with the default `./config.yaml`, next to the binary). Run the commands below from the configuration file's directory.
+
 Solution:
 ```bash
 # Check if certificate files exist
@@ -108,6 +110,12 @@ ls -la certs/
 rm -rf certs/
 ./mcp-server-prtg install
 ```
+
+**6. API Key Missing or Too Short**
+
+The server refuses to start if `server.api_key` is empty or shorter than 16 characters.
+
+Solution: set `server.api_key` in `config.yaml` to a value of at least 16 characters (for example a UUID, which is what the installer generates).
 
 ### Service Crashes or Stops Unexpectedly
 
@@ -551,7 +559,7 @@ The server sends heartbeats every 30 seconds to keep connections alive. If heart
 ### Unauthorized (401) Errors
 
 #### Symptom
-Error: `Unauthorized: Missing or invalid Bearer token`
+Error: HTTP 401 with the body `Unauthorized`
 
 #### Solutions
 
@@ -577,8 +585,8 @@ Authorization: Bearer your-api-key
 
 **NOT:**
 - `Authorization: your-api-key` (missing "Bearer")
-- `Authorization: bearer your-api-key` (lowercase "bearer")
 - `Authorization: Bearer: your-api-key` (extra colon)
+- `https://server:8443/mcp?token=your-api-key` (the `token` query parameter is no longer accepted; use the header)
 
 **3. API Key Changed**
 
@@ -587,19 +595,17 @@ If config was hot-reloaded with new API key:
 - Restart MCP Client
 - Reconnect clients
 
-### WWW-Authenticate Header Issues
+### Too Many Requests (429) Errors
 
 #### Symptom
-Repeated authentication prompts or errors.
+Requests are rejected with HTTP 429, even with the correct API key.
 
-#### Solution
+#### Cause
+Failed authentication attempts are rate limited per client address: after 5 failures within one minute, the address is blocked for 5 minutes. The address is the TCP peer address (IPv6 addresses are grouped by /64); `X-Forwarded-For` and `X-Real-IP` headers are ignored.
 
-This is normal behavior when authentication fails. The server sends:
-```
-WWW-Authenticate: Bearer realm="MCP Server PRTG"
-```
-
-Check logs for specific authentication failure reason.
+#### Solutions
+- Fix the API key in the client configuration, then wait 5 minutes before retrying
+- Behind a reverse proxy, all clients share the proxy address: one misconfigured client can block the others. Fix that client, or let clients connect directly to the server
 
 ## TLS/Certificate Issues
 
@@ -841,10 +847,6 @@ The LLM should:
 - **Trigger**: search_term parameter is missing or empty
 - **Self-Resolution**: LLM prompts user or infers search term from context
 
-**ErrInvalidTimeRange**
-- **Trigger**: Time range format is invalid or end_time before start_time
-- **Self-Resolution**: LLM converts to RFC3339 format or uses time_type parameter
-
 **ErrCustomQueriesDisabled**
 - **Trigger**: Attempting prtg_query_sql when allow_custom_queries=false
 - **Self-Resolution**: LLM uses predefined tools (prtg_get_sensors, prtg_get_alerts, etc.)
@@ -1048,7 +1050,7 @@ CREATE INDEX idx_sensor_name ON prtg_sensor(name);
 
 **4. Increase Query Timeout**
 
-Currently hard-coded to 30 seconds. If you need longer timeouts, you'll need to modify the source code.
+Currently hard-coded to 30 seconds (15 seconds for custom queries run through `prtg_query_sql`). If you need longer timeouts, you'll need to modify the source code.
 
 ### High Memory Usage
 

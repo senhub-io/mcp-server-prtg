@@ -216,15 +216,14 @@ Cursor should use the MCP tools to query your PRTG data.
 Once connected, Cursor will have access to all MCP Server PRTG tools:
 
 **PostgreSQL-based (12 tools):**
-- Sensors, alerts, devices, groups, probes
-- Channels, tags, history, notifications
+- Sensors, sensor status, alerts, device overview, top sensors
+- Hierarchy, search, groups, tags
 - Business processes, statistics
-- Custom SQL queries (if enabled)
+- Custom SQL queries (only if `allow_custom_queries: true`)
 
-**PRTG API v2 (3 tools):**
-- Real-time channel values
-- Time series data
-- Custom historical queries
+**PRTG API v2 (2 tools, when `prtg.enabled: true`):**
+- Current channel values
+- Time series data for a predefined period (`live`, `short`, `medium`, `long`)
 
 See [TOOLS.md](TOOLS.md) for complete documentation.
 
@@ -325,7 +324,7 @@ Cursor uses `prtg_get_sensors` with status filter.
 Cursor Chat: Analyze the bandwidth usage trend for sensor 12345 over the last week
 ```
 
-Cursor uses `prtg_get_sensor_history` or PRTG API v2 tools.
+Cursor uses `prtg_get_sensor_timeseries` with `time_type=medium`.
 
 ### Generate Reports
 
@@ -333,7 +332,7 @@ Cursor uses `prtg_get_sensor_history` or PRTG API v2 tools.
 Cursor Chat: Create a summary of all critical alerts with their devices and groups
 ```
 
-Cursor combines multiple tools (`prtg_get_alerts`, `prtg_get_devices`, `prtg_get_groups`).
+Cursor combines multiple tools (`prtg_get_alerts`, `prtg_device_overview`, `prtg_get_groups`).
 
 ## Configuration Best Practices
 
@@ -417,7 +416,7 @@ Cursor supports multiple MCP transport types:
 - **SSE**: Server-Sent Events
 - **Streamable HTTP**: Our recommended approach (via mcp-remote)
 
-MCP Server PRTG uses **Streamable HTTP**, which `mcp-remote` handles automatically.
+MCP Server PRTG uses **Streamable HTTP** when it runs as a service, which `mcp-remote` handles automatically. It can also run locally in **stdio** mode (`npx -y @senhub-io/mcp-server-prtg`, PRTG API v2 only, no PostgreSQL); see [CLAUDE_DESKTOP_CONFIG.md](CLAUDE_DESKTOP_CONFIG.md#stdio-mode-without-a-server).
 
 ## Next Steps
 

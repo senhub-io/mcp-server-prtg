@@ -12,7 +12,7 @@ Claude Desktop → mcp-remote → MCP Server PRTG → PostgreSQL (PRTG Data Expo
 **Important:**
 - MCP Server PRTG must be running as a service or daemon
 - Claude Desktop connects via HTTP/HTTPS using `mcp-remote`
-- You cannot use "stdio mode" because MCP Server PRTG requires PostgreSQL and PRTG API access
+- Alternatively, Claude Desktop can start MCP Server PRTG locally in stdio mode (see [stdio Mode](#stdio-mode-without-a-server)). stdio mode uses PRTG API v2 only, without PostgreSQL
 
 ## Configuration File Location
 
@@ -81,6 +81,37 @@ Full path: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.j
 ```
 
 ⚠️ **Warning:** HTTP without TLS should only be used for local development/testing.
+
+## stdio Mode (Without a Server)
+
+In stdio mode, Claude Desktop starts MCP Server PRTG as a local process (`npx -y @senhub-io/mcp-server-prtg`). No service, API key or TLS certificate is needed. stdio mode talks to PRTG API v2 only: there is no PostgreSQL access, so `prtg_query_sql` is not available (13 tools instead of 14).
+
+```json
+{
+  "mcpServers": {
+    "prtg": {
+      "command": "npx",
+      "args": ["-y", "@senhub-io/mcp-server-prtg"],
+      "env": {
+        "PRTG_URL": "https://prtg.example.com:1616",
+        "PRTG_API_TOKEN": "your-prtg-api-v2-token"
+      }
+    }
+  }
+}
+```
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PRTG_URL` | Yes | - | PRTG Core Server URL with API v2 port (e.g., `https://prtg.example.com:1616`) |
+| `PRTG_API_TOKEN` | Yes | - | PRTG API v2 token (here the PRTG token is the right one) |
+| `PRTG_VERIFY_SSL` | No | `true` | Verify the PRTG server certificate |
+| `PRTG_TIMEOUT` | No | `30` | Request timeout in seconds |
+| `PRTG_MAX_CONCURRENT` | No | `2` | Maximum PRTG API requests in flight |
+| `PRTG_CACHE_DISABLED` | No | `false` | Disable the response cache |
+| `LOG_LEVEL` | No | `info` | Log level (`debug`, `info`, `warn`, `error`) |
+
+See [npm-package/README.md](../npm-package/README.md) for details.
 
 ## Configuration Examples
 
@@ -208,8 +239,7 @@ curl -H "Authorization: Bearer YOUR_MCP_SERVER_API_KEY" \
   "transport": "streamable-http",
   "protocol": "2025-03-26",
   "uptime": "1m30s",
-  "database": "connected",
-  "prtg_api": "enabled"
+  "database": "connected"
 }
 ```
 
