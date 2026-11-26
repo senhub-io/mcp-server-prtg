@@ -66,6 +66,8 @@ Similar configuration in their respective config files. See [full documentation]
 | `PRTG_API_TOKEN` | ✅ Yes | - | PRTG API v2 Bearer token |
 | `PRTG_VERIFY_SSL` | No | `true` | Verify SSL certificates (`true`/`false`) |
 | `PRTG_TIMEOUT` | No | `30` | HTTP request timeout in seconds |
+| `PRTG_MAX_CONCURRENT` | No | `2` | Maximum PRTG API requests in flight at once, to protect the PRTG core server |
+| `PRTG_CACHE_DISABLED` | No | `false` | Disable the response cache (30 s for sensor lists and statuses, 5 min for groups and history) |
 | `LOG_LEVEL` | No | `info` | Logging level (`debug`, `info`, `warn`, `error`) |
 
 ### Restart MCP Client

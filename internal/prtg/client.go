@@ -20,6 +20,7 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	logger     *zerolog.Logger
+	guard      *requestGuard
 }
 
 // ClientConfig holds configuration for creating a new PRTG client.
@@ -29,6 +30,11 @@ type ClientConfig struct {
 	Timeout   time.Duration
 	VerifySSL bool
 	Logger    *zerolog.Logger
+
+	// MaxConcurrent limits in-flight upstream requests; <= 0 means 2.
+	MaxConcurrent int
+	// CacheDisabled disables the response cache (coalescing still applies).
+	CacheDisabled bool
 }
 
 // NewClient creates a new PRTG API client.
@@ -59,17 +65,24 @@ func NewClient(config ClientConfig) (*Client, error) {
 		Transport: transport,
 	}
 
+	logger := config.Logger
+
 	client := &Client{
 		baseURL:    baseURL,
 		token:      config.Token,
 		httpClient: httpClient,
-		logger:     config.Logger,
+		logger:     logger,
+		guard:      newRequestGuard(config.MaxConcurrent, config.CacheDisabled, config.Timeout),
 	}
+
+	maxConcurrent := client.guard.maxConcurrent
 
 	client.logger.Info().
 		Str("base_url", baseURL).
 		Dur("timeout", config.Timeout).
 		Bool("verify_ssl", config.VerifySSL).
+		Int("max_concurrent", maxConcurrent).
+		Bool("cache", !config.CacheDisabled).
 		Msg("PRTG API client initialized")
 
 	return client, nil
@@ -240,11 +253,41 @@ func parseTimestamp(value interface{}) (time.Time, error) {
 
 // doRequest performs an HTTP request to the PRTG API.
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io.Reader, result interface{}) error {
+	var respBody []byte
+	var err error
+
+	if method == http.MethodGet && body == nil {
+		respBody, err = c.guard.do(ctx, endpoint, cacheTTL(endpoint), func(gctx context.Context) ([]byte, error) {
+			return c.fetchRaw(gctx, method, endpoint, nil)
+		})
+	} else {
+		respBody, err = c.fetchRaw(ctx, method, endpoint, body)
+	}
+	if err != nil {
+		return err
+	}
+
+	if result != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, result); err != nil {
+			c.logger.Error().
+				Str("endpoint", endpoint).
+				Str("body", truncateBody(respBody)).
+				Err(err).
+				Msg("Failed to parse PRTG API response")
+			return fmt.Errorf("failed to parse response: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// fetchRaw performs the HTTP call and returns the raw response body.
+func (c *Client) fetchRaw(ctx context.Context, method, endpoint string, body io.Reader) ([]byte, error) {
 	fullURL := c.baseURL + endpoint
 
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -261,34 +304,22 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAPIRequest, err)
+		return nil, fmt.Errorf("%w: %v", ErrAPIRequest, err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if len(respBody) > maxResponseBytes {
-		return fmt.Errorf("%w: response from %s exceeds %d bytes", ErrAPIRequest, endpoint, maxResponseBytes)
+		return nil, fmt.Errorf("%w: response from %s exceeds %d bytes", ErrAPIRequest, endpoint, maxResponseBytes)
 	}
 
 	// Handle HTTP errors (accept any 2xx status as success)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return c.handleHTTPError(resp.StatusCode, endpoint, respBody)
-	}
-
-	// Parse JSON response (only if status is 200 and there's content)
-	if result != nil && resp.StatusCode == http.StatusOK && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, result); err != nil {
-			c.logger.Error().
-				Str("endpoint", endpoint).
-				Str("body", truncateBody(respBody)).
-				Err(err).
-				Msg("Failed to parse PRTG API response")
-			return fmt.Errorf("failed to parse response: %w", err)
-		}
+		return nil, c.handleHTTPError(resp.StatusCode, endpoint, respBody)
 	}
 
 	c.logger.Debug().
@@ -296,7 +327,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 		Int("status", resp.StatusCode).
 		Msg("PRTG API request successful")
 
-	return nil
+	return respBody, nil
 }
 
 // handleHTTPError converts HTTP status codes to appropriate errors.
@@ -328,6 +359,13 @@ func (c *Client) handleHTTPError(statusCode int, endpoint string, body []byte) e
 
 // Ping checks if the PRTG API is reachable and authenticated.
 func (c *Client) Ping(ctx context.Context) error {
+	_, err := c.guard.do(ctx, "/api/v2/health", 0, func(pctx context.Context) ([]byte, error) {
+		return nil, c.pingRaw(pctx)
+	})
+	return err
+}
+
+func (c *Client) pingRaw(ctx context.Context) error {
 	endpoint := "/api/v2/health"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+endpoint, nil)
