@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
-	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
-	"github.com/matthieu/mcp-server-prtg/internal/version"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/configuration"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/version"
 )
 
 // Build-time variables injected via ldflags.
@@ -128,13 +128,43 @@ func executeCommand(args *cliargs.ParsedArgs) error {
 
 // handleConfigCommand handles config-related commands.
 func handleConfigCommand(args *cliargs.ParsedArgs) error {
-	fmt.Println("Configuration management")
-	fmt.Printf("  Config file: %s\n", args.ConfigPath)
-	fmt.Println("\nTo generate a new configuration file, run:")
-	fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
-	fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")
+	switch args.Subcommand {
+	case "init":
+		cfg, err := configuration.InitConfiguration(args, logger.NewSilentLogger())
+		if err != nil {
+			return fmt.Errorf("failed to initialize configuration: %w", err)
+		}
 
-	return nil
+		fmt.Printf("Configuration written to %s\n", cfg.Path())
+
+		if cfg.IsPRTGEnabled() {
+			fmt.Println("PRTG API: enabled")
+		}
+
+		return nil
+
+	case "show-api-key":
+		cfg, err := configuration.LoadConfiguration(args, logger.NewSilentLogger())
+		if err != nil {
+			return fmt.Errorf("failed to load configuration: %w", err)
+		}
+
+		fmt.Println(cfg.GetAPIKey())
+
+		return nil
+
+	default:
+		fmt.Println("Configuration management")
+		fmt.Printf("  Config file: %s\n", args.ConfigPath)
+		fmt.Println("\nSubcommands:")
+		fmt.Printf("  %s config init           Create or update the configuration file\n", os.Args[0])
+		fmt.Printf("  %s config show-api-key   Print the decrypted API key\n", os.Args[0])
+		fmt.Println("\nTo generate a new configuration file, run:")
+		fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
+		fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")
+
+		return nil
+	}
 }
 
 // getVersionString returns the full version string.

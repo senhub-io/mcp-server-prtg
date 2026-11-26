@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/matthieu/mcp-server-prtg/internal/types"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 func TestFormatAlertsResponse_WithSuggestions(t *testing.T) {

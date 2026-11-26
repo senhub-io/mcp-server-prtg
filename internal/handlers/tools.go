@@ -12,7 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog"
 
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 // Config is an interface for accessing configuration settings.

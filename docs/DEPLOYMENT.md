@@ -1,13 +1,16 @@
 # Deployment and Updates
 
-This guide covers deploying, configuring, updating and rolling back MCP Server PRTG on Windows, Linux and in stdio mode. It is aimed at operators who install and maintain the server.
+This guide covers deploying, configuring, updating and rolling back MCP Server PRTG on Windows (MSI), Linux (systemd) and in stdio mode. It is aimed at operators who install and maintain the server.
 
-The server exposes PRTG monitoring data over Streamable HTTP at `https://<host>:8443/mcp`. Data sources are a PostgreSQL database filled by the Paessler PRTG Data Exporter (primary) and, optionally, PRTG API v2.
+The server exposes PRTG monitoring data over Streamable HTTP at `https://<host>:8443/mcp`. Data sources are the PostgreSQL **target** database of PRTG Data Exporter 2026.x (default name `prtg_data_exporter_collection`) and, optionally, PRTG API v2.
 
 ## Table of contents
 
 - [Choose a deployment mode](#choose-a-deployment-mode)
 - [Prerequisites](#prerequisites)
+- [Read-only PostgreSQL role](#read-only-postgresql-role)
+- [Enabling the PRTG API v2](#enabling-the-prtg-api-v2)
+- [Secrets and secret.key](#secrets-and-secretkey)
 - [Windows (MSI)](#windows-msi)
 - [Linux (systemd)](#linux-systemd)
 - [stdio mode (npm)](#stdio-mode-npm)
@@ -27,11 +30,37 @@ The server exposes PRTG monitoring data over Streamable HTTP at `https://<host>:
 
 For the HTTP service modes (Windows and Linux):
 
-- Network access to the PRTG Data Exporter PostgreSQL target database, with a dedicated read-only role that has `SELECT` on the `prtg_*` tables only.
+- Network access to the PRTG Data Exporter PostgreSQL **target** database (`prtg_data_exporter_collection`), with the dedicated read-only role below.
 - Optionally, a PRTG API v2 token (PRTG base URL with API port, e.g. `https://prtg.example.com:1616`).
 - Inbound TCP 8443 open from the MCP clients.
 
 For stdio mode, no database is required; see [stdio mode (npm)](#stdio-mode-npm).
+
+## Read-only PostgreSQL role
+
+Create a dedicated read-only role on the **target** database (not the Data Exporter configuration database `prtg_data_exporter`, which also stores PRTG credentials):
+
+```sql
+CREATE ROLE mcp_prtg_reader LOGIN;
+\password mcp_prtg_reader
+GRANT CONNECT ON DATABASE prtg_data_exporter_collection TO mcp_prtg_reader;
+-- then, inside prtg_data_exporter_collection:
+GRANT USAGE ON SCHEMA public TO mcp_prtg_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_prtg_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE prtg_data_exporter_user_td IN SCHEMA public GRANT SELECT ON TABLES TO mcp_prtg_reader;
+```
+
+## Enabling the PRTG API v2
+
+The PRTG API v2 must be activated on the PRTG core server (PRTG Application Server, ports 1616/1615 and 23580). It is enabled by default on new installs since 25.2.106 and automatically on update to 26.4.126 when enough memory is free; otherwise use Setup → Activate, then restart the core server.
+
+In the server configuration, the optional `prtg:` section enables it: `enabled`, `base_url` (scheme and port, e.g. `https://prtg.example.com:1616`), `api_token` (a PRTG API key of type Scripting with read access), `timeout` (seconds), `verify_ssl`.
+
+## Secrets and secret.key
+
+`server.api_key`, `database.password` and `prtg.api_token` are stored encrypted in config.yaml as `enc:dpapi:...` (Windows, DPAPI machine scope: only that machine can decrypt) or `enc:aes:...` (Linux, AES-256-GCM with the key in `secret.key` next to config.yaml, mode 0600). You may type a clear-text value in config.yaml: it is encrypted in place at the next service start. A config file copied to another machine cannot be decrypted there: re-enter the secrets.
+
+On Linux, back up `/etc/mcp-server-prtg/secret.key` together with config.yaml. Losing it means re-entering the secrets.
 
 ## Windows (MSI)
 
@@ -48,95 +77,51 @@ For stdio mode, no database is required; see [stdio mode (npm)](#stdio-mode-npm)
 
 The MSI may be unsigned in some releases. If Windows SmartScreen warns, complete the verification above before choosing "More info > Run anyway".
 
-### Install (interactive, silent)
+### Install (wizard)
 
-Interactive: run the MSI as an administrator. It installs the program, registers and starts the Windows service `mcp-server-prtg` (display name "MCP Server PRTG"), automatic start, running as LocalSystem. The service restarts automatically after a crash (twice, 10 s delay).
+Run the MSI as an administrator. On a **fresh install** the wizard asks for:
 
-Silent install, for use with GPO, Intune or SCCM:
+- Database: host (default `localhost`), port (5432), name (`prtg_data_exporter_collection`), user (`mcp_prtg_reader`), password, SSL mode (`disable`/`require`/`verify-ca`/`verify-full`), MCP HTTPS port (8443).
+- PRTG API v2 (checkbox): URL, token, verify certificate.
+
+It writes `config.yaml` through `config init` with secrets encrypted, then starts the service. **Upgrades and repairs skip the wizard and keep config.yaml.**
+
+The MSI installs `C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe` and the service `mcp-server-prtg` (LocalSystem, automatic start, restart on failure). Data lives in `C:\ProgramData\Sensor Factory\MCP Server PRTG\` (config.yaml, certs, logs; ACL SYSTEM + Administrators only; kept on uninstall).
+
+Limitation: a password containing a double quote cannot go through the wizard; set it afterwards with `config init`.
+
+### Silent install
+
+For GPO, Intune or SCCM, with properties:
 
 ```
-msiexec /i mcp-server-prtg-<version>-amd64.msi /qn /l*v install.log
+msiexec /i mcp-server-prtg-<version>-amd64.msi /qn DBPASSWORD=... PRTGENABLE=1 PRTGURL=https://prtg:1616 PRTGTOKEN=... /l*v install.log
 ```
 
-On first start the service generates `config.yaml` with a random API key (UUID) and a self-signed TLS certificate. The database being unreachable does not stop the service; tools report errors until the database is configured.
+Properties: `DBHOST`, `DBPORT`, `DBNAME`, `DBUSER`, `DBPASSWORD`, `DBSSLMODE`, `MCPPORT`, `PRTGENABLE=1`, `PRTGURL`, `PRTGTOKEN`, `PRTGVERIFYSSL=1`, `ADOPT=1`.
 
-### What gets installed
+### After install
 
-| Path | Contents |
-|---|---|
-| `C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe` | Program binary |
-| `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml` | Configuration |
-| `C:\ProgramData\Sensor Factory\MCP Server PRTG\certs\server.crt` | TLS certificate |
-| `C:\ProgramData\Sensor Factory\MCP Server PRTG\certs\server.key` | TLS private key |
-| `C:\ProgramData\Sensor Factory\MCP Server PRTG\logs\mcp-server-prtg.log` | Log file |
-
-Access to the data folder is restricted to SYSTEM and Administrators because `config.yaml` holds the API key and the database password.
-
-### Configure
-
-1. Edit `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml`. Example:
-
-   ```yaml
-   config_version: 1
-   server:
-     api_key: <random UUID generated on first start>
-     bind_address: "0.0.0.0"
-     port: 8443
-     enable_tls: true
-     cert_file: "C:\\ProgramData\\Sensor Factory\\MCP Server PRTG\\certs\\server.crt"
-     key_file: "C:\\ProgramData\\Sensor Factory\\MCP Server PRTG\\certs\\server.key"
-     allow_custom_queries: false
-   database:
-     host: <db host>
-     port: 5432
-     name: "prtg_data_exporter"
-     user: "prtg_reader"
-     password: <password>
-     sslmode: "require"
-   prtg:
-     enabled: false
-     base_url: "https://prtg.example.com:1616"
-     api_token: <token>
-     timeout: 30
-     verify_ssl: true
-   logging:
-     level: info
-     file: <generated path, keep it>
-     max_size_mb: 10
-     max_backups: 5
-     max_age_days: 30
-     compress: true
-   ```
-
-   - `sslmode: "require"` is recommended in production.
-   - To enable PRTG API v2, set `prtg.enabled: true` and fill in `base_url` and `api_token`.
-   - `logging.level` accepts `debug`, `info`, `warn`, `error`.
-   - The API key must be at least 16 characters (the generated one is 36); the server refuses to start otherwise.
-
-2. Alternatively, provide the database password through the `PRTG_DB_PASSWORD` environment variable. For a Windows service, set it as a system-wide variable.
-
-3. Restart the service after editing `config.yaml`:
-
-   ```powershell
-   Restart-Service mcp-server-prtg
-   ```
-
-4. Retrieve the API key from `config.yaml` for the MCP clients. Clients authenticate only with the header `Authorization: Bearer <api_key>`; there is no query-string token.
-
-5. Open the firewall port:
-
-   ```powershell
-   New-NetFirewallRule -DisplayName "MCP Server PRTG" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow
-   ```
-
-Service management:
+Print the decrypted MCP API key for the clients:
 
 ```powershell
-Get-Service mcp-server-prtg
+& "C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config show-api-key --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml"
+```
+
+To change settings later, run `config init` with only the settings to change (it keeps the API key), then:
+
+```powershell
 Restart-Service mcp-server-prtg
 ```
 
-Logs are in the data folder under `logs\`.
+A web admin page is planned for a later beta.
+
+Example:
+
+```powershell
+& "C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config init --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml" --db-host db.internal --prtg-url https://prtg:1616 --prtg-token <token>
+Restart-Service mcp-server-prtg
+```
 
 ### Verify
 
@@ -144,43 +129,35 @@ Logs are in the data folder under `logs\`.
 Invoke-RestMethod https://localhost:8443/health -SkipCertificateCheck
 ```
 
-or
-
-```bash
-curl -k https://localhost:8443/health
-```
-
-`/health` returns `{"status":"ok"}` without authentication.
-
-Check version, uptime and database state:
+`/health` returns `{"status":"ok"}` without authentication. Check version, uptime and database state:
 
 ```bash
 curl -k -H "Authorization: Bearer <api_key>" https://localhost:8443/status
 ```
 
-The database field is `"connected"`, `"error"` or `"not_configured"`.
-
 ### Update
 
-Run a newer MSI, interactively or silently. The upgrade replaces the program, restarts the service and never touches the data folder. The same version can be reinstalled (repair).
-
-Read the release notes for breaking changes before upgrading, and back up `config.yaml` and the certs first.
+Run a newer MSI, interactively or silently. The upgrade replaces the program, restarts the service and never touches the data folder (config.yaml is kept). The same version can be reinstalled (repair). Read the release notes for breaking changes before upgrading, and back up `config.yaml` and the certs first.
 
 ### Roll back
 
 Installing an older version is refused with "A newer version ... is already installed". To roll back, uninstall the current version, then install the older MSI. The data folder is kept.
 
-### Deploy to many servers (GPO / Intune / SCCM)
+Versions older than 2.0.0-beta.1 cannot read encrypted secrets. After rolling back to such a version, replace `server.api_key`, `database.password` and `prtg.api_token` in config.yaml with their clear-text values, then restart the service.
 
-Use the silent install command:
+### Uninstall
+
+Via Settings > Apps, or silently:
 
 ```
-msiexec /i mcp-server-prtg-<version>-amd64.msi /qn /l*v install.log
+msiexec /x <msi> /qn
 ```
+
+Uninstalling removes the program and the service but keeps the data folder. Delete `C:\ProgramData\Sensor Factory\MCP Server PRTG\` manually to remove the configuration and secrets.
 
 ### Migrate from a manual install
 
-If the service was created earlier with the built-in `install` command, the MSI refuses to install and shows a message. Migrate as follows:
+If the service was created earlier with the built-in `install` command, migrate as follows:
 
 1. Stop the old service:
 
@@ -195,12 +172,7 @@ If the service was created earlier with the built-in `install` command, the MSI 
    ```
 
 2. Copy the old `config.yaml` (and its certs folder) into `C:\ProgramData\Sensor Factory\MCP Server PRTG\`.
-3. Edit `cert_file` / `key_file` in `config.yaml` to point to the new certs location. YAML on Windows needs doubled backslashes inside double quotes, e.g.:
-
-   ```yaml
-   cert_file: "C:\\ProgramData\\Sensor Factory\\MCP Server PRTG\\certs\\server.crt"
-   ```
-
+3. Edit `cert_file` / `key_file` in `config.yaml` to point to the new certs location (YAML on Windows needs doubled backslashes inside double quotes).
 4. Install with adoption:
 
    ```
@@ -210,93 +182,74 @@ If the service was created earlier with the built-in `install` command, the MSI 
    This removes the old service registration and installs the managed one.
 5. Delete the old program folder.
 
-### Uninstall
-
-Via Settings > Apps, or silently:
-
-```
-msiexec /x <msi> /qn
-```
-
-Uninstalling removes the program and the service but keeps the data folder. Delete `C:\ProgramData\Sensor Factory\MCP Server PRTG\` manually to remove the configuration and secrets.
-
 ## Linux (systemd)
 
-Release assets per platform: `mcp-server-prtg_linux_amd64.zip`, `mcp-server-prtg_linux_arm64.zip`, `mcp-server-prtg_windows_amd64.zip`, `mcp-server-prtg_darwin_amd64.zip`, `mcp-server-prtg_darwin_arm64.zip`.
+Release assets: `mcp-server-prtg-<version>-linux-amd64.tar.gz`, `mcp-server-prtg-<version>-linux-arm64.tar.gz` (archives contain the executable, README.md, LICENSE, config.example.yaml).
 
 ### Install
 
-1. Download and unzip the release zip for your architecture.
-2. Place the binary at `/opt/mcp-server-prtg/mcp-server-prtg` and make it executable:
+1. Download and extract the tar.gz for your architecture.
+2. Install the binary and create the config directory:
 
    ```bash
-   chmod +x /opt/mcp-server-prtg/mcp-server-prtg
+   sudo install -m 0755 mcp-server-prtg /usr/local/bin/
+   sudo mkdir -p /etc/mcp-server-prtg
    ```
 
-3. Install the service:
+3. Create the configuration (secrets may also come from environment variables such as `PRTG_DB_PASSWORD`, `PRTG_URL`, `PRTG_API_TOKEN`):
 
    ```bash
-   cd /opt/mcp-server-prtg
-   sudo ./mcp-server-prtg install
+   sudo PRTG_DB_PASSWORD=... mcp-server-prtg config init --config /etc/mcp-server-prtg/config.yaml --https --db-host <host> --db-name prtg_data_exporter_collection --db-user mcp_prtg_reader
    ```
 
-   This generates `/opt/mcp-server-prtg/config.yaml` (with an API key), a self-signed certificate in `/opt/mcp-server-prtg/certs` and a systemd unit. Edit `config.yaml` as described in [Windows (MSI) > Configure](#configure): the same keys apply, and `cert_file` / `key_file` already point at the generated certificate.
-
-4. Manage the service:
+4. Install and start the systemd service:
 
    ```bash
-   sudo ./mcp-server-prtg start
-   sudo ./mcp-server-prtg stop
-   sudo ./mcp-server-prtg status
+   sudo mcp-server-prtg install --config /etc/mcp-server-prtg/config.yaml
+   sudo mcp-server-prtg start
    ```
 
-   or
+   Manage it with `sudo mcp-server-prtg stop|status` or `sudo systemctl restart mcp-server-prtg`.
 
-   ```bash
-   sudo systemctl restart mcp-server-prtg
-   ```
+Back up `/etc/mcp-server-prtg/secret.key` with config.yaml.
 
 Verify with `/health` and `/status` as described under [Windows (MSI) > Verify](#verify).
 
 ### Update
 
 1. Read the release notes for breaking changes.
-2. Back up `config.yaml` and the certs.
-3. Download the new zip and verify it.
-4. Stop the service and keep a copy of the old binary:
+2. Back up `/etc/mcp-server-prtg/config.yaml` and `secret.key`.
+3. Stop the service and keep a copy of the old binary:
 
    ```bash
-   cd /opt/mcp-server-prtg
-   sudo ./mcp-server-prtg stop
-   sudo cp mcp-server-prtg mcp-server-prtg.previous
+   sudo mcp-server-prtg stop
+   sudo cp /usr/local/bin/mcp-server-prtg /usr/local/bin/mcp-server-prtg.previous
    ```
 
-5. Replace the binary, then start:
+4. Extract the new archive and replace the binary, then start:
 
    ```bash
-   unzip -o mcp-server-prtg_linux_amd64.zip
-   sudo install -m 0755 mcp-server-prtg_linux_amd64 /opt/mcp-server-prtg/mcp-server-prtg
-   sudo ./mcp-server-prtg start
+   sudo install -m 0755 mcp-server-prtg /usr/local/bin/
+   sudo mcp-server-prtg start
    ```
 
-6. Check the version at `/status`. `config.yaml` and certs are kept.
+5. Check the version at `/status`. config.yaml, secret.key and certs are kept.
 
 ### Roll back
 
 ```bash
-cd /opt/mcp-server-prtg
-sudo ./mcp-server-prtg stop
-sudo cp mcp-server-prtg.previous mcp-server-prtg
-sudo ./mcp-server-prtg start
+sudo mcp-server-prtg stop
+sudo cp /usr/local/bin/mcp-server-prtg.previous /usr/local/bin/mcp-server-prtg
+sudo mcp-server-prtg start
 ```
 
 ### Uninstall
 
 ```bash
-sudo ./mcp-server-prtg uninstall
+sudo mcp-server-prtg uninstall --config /etc/mcp-server-prtg/config.yaml
 ```
 
-This removes the service, `config.yaml`, the certs and the default logs folder. Back up `config.yaml` first.
+Back up config.yaml and secret.key first.
 
 ## stdio mode (npm)
 
@@ -342,7 +295,7 @@ Example for Claude Desktop (`claude_desktop_config.json`):
         "Authorization:Bearer ${MCP_SERVER_API_KEY}"
       ],
       "env": {
-        "MCP_SERVER_API_KEY": "<api_key from config.yaml>"
+        "MCP_SERVER_API_KEY": "<api_key from config show-api-key>"
       }
     }
   }
@@ -358,7 +311,7 @@ Client-specific guides: [Claude Desktop](CLAUDE_DESKTOP_CONFIG.md), [Cursor](CUR
 Applies to all modes.
 
 1. Read the release notes for breaking changes before upgrading.
-2. Back up `config.yaml` (and the certs).
+2. Back up `config.yaml` (and the certs; on Linux also `secret.key`).
 3. Upgrade.
 4. Check `/health` and `/status` (version and database state).
 5. Run one tool from an MCP client.

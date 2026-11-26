@@ -10,7 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"gopkg.in/natefinch/lumberjack.v2"
 
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
 )
 
 // Logger wraps zerolog.Logger.

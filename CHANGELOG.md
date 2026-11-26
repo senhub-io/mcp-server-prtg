@@ -5,33 +5,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Security
-- HTTP mode: an empty `api_key` no longer authenticates requests; the server refuses to start with a key shorter than 16 characters.
-- HTTP mode: the API key is compared in constant time and accepted only from the `Authorization: Bearer` header. **Breaking:** the `?token=` query parameter is no longer accepted.
-- HTTP mode: the authentication rate limiter keys on the TCP peer address (IPv6 by /64) instead of client-supplied `X-Forwarded-For` / `X-Real-IP` headers, and locked addresses are never evicted.
-- `prtg_query_sql` runs in a read-only transaction with a 15 s statement timeout and an enforced row limit, and rejects multiple statements, comments, PRTG Data Exporter credential tables and dangerous functions.
-- PRTG API v2 filters drop quotes, backslashes and control characters from user input, so a name cannot rewrite the filter expression.
-- PRTG API v2 responses are capped at 64 MiB and logged bodies are truncated.
-- Log masking now covers UUID-shaped keys.
-- `uninstall` no longer deletes a custom log directory recursively.
-- Go 1.26.11 toolchain: fixes 27 standard-library vulnerabilities reported by govulncheck.
-
 ### Added
-- Windows MSI installer with in-place upgrades; configuration lives in `%ProgramData%\Sensor Factory\MCP Server PRTG` and survives upgrades and uninstall. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- PRTG API v2 request guard: TTL cache, coalescing of identical concurrent requests and a concurrency limit (`PRTG_MAX_CONCURRENT`, default 2) to protect the PRTG core server. `PRTG_CACHE_DISABLED` turns the cache off.
-- stdio mode: 11 PRTG API v2 tools replacing the database tools (sensors, alerts, device overview, hierarchy, search, groups, tags, business processes, top sensors, statistics).
-- Deployment and update procedure: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- Database-first metrics on the PRTG Data Exporter 2026.x target database (`prtg_data_exporter_collection`): `prtg_get_channel_current_values` and `prtg_get_sensor_timeseries` read `prtg_channel_value` first, with an optional `source` parameter (`auto` default, `database`, `prtg`); each answer starts with a `Source:` line.
+- Schema detection at start-up for older Data Exporter layouts (soft delete, tree depth, channel values, collection status, per-sensor last fetch).
+- Per-sensor freshness from `prtg_sensor_last_fetched_day`: in `auto` mode a sensor whose export is older than 24 h falls back to the PRTG API when configured, otherwise the answer states when the export stopped.
+- Channel-history coverage in `prtg_get_statistics` (up to date, stale, never fetched, without data, not tracked) and Data Exporter collection profiles (last/next collection, errors, paused flag).
+- Byte-size unit conversion (Ko…To, KB…TB) from raw bytes (base 1024); HTML-decoded channel names; missing channel names fetched once from the PRTG API when configured.
+- `prtg_get_alerts` excludes paused sensors unless a status filter is given and reports when its 100-row limit is reached.
+- PRTG API v2 request guard: cache, coalescing of identical concurrent requests, at most 2 requests in flight.
+- Encrypted secrets in config.yaml (`enc:dpapi:...` on Windows, `enc:aes:...` on Linux with `secret.key`); clear-text values are encrypted in place at the next service start.
+- `config init` (create or update individual settings) and `config show-api-key` commands.
+- `PRTG_DB_HOST`, `PRTG_DB_PORT`, `PRTG_DB_NAME`, `PRTG_DB_USER`, `PRTG_DB_PASSWORD`, `PRTG_DB_SSLMODE`, `PRTG_URL`, `PRTG_API_TOKEN` environment variables.
+- Windows MSI installer with setup wizard on fresh installs (silent-install properties DBHOST, DBPORT, DBNAME, DBUSER, DBPASSWORD, DBSSLMODE, MCPPORT, PRTGENABLE, PRTGURL, PRTGTOKEN, PRTGVERIFYSSL, ADOPT); upgrades and repairs keep config.yaml.
+- Beta release assets for Windows amd64 (zip and MSI) and Linux amd64/arm64 (tar.gz) plus SHA256SUMS.
 
 ### Changed
-- Generated TLS certificates are written next to the configuration file instead of the executable directory.
-- Dependencies upgraded, including `mark3labs/mcp-go` 1.6.
-- `.golangci.yml` migrated to the golangci-lint v2 format.
+- Module path renamed to `github.com/senhub-io/mcp-server-prtg`; executable name `mcp-server-prtg.exe` (Windows) / `mcp-server-prtg` (Linux).
+- Database default name is now the Data Exporter target database `prtg_data_exporter_collection`; the connection string is quoted.
+- Go 1.26.
 
 ### Fixed
-- `QueryRow` cancelled its context before callers scanned the row, failing some database tools intermittently.
-- `ILIKE` filters escape `%`, `_` and `\` in user input.
-- Listener and TLS errors now fail startup instead of leaving a service that reports itself started.
-- CI release workflows used action versions that no longer run on GitHub runners.
+- Deleted objects no longer appear in results; tags are matched correctly.
+
+### Security
+- Constant-time Bearer authentication; authentication rate limiting per TCP peer address.
+- `prtg_query_sql` runs in a read-only sandbox (read-only transaction, 15 s statement timeout, enforced row limit).
+- PRTG API v2 filter values are escaped (quotes, backslashes, control characters dropped).
+- Secrets and tokens are masked in log output.
 
 ### Removed
 - `prtg_get_sensor_history_custom`: the PRTG API v2 endpoint does not support custom ranges.

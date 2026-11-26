@@ -124,6 +124,7 @@ jobs:
           dotnet tool install --global wix --version 5.0.2
           # The extension version is pinned: a later extension cannot load in wix 5.
           wix extension add --global WixToolset.Util.wixext/5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
 
       - name: Build MSI
         env:
@@ -135,6 +136,7 @@ jobs:
             -d BinDir="dist/windows-amd64" \
             -arch x64 \
             -ext WixToolset.Util.wixext \
+            -ext WixToolset.UI.wixext \
             -out "dist/mcp-server-prtg-${VERSION}-amd64.msi"
 
       - name: Sign MSI
