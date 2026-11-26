@@ -64,11 +64,11 @@ func (c *Configuration) ApplySettings(s Settings) error {
 	// A stored secret is only reused for the target it was entered for:
 	// pointing it at another server would hand it to that server.
 	if s.Database.Password == nil && c.plain.dbPassword != "" && !c.SameDatabaseTarget(s.Database) {
-		return fmt.Errorf("%w: enter the database password again when changing the host, port or user", ErrInvalidSettings)
+		return fmt.Errorf("%w: enter the database password again when changing the host, port, user or SSL mode", ErrInvalidSettings)
 	}
 
-	if s.PRTG.Enabled && s.PRTG.Token == nil && c.plain.prtgToken != "" && !c.SamePRTGTarget(s.PRTG) {
-		return fmt.Errorf("%w: enter the PRTG API token again when changing the PRTG URL", ErrInvalidSettings)
+	if s.PRTG.Token == nil && c.plain.prtgToken != "" && !c.SamePRTGTarget(s.PRTG) {
+		return fmt.Errorf("%w: enter the PRTG API token again when changing the PRTG URL or turning off certificate verification", ErrInvalidSettings)
 	}
 
 	data := c.data
@@ -154,14 +154,29 @@ func validateSettings(s Settings, hasStoredToken bool) error {
 	return nil
 }
 
-// SameDatabaseTarget reports whether s points at the stored database server and user.
+// SameDatabaseTarget reports whether s points at the stored database server and user
+// with an SSL mode at least as strict, so a stored password is never sent over a weaker channel.
 func (c *Configuration) SameDatabaseTarget(s DatabaseSettings) bool {
 	d := c.data.Database
 
-	return s.Host == d.Host && s.Port == d.Port && s.User == d.User
+	return s.Host == d.Host && s.Port == d.Port && s.User == d.User && sslModeRank(s.SSLMode) >= sslModeRank(d.SSLMode)
 }
 
-// SamePRTGTarget reports whether s points at the stored PRTG API URL.
+func sslModeRank(mode string) int {
+	switch mode {
+	case "require":
+		return 1
+	case "verify-ca":
+		return 2
+	case "verify-full":
+		return 3
+	default:
+		return 0
+	}
+}
+
+// SamePRTGTarget reports whether s points at the stored PRTG API URL without
+// turning off certificate verification.
 func (c *Configuration) SamePRTGTarget(s PRTGSettings) bool {
-	return s.BaseURL == c.data.PRTG.BaseURL
+	return s.BaseURL == c.data.PRTG.BaseURL && (s.VerifySSL || !c.data.PRTG.VerifySSL)
 }

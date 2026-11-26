@@ -212,6 +212,20 @@ func TestApplySettingsRefusesStoredSecretsForAnotherTarget(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidSettings)
 
 	s = cfg.Settings()
+	s.PRTG.Enabled = false
+	s.PRTG.BaseURL = "https://attacker.example:1616"
+	err = cfg.ApplySettings(s)
+	require.ErrorIs(t, err, ErrInvalidSettings)
+
+	s = cfg.Settings()
+	s.Database.SSLMode = "require"
+	require.NoError(t, cfg.ApplySettings(s))
+	s = cfg.Settings()
+	s.Database.SSLMode = "disable"
+	err = cfg.ApplySettings(s)
+	require.ErrorIs(t, err, ErrInvalidSettings)
+
+	s = cfg.Settings()
 	pw := "new"
 	s.Database.Host = "other-db"
 	s.Database.Password = &pw
