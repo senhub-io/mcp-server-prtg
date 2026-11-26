@@ -11,6 +11,8 @@ type ParsedArgs struct {
 	Subcommand string `arg:"positional" help:"Subcommand for config: init, show-api-key, client"`
 
 	// Configuration
+	Window bool `arg:"--window" help:"Windows: open the output in a new elevated console window (config client)"`
+
 	Host string `arg:"--host" help:"Host name MCP clients use to reach this server (config client)"`
 
 	ConfigPath string `arg:"--config,-c" help:"Path to configuration file" default:"./config.yaml"`
