@@ -289,6 +289,15 @@ func (h *MetricsToolHandler) resolveLastValueNames(ctx context.Context, sensorID
 
 const missingNamesNote = "Note: channel names are not exported for this sensor; channels are identified by their PRTG channel ID."
 
+// prtgUnreachableNote builds the note shown when the PRTG API fails but exported data is served instead.
+func prtgUnreachableNote(err error) string {
+	msg := err.Error()
+	if len(msg) > 120 {
+		msg = msg[:120]
+	}
+	return fmt.Sprintf("Note: the PRTG API is not reachable (%s); showing exported data.", msg)
+}
+
 // handleGetSensorTimeSeries handles prtg_get_sensor_timeseries tool requests.
 func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var params struct {
@@ -329,7 +338,11 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 		if h.prtgClient == nil {
 			return mcp.NewToolResultError("source=prtg requested but no PRTG API client is configured"), nil
 		}
-		return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+		res, prtgErr := h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+		if prtgErr != nil {
+			return mcp.NewToolResultError(prtgErr.Error()), nil
+		}
+		return res, nil
 	case sourceDatabase:
 		if h.store == nil {
 			return mcp.NewToolResultError("source=database requested but no channel database is configured"), nil
@@ -352,13 +365,40 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 		return result, nil
 	default: // auto
 		if timeType == prtg.TimeSeriesLive && h.prtgClient != nil {
-			return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+			res, prtgErr := h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+			if prtgErr == nil {
+				return res, nil
+			}
+			if h.store == nil {
+				return mcp.NewToolResultError(prtgErr.Error()), nil
+			}
+			h.handler.logger.Warn().
+				Err(prtgErr).
+				Int("sensor_id", params.SensorID).
+				Msg("PRTG API unreachable; serving live window from the channel database")
+			note := prtgUnreachableNote(prtgErr)
+			result, err := h.timeSeriesFromStore(ctx, params.SensorID, timeType, note)
+			if err == nil {
+				return result, nil
+			}
+			if errors.Is(err, errNoStoreData) {
+				return mcp.NewToolResultText(noHistoryText(params.SensorID, note)), nil
+			}
+			h.handler.logger.Error().
+				Err(err).
+				Int("sensor_id", params.SensorID).
+				Msg("Failed to fetch time series from channel database")
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch time series from database: %v", err)), nil
 		}
 		if h.store != nil {
 			stale, note, notFound := h.checkExportFreshness(ctx, params.SensorID)
 			if notFound {
 				if h.prtgClient != nil {
-					return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+					res, prtgErr := h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+					if prtgErr == nil {
+						return res, nil
+					}
+					return mcp.NewToolResultError(prtgErr.Error()), nil
 				}
 				return mcp.NewToolResultText(fmt.Sprintf("No exported channel history for sensor %d", params.SensorID)), nil
 			}
@@ -367,7 +407,15 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 					Int("sensor_id", params.SensorID).
 					Str("reason", "export_stale").
 					Msg("Data Exporter export is stale; serving time series from PRTG API")
-				return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+				res, prtgErr := h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+				if prtgErr == nil {
+					return res, nil
+				}
+				h.handler.logger.Warn().
+					Err(prtgErr).
+					Int("sensor_id", params.SensorID).
+					Msg("PRTG API unreachable; serving stale export from the channel database")
+				note += "\n" + prtgUnreachableNote(prtgErr)
 			}
 			result, err := h.timeSeriesFromStore(ctx, params.SensorID, timeType, note)
 			if err == nil {
@@ -380,13 +428,21 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 					Msg("Failed to fetch time series from channel database")
 				return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch time series from database: %v", err)), nil
 			}
-			if h.prtgClient != nil {
-				return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+			if h.prtgClient != nil && !stale {
+				res, prtgErr := h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+				if prtgErr == nil {
+					return res, nil
+				}
+				return mcp.NewToolResultError(prtgErr.Error()), nil
 			}
 			return mcp.NewToolResultText(noHistoryText(params.SensorID, note)), nil
 		}
 		if h.prtgClient != nil {
-			return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+			res, prtgErr := h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+			if prtgErr != nil {
+				return mcp.NewToolResultError(prtgErr.Error()), nil
+			}
+			return res, nil
 		}
 		return mcp.NewToolResultError("No metrics source configured: neither channel database nor PRTG API client is available"), nil
 	}
@@ -402,6 +458,7 @@ func noHistoryText(sensorID int, note string) string {
 }
 
 // timeSeriesFromPRTG fetches time series from the PRTG API v2.
+// A non-nil error means the PRTG call itself failed; the result is nil in that case.
 func (h *MetricsToolHandler) timeSeriesFromPRTG(ctx context.Context, sensorID int, timeType prtg.TimeSeriesType) (*mcp.CallToolResult, error) {
 	data, err := h.prtgClient.GetTimeSeries(ctx, sensorID, timeType)
 	if err != nil {
@@ -409,7 +466,7 @@ func (h *MetricsToolHandler) timeSeriesFromPRTG(ctx context.Context, sensorID in
 			Err(err).
 			Int("sensor_id", sensorID).
 			Msg("Failed to fetch time series from PRTG API")
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch time series: %v", err)), nil
+		return nil, fmt.Errorf("Failed to fetch time series: %w", err)
 	}
 
 	h.handler.logger.Info().
@@ -475,6 +532,7 @@ func (h *MetricsToolHandler) timeSeriesFromStore(ctx context.Context, sensorID i
 func historyToTimeSeries(sensorID int, timeType prtg.TimeSeriesType, hist *types.ChannelHistory) *prtg.TimeSeriesData {
 	headers := []string{"Timestamp"}
 	labels := make(map[int]string, len(hist.Channels))
+	units := make(map[int]string, len(hist.Channels))
 	used := make(map[string]bool, len(hist.Channels))
 	for _, ch := range hist.Channels {
 		label := ch.Name
@@ -486,6 +544,7 @@ func historyToTimeSeries(sensorID int, timeType prtg.TimeSeriesType, hist *types
 		}
 		used[label] = true
 		labels[ch.ID] = label
+		units[ch.ID] = ch.Unit
 		headers = append(headers, label)
 	}
 
@@ -494,7 +553,7 @@ func historyToTimeSeries(sensorID int, timeType prtg.TimeSeriesType, hist *types
 		values := make(map[string]interface{}, len(p.Values))
 		for id, v := range p.Values {
 			if label, ok := labels[id]; ok {
-				values[label] = v
+				values[label] = displayValue(v, units[id])
 			}
 		}
 		points = append(points, prtg.TimeSeriesDataPoint{
@@ -540,7 +599,11 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 		if h.prtgClient == nil {
 			return mcp.NewToolResultError("source=prtg requested but no PRTG API client is configured"), nil
 		}
-		return h.currentValuesFromPRTG(ctx, params.SensorID)
+		res, prtgErr := h.currentValuesFromPRTG(ctx, params.SensorID)
+		if prtgErr != nil {
+			return mcp.NewToolResultError(prtgErr.Error()), nil
+		}
+		return res, nil
 	case sourceDatabase:
 		if h.store == nil {
 			return mcp.NewToolResultError("source=database requested but no channel database is configured"), nil
@@ -566,7 +629,11 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 			stale, note, notFound := h.checkExportFreshness(ctx, params.SensorID)
 			if notFound {
 				if h.prtgClient != nil {
-					return h.currentValuesFromPRTG(ctx, params.SensorID)
+					res, prtgErr := h.currentValuesFromPRTG(ctx, params.SensorID)
+					if prtgErr == nil {
+						return res, nil
+					}
+					return mcp.NewToolResultError(prtgErr.Error()), nil
 				}
 				return mcp.NewToolResultText(noValuesText(params.SensorID, "")), nil
 			}
@@ -575,7 +642,15 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 					Int("sensor_id", params.SensorID).
 					Str("reason", "export_stale").
 					Msg("Data Exporter export is stale; serving current values from PRTG API")
-				return h.currentValuesFromPRTG(ctx, params.SensorID)
+				res, prtgErr := h.currentValuesFromPRTG(ctx, params.SensorID)
+				if prtgErr == nil {
+					return res, nil
+				}
+				h.handler.logger.Warn().
+					Err(prtgErr).
+					Int("sensor_id", params.SensorID).
+					Msg("PRTG API unreachable; serving stale export from the channel database")
+				note += "\n" + prtgUnreachableNote(prtgErr)
 			}
 			result, err := h.currentValuesFromStore(ctx, params.SensorID, note)
 			if err == nil {
@@ -588,13 +663,21 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 					Msg("Failed to fetch channel values from channel database")
 				return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch channel values from database: %v", err)), nil
 			}
-			if h.prtgClient != nil {
-				return h.currentValuesFromPRTG(ctx, params.SensorID)
+			if h.prtgClient != nil && !stale {
+				res, prtgErr := h.currentValuesFromPRTG(ctx, params.SensorID)
+				if prtgErr == nil {
+					return res, nil
+				}
+				return mcp.NewToolResultError(prtgErr.Error()), nil
 			}
 			return mcp.NewToolResultText(noValuesText(params.SensorID, note)), nil
 		}
 		if h.prtgClient != nil {
-			return h.currentValuesFromPRTG(ctx, params.SensorID)
+			res, prtgErr := h.currentValuesFromPRTG(ctx, params.SensorID)
+			if prtgErr != nil {
+				return mcp.NewToolResultError(prtgErr.Error()), nil
+			}
+			return res, nil
 		}
 		return mcp.NewToolResultError("No metrics source configured: neither channel database nor PRTG API client is available"), nil
 	}
@@ -610,6 +693,7 @@ func noValuesText(sensorID int, note string) string {
 }
 
 // currentValuesFromPRTG fetches current channel values from the PRTG API v2.
+// A non-nil error means the PRTG call itself failed; the result is nil in that case.
 func (h *MetricsToolHandler) currentValuesFromPRTG(ctx context.Context, sensorID int) (*mcp.CallToolResult, error) {
 	channels, err := h.prtgClient.GetChannelsBySensor(ctx, sensorID)
 	if err != nil {
@@ -617,7 +701,7 @@ func (h *MetricsToolHandler) currentValuesFromPRTG(ctx context.Context, sensorID
 			Err(err).
 			Int("sensor_id", sensorID).
 			Msg("Failed to fetch channels from PRTG API")
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch channels: %v", err)), nil
+		return nil, fmt.Errorf("Failed to fetch channels: %w", err)
 	}
 
 	h.handler.logger.Info().
@@ -680,7 +764,7 @@ func (h *MetricsToolHandler) currentValuesFromStore(ctx context.Context, sensorI
 	b.WriteString("|---------|-------|------|-------------------|\n")
 	for _, v := range values {
 		b.WriteString(fmt.Sprintf("| %s | %.2f | %s | %s |\n",
-			v.Name, v.Value, v.Unit, v.Timestamp.UTC().Format(time.RFC3339)))
+			v.Name, displayValue(v.Value, v.Unit), v.Unit, v.Timestamp.UTC().Format(time.RFC3339)))
 	}
 
 	return mcp.NewToolResultText(b.String()), nil
