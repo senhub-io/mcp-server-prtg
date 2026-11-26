@@ -287,6 +287,15 @@ func (c *Configuration) loadConfiguration() error {
 		return err
 	}
 
+	// Configurations written by earlier versions carry doubled backslashes.
+	if parsed.Server.CertFile != "" {
+		parsed.Server.CertFile = filepath.Clean(parsed.Server.CertFile)
+	}
+
+	if parsed.Server.KeyFile != "" {
+		parsed.Server.KeyFile = filepath.Clean(parsed.Server.KeyFile)
+	}
+
 	c.data = parsed
 
 	if encrypted > 0 {
@@ -396,13 +405,6 @@ func (c *Configuration) createDefaultConfiguration() error {
 
 	defaultCertFile := filepath.Join(configDir, "certs", "server.crt")
 	defaultKeyFile := filepath.Join(configDir, "certs", "server.key")
-
-	// On Windows, double backslashes for YAML compatibility
-	// Windows accepts both C:\\path and C:/path but YAML needs escaped backslashes
-	if filepath.Separator == '\\' {
-		defaultCertFile = strings.ReplaceAll(defaultCertFile, "\\", "\\\\")
-		defaultKeyFile = strings.ReplaceAll(defaultKeyFile, "\\", "\\\\")
-	}
 
 	c.logger.Debug().
 		Str("config_dir", configDir).
@@ -589,8 +591,9 @@ func (c *Configuration) generateTLSCertificates() error {
 	}
 
 	// Add SANs (Subject Alternative Names)
-	template.DNSNames = []string{"localhost"}
-	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+	// MCP clients reach the server by its machine name or address, not only
+	// through localhost: the certificate must cover them or TLS fails.
+	template.DNSNames, template.IPAddresses = certificateNames()
 
 	// Generate certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
@@ -864,4 +867,35 @@ func (c *Configuration) Shutdown(_ context.Context) error {
 	}
 
 	return nil
+}
+
+// certificateNames returns the host names and addresses the self-signed
+// certificate is issued for: localhost, the machine name and its addresses.
+func certificateNames() ([]string, []net.IP) {
+	names := []string{"localhost"}
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+
+	if host, err := os.Hostname(); err == nil && host != "" {
+		names = append(names, host)
+
+		if short, _, found := strings.Cut(host, "."); found && short != "" {
+			names = append(names, short)
+		}
+	}
+
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return names, ips
+	}
+
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() {
+			continue
+		}
+
+		ips = append(ips, ipNet.IP)
+	}
+
+	return names, ips
 }

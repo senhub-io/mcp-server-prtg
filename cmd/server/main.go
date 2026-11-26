@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
@@ -128,6 +130,10 @@ func executeCommand(args *cliargs.ParsedArgs) error {
 
 // handleConfigCommand handles config-related commands.
 func handleConfigCommand(args *cliargs.ParsedArgs) error {
+	if args.Subcommand == "show-api-key" || args.Subcommand == "client" {
+		args.ConfigPath = defaultConfigPath(args)
+	}
+
 	switch args.Subcommand {
 	case "init":
 		cfg, err := configuration.InitConfiguration(args, logger.NewSilentLogger())
@@ -153,12 +159,30 @@ func handleConfigCommand(args *cliargs.ParsedArgs) error {
 
 		return nil
 
+	case "client":
+		if args.Window && runtime.GOOS == "windows" {
+			return openElevatedConsole(clientArgsWithoutWindow(os.Args[1:]))
+		}
+
+		cfg, err := configuration.LoadConfiguration(args, logger.NewSilentLogger())
+		if err != nil {
+			return fmt.Errorf("failed to load configuration: %w", err)
+		}
+
+		_, port, err := net.SplitHostPort(cfg.GetServerAddress())
+		if err != nil {
+			return fmt.Errorf("failed to parse server address %q: %w", cfg.GetServerAddress(), err)
+		}
+
+		return renderClientConfig(os.Stdout, clientHost(args.Host), port, cfg.IsTLSEnabled(), cfg.GetAPIKey(), cfg.GetTLSCertFile())
+
 	default:
 		fmt.Println("Configuration management")
 		fmt.Printf("  Config file: %s\n", args.ConfigPath)
 		fmt.Println("\nSubcommands:")
 		fmt.Printf("  %s config init           Create or update the configuration file\n", os.Args[0])
 		fmt.Printf("  %s config show-api-key   Print the decrypted API key\n", os.Args[0])
+		fmt.Printf("  %s config client         Print MCP client configuration snippets (use --host to override the host name)\n", os.Args[0])
 		fmt.Println("\nTo generate a new configuration file, run:")
 		fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
 		fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")

@@ -46,11 +46,7 @@ See [docs/TOOLS.md](docs/TOOLS.md) for details.
 
 Download `mcp-server-prtg-<version>-amd64.msi` from [Releases](https://github.com/senhub-io/mcp-server-prtg/releases) and run it as administrator. The wizard asks for the database (host, port, name `prtg_data_exporter_collection`, user `mcp_prtg_reader`, password, SSL mode, HTTPS port) and optionally the PRTG API v2 settings, writes `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml` with secrets encrypted, and starts the service `mcp-server-prtg`.
 
-Print the API key for your MCP clients:
-
-```powershell
-& "C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config show-api-key --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml"
-```
+Setup ends by showing the ready-to-paste configuration for Claude Desktop, Claude Code, Cursor and VS Code (also available from the Start Menu shortcut **MCP Server PRTG - AI client configuration**, or with `mcp-server-prtg.exe config client` in an elevated prompt).
 
 Check `https://localhost:8443/health`. Full steps, silent install, updates and rollback: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
