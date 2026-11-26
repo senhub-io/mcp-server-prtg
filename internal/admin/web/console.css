@@ -396,5 +396,10 @@ details.more > .fgrid { margin-top: 8px; }
   .tbl { font-size: var(--fs-sm); }
 }
 
-.row[data-align="end"] { align-items: flex-end; }
 .brand .mark { width: auto; min-width: 26px; padding: 0 6px; font-size: 12px; }
+/* A .field that is also a .row holds a toggle or a button: lay it out left to right. */
+.field.row { flex-direction: row; justify-content: flex-start; align-items: center; }
+/* Controls that sit next to an input line up with the bottom of that input. */
+.row[data-align="end"] { align-self: flex-end; align-items: flex-end; }
+.row[data-align="end"] .btn { height: 34px; }
+.field.row[data-align="end"] { align-self: end; min-height: 34px; padding-bottom: 7px; }

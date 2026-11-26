@@ -73,6 +73,7 @@ async function apiJson(path, opts) {
 /* ---------- views ---------- */
 
 function showLogin() {
+  $("#restart-banner").classList.add("hide");
   $("#app-view").classList.add("hide");
   $("#login-view").classList.remove("hide");
   stopAutoRefresh();
@@ -238,7 +239,7 @@ function renderOverview(s) {
   const ph = el("div", "card-h");
   ph.appendChild(el("h2", null, "PRTG API"));
   const p = s.prtg || {};
-  ph.appendChild(p.configured ? (p.reachable ? pill("ok", "reachable") : pill("err", "unreachable")) : pill("off", "not configured"));
+  ph.appendChild(p.configured ? pill("ok", "configured") : pill("off", "not configured"));
   prtg.appendChild(ph);
   const pkv = el("dl", "kv left");
   pkv.append(...kvRow("Base URL", p.base_url || "—"));
@@ -471,18 +472,30 @@ async function saveSettings(restart) {
 
 function pollAfterRestart() {
   if (state.restartTimer) clearInterval(state.restartTimer);
+  const started = Date.now();
+  const stop = () => {
+    clearInterval(state.restartTimer);
+    state.restartTimer = null;
+    $("#restart-banner").classList.add("hide");
+  };
   state.restartTimer = setInterval(async () => {
+    let res;
     try {
-      const res = await fetch("/admin/api/session", { credentials: "same-origin" });
-      if (res.ok) {
-        clearInterval(state.restartTimer);
-        state.restartTimer = null;
-        $("#restart-banner").classList.add("hide");
-        loadOverview(true);
-      }
+      res = await fetch("/admin/api/session", { credentials: "same-origin", cache: "no-store" });
     } catch (e) {
+      // The service is still down: keep waiting, up to two minutes.
+      if (Date.now() - started > 120000) {
+        stop();
+        showLogin();
+      }
+      return;
+    }
+    stop();
+    if (res.ok) {
+      loadOverview(true);
+    } else {
+      // Sessions live in memory: the restarted service asks to sign in again.
       showLogin();
-      if (state.restartTimer) { clearInterval(state.restartTimer); state.restartTimer = null; }
     }
   }, 2000);
 }
