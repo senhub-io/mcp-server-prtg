@@ -228,7 +228,7 @@ security: ## Security audit (govulncheck + gosec)
 install-tools: ## Install all development tools
 	@echo "$(GREEN)📦 Installing development tools...$(NC)"
 	@echo "$(YELLOW)Installing golangci-lint...$(NC)"
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	@echo "$(YELLOW)Installing govulncheck...$(NC)"
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@echo "$(YELLOW)Installing staticcheck...$(NC)"
