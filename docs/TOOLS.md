@@ -457,6 +457,8 @@ Returns all sensors that are currently in a non-operational state (Warning, Down
 
 ---
 
+**Paused sensors and limit.** By default, paused sensors are excluded from the alert list unless a `status` filter is given; when the result reaches the 100-row limit, the response states that the limit was reached and suggests narrowing the filter.
+
 ### prtg_device_overview
 
 Get a complete overview of a device including all its sensors and statistics.
@@ -1175,30 +1177,25 @@ For security reasons, prtg_query_sql is disabled by default.
 
 These tools query data directly from PRTG Core Server via API v2. They require PRTG API v2 configuration in `config.yaml` (see [CONFIGURATION.md](CONFIGURATION.md)). Calls go through a request guard (response cache, coalescing of identical concurrent requests, at most 2 requests in flight by default) to protect the PRTG Core Server.
 
+### prtg_get_channel_current_values` through the end of `### prtg_get_sensor_timeseries` (i.e. everything from the first heading up to, but not including, `## Database Schema`).
+
 ### prtg_get_channel_current_values
 
-**PRIMARY TOOL for checking sensor current state and discovering available channels.**
+Retrieve the current values of all channels of a sensor.
 
 #### Description
 
-Returns ALL channels of a sensor with their current values, names, units, and last update timestamp. This is the main tool for understanding a sensor's current state.
-
-Each PRTG sensor has multiple channels (individual measurements). Examples:
-- **SSL sensors**: 'Days to Expiration', 'Response Time'
-- **Server sensors**: 'CPU Load', 'Memory Usage', 'Disk Space'
-- **Network sensors**: 'Traffic In', 'Traffic Out', 'Packet Loss'
-
-**Always use this tool first** when asked about a sensor's current state, values, or status.
+Reads the current channel values of a sensor. In the default `auto` source the values come from the PRTG Data Exporter target database (`prtg_channel_value`) first; the PRTG API is called only when needed (for example for the `live` period, or when the sensor's export is older than 24 h). Each answer starts with a `Source:` line stating where the data came from. Byte-size units (Ko…To, KB…TB) are converted from raw bytes (base 1024). Channel names are HTML-decoded; a missing channel name is fetched once from the PRTG API when configured, otherwise it is flagged.
 
 #### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `sensor_id` | integer | **Yes** | - | PRTG sensor ID (use `prtg_get_sensors` to find sensor IDs) |
+| `sensor_id` | integer | Yes | - | PRTG sensor ID |
+| `source` | string | No | `auto` | `auto` (database first, PRTG API only when needed), `database` (never call PRTG), `prtg` (real time from the PRTG API) |
 
 #### Examples
 
-**Get all current channel values for a sensor:**
 ```json
 {
   "name": "prtg_get_channel_current_values",
@@ -1208,146 +1205,90 @@ Each PRTG sensor has multiple channels (individual measurements). Examples:
 }
 ```
 
+```json
+{
+  "name": "prtg_get_channel_current_values",
+  "arguments": {
+    "sensor_id": 12345,
+    "source": "prtg"
+  }
+}
+```
+
 #### Response Format
 
-Returns a markdown table with current channel values:
-
 ```
+Source: database (PRTG Data Exporter, last fetch 2026-...)
+
 # Current Channel Values - Sensor 12345
 
-Total channels: 5
-
-| Channel | Value | Unit | Timestamp |
-|---------|-------|------|----------|
-| Response Time | 45.23 | ms | 2025-10-26 10:30:00 |
-| Days to Expiration | 89.00 | days | 2025-10-26 10:30:00 |
-| Traffic In | 1234567.89 | kbit/s | 2025-10-26 10:30:00 |
-| Traffic Out | 987654.32 | kbit/s | 2025-10-26 10:30:00 |
-| Downtime | 0.00 | % | 2025-10-26 10:30:00 |
+| Channel | Value | Unit |
+|---------|-------|------|
+| Traffic | 12.4 | Mbit/s |
 ```
 
 #### Notes
 
-- This tool queries PRTG API v2 in real-time (not PostgreSQL database)
-- Returns the most recent measurement for each channel
-- Channel names, units, and values come directly from PRTG
-- Use this instead of `prtg_get_sensor_status` when you need detailed channel data
-- For historical trends, use `prtg_get_sensor_timeseries`
-
----
+- The tool is registered when the database holds channel history or the PRTG API is configured.
+- If the PRTG API fails in `auto` mode, the database answer is returned with a note.
 
 ### prtg_get_sensor_timeseries
 
-Retrieve **HISTORICAL** time series data for analyzing trends over time.
+Retrieve a time series of channel values for a sensor.
 
 #### Description
 
-Returns time-stamped measurements showing how channel values evolved over predefined time periods. Use this to analyze performance trends, identify when issues started, compare metrics between time periods, and detect patterns in historical data.
+Reads historical channel values. In the default `auto` source the series comes from the PRTG Data Exporter target database (`prtg_channel_value`) first; the `live` period and sensors whose export is older than 24 h fall back to the PRTG API when configured. Each answer starts with a `Source:` line. Byte-size units are converted from raw bytes (base 1024).
 
-**For CURRENT values, use `prtg_get_channel_current_values` instead.**
+Windows and buckets from the database:
+
+| Period | Window | Bucket |
+|--------|--------|--------|
+| `live` | 2 h | 5 min |
+| `short` | 24 h | 15 min |
+| `medium` | 7 d | 1 h |
+| `long` | 30 d | 6 h |
 
 #### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `sensor_id` | integer | **Yes** | - | PRTG sensor ID |
-| `time_type` | string | **Yes** | - | Time period: `live`, `short`, `medium`, or `long` |
-
-#### Time Periods
-
-| Time Type | Coverage | Typical Use Case |
-|-----------|----------|------------------|
-| `live` | Last few minutes | Real-time monitoring, immediate troubleshooting |
-| `short` | Last 24 hours | Daily trend analysis, recent performance issues |
-| `medium` | Last 7 days | Weekly trends, recurring issues |
-| `long` | Last 30+ days | Monthly trends, long-term capacity planning |
+| `sensor_id` | integer | Yes | - | PRTG sensor ID |
+| `period` | string | No | `short` | `live`, `short`, `medium` or `long` |
+| `source` | string | No | `auto` | `auto`, `database` or `prtg` |
 
 #### Examples
 
-**Analyze last 24 hours of sensor data:**
 ```json
 {
   "name": "prtg_get_sensor_timeseries",
   "arguments": {
     "sensor_id": 12345,
-    "time_type": "short"
-  }
-}
-```
-
-**Check recent activity (live data):**
-```json
-{
-  "name": "prtg_get_sensor_timeseries",
-  "arguments": {
-    "sensor_id": 54321,
-    "time_type": "live"
-  }
-}
-```
-
-**Analyze weekly trends:**
-```json
-{
-  "name": "prtg_get_sensor_timeseries",
-  "arguments": {
-    "sensor_id": 67890,
-    "time_type": "medium"
+    "period": "medium"
   }
 }
 ```
 
 #### Response Format
 
-Returns a visual summary with sparklines, trends, and statistics, followed by a data table:
-
 ```
-# Time Series Data - Sensor 12345 (short)
+Source: database (PRTG Data Exporter)
 
-Total data points: 145
-Channels: Response Time, Traffic In, Traffic Out
+# Time Series Data - Sensor 12345 (medium)
 
 ## Quick Trend
-
-**Sparkline (Response Time):** ▁▂▃▅▇▅▃▂▁ UP
-**Stats:** Min: 42.1 | Max: 48.6 | Avg: 44.5 | Current: 45.2
-
-WARNING: **1 anomaly/anomalies detected**
-- Index 87: 78.3 (expected: ~44.5)
+▁▂▃▅▇▅▃▂▁
 
 ## Measurements
-
-| Timestamp | Response Time | Traffic In | Traffic Out |
-|-----------|---------------|------------|-------------|
-| 2025-10-26 10:30:00 | 45.23 | 1234567.89 | 987654.32 |
-| 2025-10-26 10:25:00 | 43.12 | 1198765.43 | 965432.10 |
-| 2025-10-26 10:20:00 | 48.56 | 1345678.90 | 1023456.78 |
-| 2025-10-26 10:15:00 | 42.34 | 1123456.78 | 945678.90 |
-| ... | ... | ... | ... |
-| 2025-10-25 10:35:00 | 44.67 | 1267890.12 | 978901.23 |
+| Time | Value | Unit |
+|------|-------|------|
+| ... | ... | ... |
 ```
-
-**Visualization Elements:**
-
-- **Sparkline**: ASCII visualization using `▁▂▃▄▅▆▇█` characters showing value progression
-- **Trend Indicator**: `UP` (rising), `DOWN` (falling), or `FLAT` (stable) based on comparing first and second half averages
-- **Compact Stats**: Min, Max, Average, and Current value for quick reference
-- **Anomaly Detection**: Automatic detection of outliers (values >2 standard deviations from mean)
-
-**Note:**
-- If more than 15 data points exist, the table shows the first 10 and last 5 points with "..." indicating truncation
-- Visualizations are automatically generated for the first numeric channel in the response
-- Anomaly detection requires at least 10 data points
 
 #### Notes
 
-- This tool queries PRTG API v2 for historical data
-- Data granularity depends on PRTG's configured averaging intervals
-- Not all channels may be available for all time periods
-- Custom date ranges are not supported (the PRTG API v2 endpoint does not accept them); choose the closest `time_type` period (`live`, `short`, `medium`, `long`)
-- Large datasets may be truncated in display (summary provided)
-
----
+- The tool is registered when the database holds channel history or the PRTG API is configured.
+- If the PRTG API fails in `auto` mode, the database answer is returned with a note.
 
 ## Database Schema
 
