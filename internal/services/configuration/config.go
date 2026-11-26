@@ -275,14 +275,19 @@ func (c *Configuration) loadConfiguration() error {
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, &c.data); err != nil {
+	// Parse and resolve secrets into a copy so a bad file keeps the current
+	// configuration, including the credentials in use, untouched.
+	var parsed ConfigData
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
 		return fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	encrypted, err := c.processSecrets()
+	encrypted, err := c.processSecrets(&parsed)
 	if err != nil {
 		return err
 	}
+
+	c.data = parsed
 
 	if encrypted > 0 {
 		if err := c.saveConfiguration(); err != nil {
@@ -302,68 +307,45 @@ func (c *Configuration) loadConfiguration() error {
 
 // processSecrets decrypts encrypted secrets into memory and encrypts clear-text ones in c.data.
 // It returns the number of values that were clear text and therefore must be persisted encrypted.
-func (c *Configuration) processSecrets() (int, error) {
+func (c *Configuration) processSecrets(data *ConfigData) (int, error) {
+	fields := []struct {
+		name   string
+		stored *string
+		plain  *string
+	}{
+		{"server.api_key", &data.Server.APIKey, new(string)},
+		{"database.password", &data.Database.Password, new(string)},
+		{"prtg.api_token", &data.PRTG.APIToken, new(string)},
+	}
+
 	encrypted := 0
 
-	apiKey := c.data.Server.APIKey
-	switch {
-	case secrets.IsEncrypted(apiKey):
-		plain, err := c.secrets.Decrypt(apiKey)
-		if err != nil {
-			return 0, fmt.Errorf("server.api_key: %w", err)
-		}
+	for _, f := range fields {
+		value := *f.stored
 
-		c.plain.apiKey = plain
-	case apiKey != "":
-		enc, err := c.secrets.Encrypt(apiKey)
-		if err != nil {
-			return 0, fmt.Errorf("server.api_key: %w", err)
-		}
+		switch {
+		case secrets.IsEncrypted(value):
+			plain, err := c.secrets.Decrypt(value)
+			if err != nil {
+				return 0, fmt.Errorf("%s: %w", f.name, err)
+			}
 
-		c.data.Server.APIKey = enc
-		c.plain.apiKey = apiKey
-		encrypted++
+			*f.plain = plain
+		case value != "":
+			enc, err := c.secrets.Encrypt(value)
+			if err != nil {
+				return 0, fmt.Errorf("%s: %w", f.name, err)
+			}
+
+			*f.stored = enc
+			*f.plain = value
+			encrypted++
+		}
 	}
 
-	dbPassword := c.data.Database.Password
-	switch {
-	case secrets.IsEncrypted(dbPassword):
-		plain, err := c.secrets.Decrypt(dbPassword)
-		if err != nil {
-			return 0, fmt.Errorf("database.password: %w", err)
-		}
-
-		c.plain.dbPassword = plain
-	case dbPassword != "":
-		enc, err := c.secrets.Encrypt(dbPassword)
-		if err != nil {
-			return 0, fmt.Errorf("database.password: %w", err)
-		}
-
-		c.data.Database.Password = enc
-		c.plain.dbPassword = dbPassword
-		encrypted++
-	}
-
-	prtgToken := c.data.PRTG.APIToken
-	switch {
-	case secrets.IsEncrypted(prtgToken):
-		plain, err := c.secrets.Decrypt(prtgToken)
-		if err != nil {
-			return 0, fmt.Errorf("prtg.api_token: %w", err)
-		}
-
-		c.plain.prtgToken = plain
-	case prtgToken != "":
-		enc, err := c.secrets.Encrypt(prtgToken)
-		if err != nil {
-			return 0, fmt.Errorf("prtg.api_token: %w", err)
-		}
-
-		c.data.PRTG.APIToken = enc
-		c.plain.prtgToken = prtgToken
-		encrypted++
-	}
+	c.plain.apiKey = *fields[0].plain
+	c.plain.dbPassword = *fields[1].plain
+	c.plain.prtgToken = *fields[2].plain
 
 	return encrypted, nil
 }

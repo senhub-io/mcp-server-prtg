@@ -152,3 +152,22 @@ func TestLoadConfigurationDoesNotCreateMissingFile(t *testing.T) {
 	_, statErr := os.Stat(path)
 	assert.True(t, os.IsNotExist(statErr))
 }
+
+func TestReloadOfBrokenFileKeepsCurrentSecrets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeConfigFile(t, path, ConfigData{
+		ConfigVersion: CurrentConfigVersion,
+		Server:        ServerConfig{APIKey: "key-1234567890abcdef"},
+		Database:      DatabaseConfig{Password: "db-secret"},
+	})
+
+	cfg, err := LoadConfiguration(newTestArgs(path), newTestLogger(dir))
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(path, []byte("server: [not a map"), 0600))
+	require.Error(t, cfg.loadConfiguration())
+
+	assert.Equal(t, "key-1234567890abcdef", cfg.GetAPIKey())
+	assert.Contains(t, cfg.GetDatabaseConnectionString(), "password='db-secret'")
+}
