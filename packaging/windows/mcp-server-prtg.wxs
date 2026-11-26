@@ -257,6 +257,10 @@
                   Arguments="config client --window"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="senhub.ico" />
+        <util:InternetShortcut Id="AdminPageLnk"
+                               Directory="ProgramMenuDir"
+                               Name="MCP Server PRTG - Administration"
+                               Target="https://localhost:[MCPPORT]/admin/" />
         <RemoveFolder Id="RemoveProgramMenuDir" Directory="ProgramMenuDir" On="uninstall" />
       </Component>
     </Directory>
