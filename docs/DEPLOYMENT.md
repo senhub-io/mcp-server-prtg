@@ -117,7 +117,9 @@ To change settings later, run `config init` with only the settings to change (it
 Restart-Service mcp-server-prtg
 ```
 
-A web admin page is planned for a later beta.
+### Administration page
+
+The service serves an administration page at `https://localhost:<port>/admin/` (8443 by default), reachable **from the server itself only**. Sign in with the MCP API key (`config show-api-key`). It shows the service, database and PRTG status, the channel history coverage and the Data Exporter collection profiles; it edits the database, PRTG API v2, port and log level settings, with **Test connection** buttons for the database and PRTG that use the values typed in the form before anything is saved; and it shows the AI client configuration with a copy button. Passwords and tokens are never sent back to the browser: leave a secret field empty to keep the stored value. **Save and restart** writes `config.yaml` (secrets encrypted) and restarts the service through the service manager.
 
 Example:
 

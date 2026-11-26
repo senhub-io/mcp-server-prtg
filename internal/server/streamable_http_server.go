@@ -184,6 +184,7 @@ type StreamableHTTPServer struct {
 	address        string
 	shutdownCh     chan struct{}
 	shutdownOnce   sync.Once
+	adminHandler   http.Handler
 }
 
 // NewStreamableHTTPServer creates a new Streamable HTTP-based MCP server.
@@ -204,6 +205,12 @@ func NewStreamableHTTPServer(
 		address:     config.GetServerAddress(),
 		shutdownCh:  make(chan struct{}),
 	}
+}
+
+// SetAdminHandler mounts the local administration page under /admin/.
+// It must be called before Start.
+func (s *StreamableHTTPServer) SetAdminHandler(h http.Handler) {
+	s.adminHandler = h
 }
 
 // Start starts the Streamable HTTP server.
@@ -242,6 +249,11 @@ func (s *StreamableHTTPServer) startHTTPServer() error {
 	mux.HandleFunc("/health", s.handleHealth)
 
 	mux.Handle("/status", createAuthMiddleware(http.HandlerFunc(s.handleStatus), s.config.GetAPIKey, s.rateLimiter, s.logger))
+
+	if s.adminHandler != nil {
+		mux.Handle("/admin/", s.adminHandler)
+		mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently))
+	}
 
 	s.httpServer = &http.Server{
 		Addr:              s.address,
