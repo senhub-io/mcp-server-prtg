@@ -54,11 +54,13 @@ func runStdioMode() error {
 
 	// Initialize PRTG client
 	prtgClient, err := prtg.NewClient(prtg.ClientConfig{
-		BaseURL:   config.PRTGURL,
-		Token:     config.PRTGToken,
-		Timeout:   time.Duration(config.Timeout) * time.Second,
-		VerifySSL: config.VerifySSL,
-		Logger:    &logger,
+		BaseURL:       config.PRTGURL,
+		Token:         config.PRTGToken,
+		Timeout:       time.Duration(config.Timeout) * time.Second,
+		VerifySSL:     config.VerifySSL,
+		Logger:        &logger,
+		MaxConcurrent: config.MaxConcurrent,
+		CacheDisabled: config.CacheDisabled,
 	})
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to create PRTG client")
@@ -151,24 +153,28 @@ func runStdioMode() error {
 
 // Config holds stdio mode configuration loaded from environment variables.
 type Config struct {
-	PRTGURL     string
-	PRTGToken   string
-	PRTGEnabled bool
-	Timeout     int
-	VerifySSL   bool
-	LogLevel    string
+	PRTGURL       string
+	PRTGToken     string
+	PRTGEnabled   bool
+	Timeout       int
+	VerifySSL     bool
+	LogLevel      string
+	MaxConcurrent int
+	CacheDisabled bool
 }
 
 // loadConfigFromEnv loads configuration from environment variables.
 // This replaces the YAML config file for stdio mode.
 func loadConfigFromEnv(logger *zerolog.Logger) (*Config, error) {
 	config := &Config{
-		PRTGURL:     getEnv("PRTG_URL", ""),
-		PRTGToken:   getEnv("PRTG_API_TOKEN", ""),
-		PRTGEnabled: getEnvBool("PRTG_ENABLED", true),
-		Timeout:     getEnvInt("PRTG_TIMEOUT", 30, logger),
-		VerifySSL:   getEnvBool("PRTG_VERIFY_SSL", true),
-		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		PRTGURL:       getEnv("PRTG_URL", ""),
+		PRTGToken:     getEnv("PRTG_API_TOKEN", ""),
+		PRTGEnabled:   getEnvBool("PRTG_ENABLED", true),
+		Timeout:       getEnvInt("PRTG_TIMEOUT", 30, logger),
+		VerifySSL:     getEnvBool("PRTG_VERIFY_SSL", true),
+		MaxConcurrent: getEnvInt("PRTG_MAX_CONCURRENT", 2, logger),
+		CacheDisabled: getEnvBool("PRTG_CACHE_DISABLED", false),
+		LogLevel:      getEnv("LOG_LEVEL", "info"),
 	}
 
 	return config, nil

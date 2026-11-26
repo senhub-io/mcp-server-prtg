@@ -84,7 +84,7 @@ type SearchResults struct {
 // Tag represents a PRTG tag with usage statistics.
 type Tag struct {
 	ID          int    `json:"id"`
-	ServerID    int    `json:"server_id"`
+	ServerID    int    `json:"server_id,omitempty"`
 	Name        string `json:"name"`
 	SensorCount int    `json:"sensor_count"`
 }
@@ -111,20 +111,45 @@ const (
 // Statistics represents aggregated PRTG server statistics.
 // Used by the prtg_get_statistics MCP tool to provide server-wide metrics.
 type Statistics struct {
-	TotalSensors        int               `json:"total_sensors"`
-	TotalDevices        int               `json:"total_devices"`
-	TotalGroups         int               `json:"total_groups"`
-	TotalTags           int               `json:"total_tags"`
-	SensorsByStatus     map[string]int    `json:"sensors_by_status"`
-	TopSensorTypes      []SensorTypeCount `json:"top_sensor_types"`
-	AvgSensorsPerDevice float64           `json:"avg_sensors_per_device"`
-	TotalProbes         int               `json:"total_probes"`
+	TotalSensors        int                 `json:"total_sensors"`
+	TotalDevices        int                 `json:"total_devices"`
+	TotalGroups         int                 `json:"total_groups"`
+	TotalTags           int                 `json:"total_tags"`
+	SensorsByStatus     map[string]int      `json:"sensors_by_status"`
+	TopSensorTypes      []SensorTypeCount   `json:"top_sensor_types"`
+	AvgSensorsPerDevice float64             `json:"avg_sensors_per_device"`
+	TotalProbes         int                 `json:"total_probes"`
+	LastCollectionUTC   *time.Time          `json:"last_collection_utc,omitempty"`
+	CollectionErrors    bool                `json:"collection_has_errors,omitempty"`
+	ExportCoverage      *ExportCoverage     `json:"export_coverage,omitempty"`
+	Profiles            []CollectionProfile `json:"collection_profiles,omitempty"`
 }
 
 // SensorTypeCount represents a count of sensors by type.
 type SensorTypeCount struct {
 	Type  string `json:"type"`
 	Count int    `json:"count"`
+}
+
+// ExportCoverage summarizes how fresh the Data Exporter channel history is across live sensors.
+type ExportCoverage struct {
+	UpToDate         int `json:"sensors_up_to_date"`    // last fetch within FreshWithin
+	Stale            int `json:"sensors_stale"`         // last fetch older than FreshWithin
+	NeverFetched     int `json:"sensors_never_fetched"` // tracked row with NULL last fetch
+	NoData           int `json:"sensors_without_data"`  // no_monitoring_data = true
+	NotTracked       int `json:"sensors_not_tracked"`   // live sensors without a tracking row
+	FreshWithinHours int `json:"fresh_within_hours"`
+}
+
+// CollectionProfile describes one Data Exporter collection profile row.
+type CollectionProfile struct {
+	Alias       string     `json:"alias"`
+	Kind        string     `json:"kind"` // "metrics", "status" or "type <n>"
+	LastEndUTC  time.Time  `json:"last_collection_end_utc"`
+	NextUTC     *time.Time `json:"next_collection_utc,omitempty"`
+	HasErrors   bool       `json:"has_errors"`
+	HasWarnings bool       `json:"has_warnings"`
+	Paused      bool       `json:"paused"`
 }
 
 // GetStatusText returns the human-readable name for a PRTG status code (1-14).

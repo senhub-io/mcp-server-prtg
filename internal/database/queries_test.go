@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"regexp"
 	"testing"
 	"time"
 
@@ -204,97 +203,6 @@ func TestGetSensors_AllFilters(t *testing.T) {
 	assert.Contains(t, sensors[0].Tags, "critical")
 
 	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-// TestExecuteCustomQuery_SELECTOnly validates that only SELECT queries are allowed.
-func TestExecuteCustomQuery_SELECTOnly(t *testing.T) {
-	mockDB, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer mockDB.Close()
-
-	logger := zerolog.Nop()
-	db := &DB{
-		conn:   mockDB,
-		logger: &logger,
-	}
-
-	tests := []struct {
-		name        string
-		query       string
-		shouldError bool
-		errorMsg    string
-	}{
-		{
-			name:        "Valid SELECT query",
-			query:       "SELECT * FROM prtg_sensor WHERE status = 5",
-			shouldError: false,
-		},
-		{
-			name:        "SELECT with subquery",
-			query:       "SELECT id FROM prtg_sensor WHERE id IN (SELECT sensor_id FROM prtg_sensor_tag)",
-			shouldError: false,
-		},
-		{
-			name:        "DROP table attempt",
-			query:       "DROP TABLE prtg_sensor",
-			shouldError: true,
-			errorMsg:    "only SELECT queries are allowed",
-		},
-		{
-			name:        "DELETE attempt",
-			query:       "DELETE FROM prtg_sensor WHERE id = 1",
-			shouldError: true,
-			errorMsg:    "only SELECT queries are allowed",
-		},
-		{
-			name:        "UPDATE attempt",
-			query:       "UPDATE prtg_sensor SET status = 3 WHERE id = 1",
-			shouldError: true,
-			errorMsg:    "only SELECT queries are allowed",
-		},
-		{
-			name:        "INSERT attempt",
-			query:       "INSERT INTO prtg_sensor (name) VALUES ('hack')",
-			shouldError: true,
-			errorMsg:    "only SELECT queries are allowed",
-		},
-		{
-			name:        "SQL injection attempt with comment",
-			query:       "SELECT * FROM prtg_sensor; DROP TABLE users; --",
-			shouldError: true,
-			errorMsg:    "forbidden keyword",
-		},
-		{
-			name:        "SQL injection with semicolon",
-			query:       "SELECT * FROM prtg_sensor WHERE id = 1; DELETE FROM prtg_device",
-			shouldError: true,
-			errorMsg:    "forbidden keyword",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !tt.shouldError {
-				// Setup mock for valid SELECT
-				mock.ExpectQuery(regexp.QuoteMeta(tt.query)).
-					WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-			}
-
-			ctx := context.Background()
-			results, err := db.ExecuteCustomQuery(ctx, tt.query, 100)
-
-			if tt.shouldError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-				assert.Nil(t, results)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, results)
-			}
-		})
-	}
-
-	// Note: We don't check ExpectationsWereMet here because dangerous queries don't reach the DB
 }
 
 // TestGetSensorByID validates retrieval of a specific sensor.

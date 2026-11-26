@@ -429,13 +429,19 @@ func (c *Configuration) GetServerAddress() string {
 // GetDatabaseConnectionString returns the PostgreSQL connection string.
 func (c *Configuration) GetDatabaseConnectionString() string {
 	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s",
-		c.data.Database.Host,
+		quoteConnValue(c.data.Database.Host),
 		c.data.Database.Port,
-		c.data.Database.Name,
-		c.data.Database.User,
-		c.data.Database.Password,
-		c.data.Database.SSLMode,
+		quoteConnValue(c.data.Database.Name),
+		quoteConnValue(c.data.Database.User),
+		quoteConnValue(c.data.Database.Password),
+		quoteConnValue(c.data.Database.SSLMode),
 	)
+}
+
+// quoteConnValue quotes a libpq keyword/value: unquoted, an empty or
+// space-containing value shifts the following keywords into it.
+func quoteConnValue(v string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }
 
 // GetDatabaseHost returns the database host.

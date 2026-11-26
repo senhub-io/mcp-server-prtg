@@ -108,21 +108,21 @@ func (h *APIv2ToolHandler) handleGetSensors(ctx context.Context, request mcptool
 	var filterExpressions []string
 
 	if sensorName, ok := args["sensor_name"].(string); ok && sensorName != "" {
-		filterExpressions = append(filterExpressions, fmt.Sprintf("name contains \"%s\"", sensorName))
+		filterExpressions = append(filterExpressions, "name contains "+prtg.FilterText(sensorName))
 	}
 
 	if deviceName, ok := args["device_name"].(string); ok && deviceName != "" {
 		// Filter by parent device name
-		filterExpressions = append(filterExpressions, fmt.Sprintf("parent.name contains \"%s\"", deviceName))
+		filterExpressions = append(filterExpressions, "parent.name contains "+prtg.FilterText(deviceName))
 	}
 
 	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
 		// Filter by group - PRTG sensors have a group field
-		filterExpressions = append(filterExpressions, fmt.Sprintf("group contains \"%s\"", groupName))
+		filterExpressions = append(filterExpressions, "group contains "+prtg.FilterText(groupName))
 	}
 
 	if tags, ok := args["tags"].(string); ok && tags != "" {
-		filterExpressions = append(filterExpressions, fmt.Sprintf("tags contains \"%s\"", tags))
+		filterExpressions = append(filterExpressions, "tags contains "+prtg.FilterText(tags))
 	}
 
 	// Pass filter expressions as a slice - buildQueryParams will create multiple filter parameters
@@ -279,7 +279,7 @@ func (h *APIv2ToolHandler) handleGetAlerts(ctx context.Context, request mcptool.
 	}
 
 	if deviceName, ok := args["device_name"].(string); ok && deviceName != "" {
-		filters["filter"] = fmt.Sprintf("parent.name contains \"%s\"", deviceName)
+		filters["filter"] = "parent.name contains " + prtg.FilterText(deviceName)
 	}
 
 	filters["limit"] = 100
@@ -338,7 +338,7 @@ func (h *APIv2ToolHandler) handleDeviceOverview(ctx context.Context, request mcp
 
 	// Search for devices by name
 	filters := map[string]interface{}{
-		"filter": fmt.Sprintf("name contains \"%s\"", deviceName),
+		"filter": "name contains " + prtg.FilterText(deviceName),
 		"limit":  10,
 	}
 
@@ -434,7 +434,7 @@ func (h *APIv2ToolHandler) handleGetHierarchy(ctx context.Context, request mcpto
 	filters := make(map[string]interface{})
 
 	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
-		filters["filter"] = fmt.Sprintf("name contains \"%s\"", groupName)
+		filters["filter"] = "name contains " + prtg.FilterText(groupName)
 	}
 
 	filters["limit"] = 100
@@ -502,7 +502,7 @@ func (h *APIv2ToolHandler) handleSearch(ctx context.Context, request mcptool.Cal
 	}
 
 	filters := map[string]interface{}{
-		"filter": fmt.Sprintf("name contains \"%s\"", searchTerm),
+		"filter": "name contains " + prtg.FilterText(searchTerm),
 		"limit":  limit,
 	}
 
@@ -562,7 +562,7 @@ func (h *APIv2ToolHandler) handleGetGroups(ctx context.Context, request mcptool.
 	filters := make(map[string]interface{})
 
 	if groupName, ok := args["group_name"].(string); ok && groupName != "" {
-		filters["filter"] = fmt.Sprintf("name contains \"%s\"", groupName)
+		filters["filter"] = "name contains " + prtg.FilterText(groupName)
 	}
 
 	if parentID, ok := args["parent_id"].(float64); ok {
@@ -707,7 +707,7 @@ func (h *APIv2ToolHandler) handleGetBusinessProcesses(ctx context.Context, reque
 	filters["filter"] = "kind contains \"businessprocess\""
 
 	if processName, ok := args["process_name"].(string); ok && processName != "" {
-		filters["filter"] = fmt.Sprintf("name contains \"%s\"", processName)
+		filters["filter"] = "name contains " + prtg.FilterText(processName)
 	}
 
 	if status, ok := args["status"].(float64); ok {
