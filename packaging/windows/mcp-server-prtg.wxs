@@ -45,8 +45,11 @@
   <!-- Detects an existing operator config so the setup dialogs are only
        shown on a fresh install; upgrades/repairs go straight to VerifyReady. -->
   <Property Id="CONFIG_EXISTS">
-    <FileSearch Id="ConfigExistsSearch"
-                Path="[CommonAppDataFolder]Sensor Factory\MCP Server PRTG\config.yaml" />
+    <DirectorySearch Id="DataFolderSearch"
+                     Path="[CommonAppDataFolder]Sensor Factory\MCP Server PRTG"
+                     Depth="0">
+      <FileSearch Id="ConfigExistsSearch" Name="config.yaml" />
+    </DirectorySearch>
   </Property>
 
   <!-- Foreign-install guard. EXISTING_SERVICE detects a service created by
