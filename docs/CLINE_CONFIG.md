@@ -180,23 +180,22 @@ Cline should use `prtg_get_sensors` tool automatically.
 Once connected, Cline will have access to all MCP Server PRTG tools:
 
 **PostgreSQL-based (12 tools):**
-- `prtg_get_sensors` - Query sensors
-- `prtg_get_alerts` - Active alerts
-- `prtg_get_devices` - Devices list
-- `prtg_get_groups` - Groups hierarchy
-- `prtg_get_probes` - Probes list
-- `prtg_get_channels` - Sensor channels
-- `prtg_get_tags` - Tags list
-- `prtg_get_sensor_history` - Historical data
-- `prtg_get_notifications` - Notifications
-- `prtg_get_business_processes` - Business processes
-- `prtg_get_statistics` - System stats
-- `prtg_custom_query` - Custom SQL (if enabled)
+- `prtg_get_sensors` - Query sensors with filters
+- `prtg_get_sensor_status` - Detailed sensor status
+- `prtg_get_alerts` - Sensors in alert state (not Up)
+- `prtg_device_overview` - Device summary with its sensors
+- `prtg_top_sensors` - Top sensors by uptime, downtime or alerts
+- `prtg_get_hierarchy` - Group, device and sensor tree
+- `prtg_search` - Search groups, devices and sensors
+- `prtg_get_groups` - List groups
+- `prtg_get_tags` - List tags
+- `prtg_get_business_processes` - Business process status
+- `prtg_get_statistics` - System statistics
+- `prtg_query_sql` - Custom SQL queries (only if `allow_custom_queries: true`)
 
-**PRTG API v2 (3 tools):**
-- `prtg_get_channel_current_values` - Real-time data
-- `prtg_get_sensor_timeseries` - Time series
-- `prtg_get_sensor_history_custom` - Custom queries
+**PRTG API v2 (2 tools, when `prtg.enabled: true`):**
+- `prtg_get_channel_current_values` - Current channel values
+- `prtg_get_sensor_timeseries` - Time series data for a predefined period (`live`, `short`, `medium`, `long`)
 
 See [TOOLS.md](TOOLS.md) for complete documentation.
 
@@ -300,7 +299,7 @@ Analyze PRTG alerts and create a report with recommendations
 
 Cline will:
 1. Query alerts using `prtg_get_alerts`
-2. Get device details using `prtg_get_devices`
+2. Get device details using `prtg_device_overview`
 3. Analyze patterns
 4. Create a markdown report
 5. Save to file (with your permission)

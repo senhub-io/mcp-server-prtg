@@ -7,7 +7,7 @@
 
 ## Features
 
-- ✅ **15 MCP Tools** for querying PRTG data (sensors, alerts, hierarchy, metrics, etc.)
+- ✅ **13 MCP Tools** for querying PRTG data (sensors, alerts, hierarchy, metrics, etc.)
 - ✅ **stdio Protocol** - Runs locally as a child process (no server infrastructure needed)
 - ✅ **PRTG API v2** Integration for real-time metrics and historical data
 - ✅ **ASCII Visualizations** - Sparklines, trend indicators, and statistics
@@ -66,9 +66,11 @@ Similar configuration in their respective config files. See [full documentation]
 | `PRTG_API_TOKEN` | ✅ Yes | - | PRTG API v2 Bearer token |
 | `PRTG_VERIFY_SSL` | No | `true` | Verify SSL certificates (`true`/`false`) |
 | `PRTG_TIMEOUT` | No | `30` | HTTP request timeout in seconds |
-| `PRTG_MAX_CONCURRENT` | No | `2` | Maximum PRTG API requests in flight at once, to protect the PRTG core server |
-| `PRTG_CACHE_DISABLED` | No | `false` | Disable the response cache (30 s for sensor lists and statuses, 5 min for groups and history) |
+| `PRTG_MAX_CONCURRENT` | No | `2` | Maximum PRTG API requests in flight, to protect the PRTG core server |
+| `PRTG_CACHE_DISABLED` | No | `false` | Disable the response cache (`true`/`false`) |
 | `LOG_LEVEL` | No | `info` | Logging level (`debug`, `info`, `warn`, `error`) |
+
+All PRTG API v2 calls go through a request guard that protects the PRTG core server: responses are cached (30 s for sensor lists and statuses, 60 s for channels and devices, 5 min for groups, objects and non-live time series), identical concurrent requests are coalesced, and at most `PRTG_MAX_CONCURRENT` requests are in flight.
 
 ### Restart MCP Client
 
@@ -86,9 +88,9 @@ Once configured, you can ask your LLM:
 "Show me a sparkline chart of CPU usage over the last day"
 ```
 
-The MCP server provides 15 tools:
+In stdio mode, the MCP server provides 13 tools, all backed by PRTG API v2 (no database access):
 
-### Core Tools (Database)
+### Core Tools
 - `prtg_get_sensors` - List sensors with filters
 - `prtg_get_sensor_status` - Get sensor details
 - `prtg_get_alerts` - Find sensors in alert state
@@ -100,12 +102,12 @@ The MCP server provides 15 tools:
 - `prtg_get_tags` - List tags
 - `prtg_get_business_processes` - Query Business Process sensors
 - `prtg_get_statistics` - Server-wide statistics
-- `prtg_query_sql` - Custom SQL queries
+
+`prtg_query_sql` (custom SQL) is only available in HTTP mode with the PRTG Data Exporter PostgreSQL database.
 
 ### Metrics Tools (API v2)
 - `prtg_get_channel_current_values` - Current channel values
-- `prtg_get_sensor_timeseries` - Historical time series
-- `prtg_get_sensor_history_custom` - Custom date range queries
+- `prtg_get_sensor_timeseries` - Historical time series for a predefined period (`live`, `short`, `medium`, `long`)
 
 ## Architecture
 
@@ -167,11 +169,12 @@ v2.0 uses stdio mode instead of HTTP server. To migrate:
 2. **Update MCP client config** to use the new stdio format (see above)
 3. **Remove server infrastructure** (no more TLS certs, firewall rules, systemd services)
 
-Old v1.x HTTP mode is still available via the standalone binary (`mcp-server-prtg run`).
+Old v1.x HTTP mode is still available via the standalone binary (`mcp-server-prtg run`). On Windows, the recommended way to run it as a service is the MSI installer; see the [Deployment Guide](https://github.com/senhub-io/mcp-server-prtg/blob/main/docs/DEPLOYMENT.md) for installation, updates and rollbacks.
 
 ## Documentation
 
 - [Installation Guide](https://github.com/senhub-io/mcp-server-prtg/blob/main/docs/INSTALLATION.md)
+- [Deployment and Updates](https://github.com/senhub-io/mcp-server-prtg/blob/main/docs/DEPLOYMENT.md)
 - [Configuration Guide](https://github.com/senhub-io/mcp-server-prtg/blob/main/docs/CONFIGURATION.md)
 - [MCP Tools Reference](https://github.com/senhub-io/mcp-server-prtg/blob/main/docs/TOOLS.md)
 - [Usage Examples](https://github.com/senhub-io/mcp-server-prtg/blob/main/docs/USAGE.md)
