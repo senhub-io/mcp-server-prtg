@@ -168,7 +168,7 @@ func buildQueryParams(filters map[string]interface{}) url.Values {
 					// User passes "http" but PRTG stores "osk.http" in kind field
 					// Use contains to match the suffix
 					if v, ok := value.(string); ok && v != "" {
-						filterValue := fmt.Sprintf("kind contains \"%s\"", v)
+						filterValue := "kind contains " + FilterText(v)
 						params.Add("filter", filterValue)
 					}
 				} else {
