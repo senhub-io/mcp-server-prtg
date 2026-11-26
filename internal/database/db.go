@@ -81,10 +81,8 @@ func (db *DB) Query(ctx context.Context, query string, args ...interface{}) (*sq
 }
 
 // QueryRow executes a query expected to return at most one row.
+// The context must stay valid until Scan is called on the returned row.
 func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	db.logger.Debug().
 		Str("query", query).
 		Interface("args", args).
