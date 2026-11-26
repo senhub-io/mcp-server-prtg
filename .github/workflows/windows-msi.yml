@@ -27,7 +27,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-msi:
@@ -64,9 +64,13 @@ jobs:
 
       - name: Detect code signing
         env:
-          CODESIGN_STORETYPE: ${{ secrets.CODESIGN_STORETYPE }}
+          CODESIGN_STORETYPE: ${{ github.event_name != 'pull_request' && secrets.CODESIGN_STORETYPE || '' }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ -z "$CODESIGN_STORETYPE" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "Pull request build: not signed, signing secrets stay out of unreviewed code"
+            echo "SIGNING_ENABLED=false" >> "$GITHUB_ENV"
+          elif [ -z "$CODESIGN_STORETYPE" ]; then
             echo "::warning::CODESIGN_STORETYPE secret is not set; the exe and MSI will not be signed"
             echo "SIGNING_ENABLED=false" >> "$GITHUB_ENV"
           else
@@ -175,11 +179,23 @@ jobs:
             dist/*.sha256
           if-no-files-found: error
 
-      - name: Upload to release
-        if: inputs.release_tag != ''
+  upload-release:
+    needs: build-msi
+    if: inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download MSI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcp-server-prtg-msi
+          path: dist
+
+      - name: Attach MSI to the release
         env:
           INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          TAG="${INPUT_RELEASE_TAG}"
-          gh release upload "$TAG" dist/*.msi dist/*.sha256 --clobber
+          gh release upload "$INPUT_RELEASE_TAG" dist/*.msi dist/*.sha256 --clobber
