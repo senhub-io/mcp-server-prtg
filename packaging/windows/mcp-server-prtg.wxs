@@ -1,28 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  MSI for the MCP Server PRTG Go service.
+  MSI for the MCP Server PRTG Go service (WiX v5).
 
-  Build (see .github/workflows/windows-msi.yml):
+  Build:
     wix build packaging/windows/mcp-server-prtg.wxs \
       -d Version=X.Y.Z -d BinDir=dist/windows-amd64 \
-      -arch x64 -ext WixToolset.Util.wixext \
-      -out dist/mcp-server-prtg-X.Y.Z-amd64.msi
+      -arch x64 -ext WixToolset.Util.wixext -ext WixToolset.UI.wixext \
+      -out out.msi
 
   Silent install:
-    msiexec /i mcp-server-prtg-X.Y.Z-amd64.msi /qn [ADOPT=1] /l*v install.log
+    msiexec /i out.msi /qn [ADOPT=1] [DBHOST=... DBPASSWORD=...] /l*v install.log
 
   The MSI installs only the service executable under Program Files.
-  config.yaml, certs and logs live in the CommonAppDataFolder data directory
-  and are created by the service itself at first start, so upgrades and
-  repairs never touch operator configuration. The data directory is kept
-  on uninstall.
+  config.yaml, certs and logs live in the CommonAppDataFolder data directory.
+  On a fresh install the wizard (or the properties of a silent install)
+  feeds "mcp-server-prtg.exe config init", which writes config.yaml with
+  its secrets encrypted; when config.yaml already exists the wizard skips
+  the settings, so upgrades and repairs never touch operator configuration.
+  The data directory is kept on uninstall.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
   <!-- The UpgradeCode below identifies the product line across versions.
-       Never change it once an MSI has shipped: upgrades would stop being
-       detected and two products would install side by side. -->
+       Never change it once an MSI has shipped. -->
   <Package Name="MCP Server PRTG"
            Manufacturer="Sensor Factory"
            Version="$(var.Version)"
@@ -37,14 +39,19 @@
 
   <MediaTemplate EmbedCab="yes" />
 
-
   <Property Id="ARPNOMODIFY" Value="1" />
   <Property Id="ARPURLINFOABOUT" Value="https://github.com/senhub-io/mcp-server-prtg" />
 
+  <!-- Detects an existing operator config so the setup dialogs are only
+       shown on a fresh install; upgrades/repairs go straight to VerifyReady. -->
+  <Property Id="CONFIG_EXISTS">
+    <FileSearch Id="ConfigExistsSearch"
+                Path="[CommonAppDataFolder]Sensor Factory\MCP Server PRTG\config.yaml" />
+  </Property>
+
   <!-- Foreign-install guard. EXISTING_SERVICE detects a service created by
        another method (the built-in install command). MSI_MARKER detects our
-       own registry marker. When a foreign service exists and ADOPT is not
-       set, refuse to install so we do not clobber a live configuration. -->
+       own registry marker. -->
   <Property Id="EXISTING_SERVICE">
     <RegistrySearch Id="ExistingServiceSearch"
                     Root="HKLM"
@@ -63,15 +70,26 @@
                     Bitness="always64" />
   </Property>
 
-  <!-- Secure so it can be passed on the msiexec command line under /qn. -->
+  <!-- Secure so they can be passed on the msiexec command line under /qn.
+       Passwords are Hidden so they never land in the MSI log. -->
   <Property Id="ADOPT" Secure="yes" />
+  <Property Id="DBHOST" Value="localhost" Secure="yes" />
+  <Property Id="DBPORT" Value="5432" Secure="yes" />
+  <Property Id="DBNAME" Value="prtg_data_exporter_collection" Secure="yes" />
+  <Property Id="DBUSER" Value="mcp_prtg_reader" Secure="yes" />
+  <Property Id="DBPASSWORD" Secure="yes" Hidden="yes" />
+  <Property Id="DBSSLMODE" Value="disable" Secure="yes" />
+  <Property Id="MCPPORT" Value="8443" Secure="yes" />
+  <Property Id="PRTGENABLE" Secure="yes" />
+  <Property Id="PRTGURL" Secure="yes" />
+  <Property Id="PRTGTOKEN" Secure="yes" Hidden="yes" />
+  <Property Id="PRTGVERIFYSSL" Secure="yes" />
 
   <Launch Condition="Installed OR MSI_MARKER OR NOT EXISTING_SERVICE OR ADOPT"
           Message="MCP Server PRTG is already installed on this machine as a service created by another method (the built-in install command), so setup will now stop. Either re-run setup with ADOPT=1 to let this installer take it over (copy your existing config.yaml to %ProgramData%\Sensor Factory\MCP Server PRTG\ first to keep it), or remove the existing service first with: sc stop mcp-server-prtg and sc delete mcp-server-prtg." />
 
   <!-- ADOPT mode: stop and delete the foreign service so ServiceInstall can
-       create it under MSI control. Return is ignored on purpose: the service
-       may already be stopped or gone. -->
+       create it under MSI control. Return is ignored on purpose. -->
   <SetProperty Id="AdoptQuietExec"
                Value="&quot;[SystemFolder]cmd.exe&quot; /c &quot;sc stop mcp-server-prtg &amp; sc delete mcp-server-prtg&quot;"
                Before="AdoptQuietExec"
@@ -85,10 +103,44 @@
                 Impersonate="no"
                 Return="ignore" />
 
+  <!-- Fresh-install config writer. Runs after InstallFiles and before
+       StartServices so the service finds its config.yaml at first start.
+       The SetProperty Id must equal the CustomAction Id: WixQuietExec64
+       reads its command line from a property named after the action. -->
+  <SetProperty Id="WriteConfigExec"
+               Value="&quot;[INSTALLFOLDER]mcp-server-prtg.exe&quot; config init --config &quot;[DATAFOLDER]config.yaml&quot; --https --port [MCPPORT] --db-host &quot;[DBHOST]&quot; --db-port [DBPORT] --db-name &quot;[DBNAME]&quot; --db-user &quot;[DBUSER]&quot; --db-password &quot;[DBPASSWORD]&quot; --db-sslmode [DBSSLMODE] --log-file &quot;[DATAFOLDER]logs\mcp-server-prtg.log&quot; --prtg-disable"
+               Before="WriteConfigExec"
+               Sequence="execute"
+               Condition="NOT Installed AND NOT CONFIG_EXISTS AND NOT PRTGENABLE" />
+
+  <SetProperty Id="WriteConfigExec"
+               Value="&quot;[INSTALLFOLDER]mcp-server-prtg.exe&quot; config init --config &quot;[DATAFOLDER]config.yaml&quot; --https --port [MCPPORT] --db-host &quot;[DBHOST]&quot; --db-port [DBPORT] --db-name &quot;[DBNAME]&quot; --db-user &quot;[DBUSER]&quot; --db-password &quot;[DBPASSWORD]&quot; --db-sslmode [DBSSLMODE] --log-file &quot;[DATAFOLDER]logs\mcp-server-prtg.log&quot; --prtg-url &quot;[PRTGURL]&quot; --prtg-token &quot;[PRTGTOKEN]&quot; --prtg-verify-ssl=false"
+               Before="WriteConfigExec"
+               Sequence="execute"
+               Condition="NOT Installed AND NOT CONFIG_EXISTS AND PRTGENABLE AND NOT PRTGVERIFYSSL" />
+
+  <SetProperty Id="WriteConfigExec"
+               Value="&quot;[INSTALLFOLDER]mcp-server-prtg.exe&quot; config init --config &quot;[DATAFOLDER]config.yaml&quot; --https --port [MCPPORT] --db-host &quot;[DBHOST]&quot; --db-port [DBPORT] --db-name &quot;[DBNAME]&quot; --db-user &quot;[DBUSER]&quot; --db-password &quot;[DBPASSWORD]&quot; --db-sslmode [DBSSLMODE] --log-file &quot;[DATAFOLDER]logs\mcp-server-prtg.log&quot; --prtg-url &quot;[PRTGURL]&quot; --prtg-token &quot;[PRTGTOKEN]&quot; --prtg-verify-ssl=true"
+               Before="WriteConfigExec"
+               Sequence="execute"
+               Condition="NOT Installed AND NOT CONFIG_EXISTS AND PRTGENABLE AND PRTGVERIFYSSL" />
+
+  <Property Id="WriteConfigExec" Hidden="yes" />
+
+  <CustomAction Id="WriteConfigExec"
+                BinaryRef="Wix4UtilCA_X64"
+                DllEntry="WixQuietExec64"
+                Execute="deferred"
+                Impersonate="no"
+                Return="check" />
+
   <InstallExecuteSequence>
     <Custom Action="AdoptQuietExec"
             Before="InstallServices"
             Condition="ADOPT AND EXISTING_SERVICE AND NOT MSI_MARKER AND NOT Installed" />
+    <Custom Action="WriteConfigExec"
+            After="InstallFiles"
+            Condition="NOT Installed AND NOT CONFIG_EXISTS" />
   </InstallExecuteSequence>
 
   <StandardDirectory Id="ProgramFiles64Folder">
@@ -186,6 +238,95 @@
     <ComponentRef Id="DataFolders" />
     <ComponentRef Id="RegistryMarker" />
   </Feature>
+
+  <!-- Wizard UI: WixUI_Common dialogs plus two custom config dialogs. -->
+  <UI Id="McpServerPrtgUI">
+    <ui:WixUI Id="WixUI_Common" />
+
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+              Value="The service is running. Show the API key for MCP clients with: &quot;C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe&quot; config show-api-key --config &quot;C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml&quot;" />
+
+    <!-- Fresh install: Welcome goes to the config dialogs; otherwise straight to VerifyReady. -->
+    <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="DatabaseDlg" Condition="NOT CONFIG_EXISTS" />
+    <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="CONFIG_EXISTS" />
+
+
+
+    <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="PrtgDlg" Condition="NOT Installed AND NOT CONFIG_EXISTS" />
+    <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Condition="NOT Installed AND CONFIG_EXISTS" />
+    <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Condition="Installed" />
+
+    <!-- Repair and remove, as in WixUI_Minimal. -->
+    <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+    <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+    <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+    <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+    <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+    <Dialog Id="DatabaseDlg" Width="370" Height="270" Title="PRTG Data Exporter database">
+      <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" />
+      <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="PRTG Data Exporter database" Transparent="yes" NoPrefix="yes" />
+      <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Text="Database connection for the PRTG Data Exporter target." Transparent="yes" NoPrefix="yes" />
+      <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+      <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
+        <Publish Event="NewDialog" Value="WelcomeDlg" />
+      </Control>
+      <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next">
+        <Publish Event="NewDialog" Value="PrtgDlg" />
+      </Control>
+      <Control Id="Cancel" Type="PushButton" X="300" Y="243" Width="56" Height="17" Text="Cancel">
+        <Publish Event="SpawnDialog" Value="CancelDlg" />
+      </Control>
+
+      <Control Id="InfoText" Type="Text" X="20" Y="50" Width="330" Height="20" Text="Use a read-only PostgreSQL role on the Data Exporter target database." NoPrefix="yes" />
+
+      <Control Id="DBHostLabel" Type="Text" X="20" Y="78" Width="100" Height="10" Text="DB host" />
+      <Control Id="DBHostEdit" Type="Edit" X="130" Y="75" Width="220" Height="18" Property="DBHOST" />
+      <Control Id="DBPortLabel" Type="Text" X="20" Y="100" Width="100" Height="10" Text="DB port" />
+      <Control Id="DBPortEdit" Type="Edit" X="130" Y="97" Width="80" Height="18" Property="DBPORT" />
+      <Control Id="DBNameLabel" Type="Text" X="20" Y="122" Width="100" Height="10" Text="DB name" />
+      <Control Id="DBNameEdit" Type="Edit" X="130" Y="119" Width="220" Height="18" Property="DBNAME" />
+      <Control Id="DBUserLabel" Type="Text" X="20" Y="144" Width="100" Height="10" Text="DB user" />
+      <Control Id="DBUserEdit" Type="Edit" X="130" Y="141" Width="220" Height="18" Property="DBUSER" />
+      <Control Id="DBPasswordLabel" Type="Text" X="20" Y="166" Width="100" Height="10" Text="DB password" />
+      <Control Id="DBPasswordEdit" Type="Edit" X="130" Y="163" Width="220" Height="18" Property="DBPASSWORD" Password="yes" />
+      <Control Id="DBSslModeLabel" Type="Text" X="20" Y="188" Width="100" Height="10" Text="DB SSL mode" />
+      <Control Id="DBSslModeCombo" Type="ComboBox" X="130" Y="185" Width="120" Height="18" Property="DBSSLMODE" ComboList="yes">
+        <ComboBox Property="DBSSLMODE">
+          <ListItem Text="disable" Value="disable" />
+          <ListItem Text="require" Value="require" />
+          <ListItem Text="verify-ca" Value="verify-ca" />
+          <ListItem Text="verify-full" Value="verify-full" />
+        </ComboBox>
+      </Control>
+      <Control Id="MCPPortLabel" Type="Text" X="20" Y="210" Width="100" Height="10" Text="MCP server HTTPS port" />
+      <Control Id="MCPPortEdit" Type="Edit" X="130" Y="207" Width="80" Height="18" Property="MCPPORT" />
+    </Dialog>
+
+    <Dialog Id="PrtgDlg" Width="370" Height="270" Title="PRTG API v2 (optional)">
+      <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" />
+      <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="PRTG API v2 (optional)" Transparent="yes" NoPrefix="yes" />
+      <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Text="Optional live PRTG API for real-time data." Transparent="yes" NoPrefix="yes" />
+      <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+      <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
+        <Publish Event="NewDialog" Value="DatabaseDlg" />
+      </Control>
+      <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next">
+        <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+      </Control>
+      <Control Id="Cancel" Type="PushButton" X="300" Y="243" Width="56" Height="17" Text="Cancel">
+        <Publish Event="SpawnDialog" Value="CancelDlg" />
+      </Control>
+
+      <Control Id="PrtgEnable" Type="CheckBox" X="20" Y="60" Width="330" Height="17" Text="Use the PRTG API v2 for real-time data and sensors outside the export" Property="PRTGENABLE" CheckBoxValue="1" />
+
+      <Control Id="PRTGURLLabel" Type="Text" X="20" Y="90" Width="100" Height="10" Text="PRTG URL" />
+      <Control Id="PRTGURLEdit" Type="Edit" X="130" Y="87" Width="220" Height="18" Property="PRTGURL" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
+      <Control Id="PRTGTokenLabel" Type="Text" X="20" Y="113" Width="100" Height="10" Text="API token" />
+      <Control Id="PRTGTokenEdit" Type="Edit" X="130" Y="110" Width="220" Height="18" Property="PRTGTOKEN" Password="yes" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
+      <Control Id="PRTGVerifySSL" Type="CheckBox" X="20" Y="140" Width="330" Height="17" Text="Verify the PRTG certificate" Property="PRTGVERIFYSSL" CheckBoxValue="1" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
+    </Dialog>
+  </UI>
 
   </Package>
 </Wix>
