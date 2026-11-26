@@ -362,5 +362,5 @@ func truncateBody(body []byte) string {
 		return string(body)
 	}
 
-	return string(body[:maxLoggedBody]) + "...(truncated)"
+	return strings.ToValidUTF8(string(body[:maxLoggedBody]), "") + "...(truncated)"
 }
