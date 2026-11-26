@@ -3,7 +3,9 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -539,51 +541,61 @@ func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limi
 	return scanSensors(rows)
 }
 
-// ExecuteCustomQuery executes a custom SQL SELECT query with security validation.
-// Only SELECT queries are allowed - INSERT/UPDATE/DELETE/DROP are rejected.
-// This function should be disabled in production (set allow_custom_queries: false in config).
+// ErrCustomQueryRejected marks a custom query refused before reaching the database.
+var ErrCustomQueryRejected = errors.New("custom query rejected")
+
+//nolint:gochecknoglobals // compiled once; a single authoritative list of credential/system objects is easier to audit than per-call literals
+var restrictedTablePattern = regexp.MustCompile(`(?i)\b(?:prtg_server_address|target_database|grafana_server|grafana_organization|grafana_data_source|setting|audit_trail|licensing_\w+|grafana_\w+|pg_\w+|dblink\w*|lo_\w+|current_setting|set_config)\b`)
+
+// ExecuteCustomQuery runs an untrusted read-only query in a read-only transaction with a row cap and timeout.
 func (db *DB) ExecuteCustomQuery(ctx context.Context, query string, limit int) ([]map[string]interface{}, error) {
-	// Security: Validate query is SELECT only
-	queryUpper := strings.ToUpper(strings.TrimSpace(query))
-	if !strings.HasPrefix(queryUpper, "SELECT") {
-		return nil, fmt.Errorf("only SELECT queries are allowed")
+	q := strings.TrimSpace(query)
+	q = strings.TrimSuffix(q, ";")
+
+	if q == "" {
+		return nil, fmt.Errorf("%w: empty query", ErrCustomQueryRejected)
+	}
+	if strings.Contains(q, ";") {
+		return nil, fmt.Errorf("%w: multiple statements are not allowed", ErrCustomQueryRejected)
+	}
+	if strings.Contains(q, "--") || strings.Contains(q, "/*") {
+		return nil, fmt.Errorf("%w: comments are not allowed", ErrCustomQueryRejected)
 	}
 
-	// Check for dangerous keywords (including comments to prevent bypass)
-	dangerous := []string{"DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "/*", "--", ";"}
-	for _, keyword := range dangerous {
-		if strings.Contains(queryUpper, keyword) || strings.Contains(query, keyword) {
-			return nil, fmt.Errorf("query contains forbidden keyword: %s", keyword)
-		}
+	trimmed := strings.TrimLeft(q, " \t\r\n(")
+	if !strings.HasPrefix(strings.ToUpper(trimmed), "SELECT") && !strings.HasPrefix(strings.ToUpper(trimmed), "WITH") {
+		return nil, fmt.Errorf("%w: query must start with SELECT or WITH", ErrCustomQueryRejected)
 	}
 
-	// Enforce maximum limit
-	maxLimit := 1000
+	if restrictedTablePattern.MatchString(q) {
+		return nil, fmt.Errorf("%w: query references a restricted table or function", ErrCustomQueryRejected)
+	}
 
 	if limit <= 0 {
 		limit = 100
 	}
-
-	if limit > maxLimit {
-		limit = maxLimit
+	if limit > 1000 {
+		limit = 1000
 	}
 
-	// Add limit if not present using parameterized query
-	if !strings.Contains(queryUpper, "LIMIT") {
-		query += " LIMIT $1"
-
-		rows, err := db.conn.QueryContext(ctx, query, limit)
-		if err != nil {
-			return nil, fmt.Errorf("query failed: %w", err)
-		}
-		defer rows.Close()
-
-		return scanGenericResults(rows)
-	}
-
-	rows, err := db.conn.QueryContext(ctx, query)
+	tx, err := db.conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, fmt.Errorf("custom query failed: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			db.logger.Warn().Err(err).Msg("rollback of custom query transaction failed")
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = '15s'"); err != nil {
+		return nil, fmt.Errorf("custom query failed: %w", err)
+	}
+
+	wrapped := fmt.Sprintf("SELECT * FROM (%s) AS custom_query LIMIT $1", q)
+	rows, err := tx.QueryContext(ctx, wrapped, limit)
+	if err != nil {
+		return nil, fmt.Errorf("custom query failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -592,7 +604,6 @@ func (db *DB) ExecuteCustomQuery(ctx context.Context, query string, limit int) (
 
 // scanGenericResults scans generic SQL query results into maps.
 func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
-	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get columns: %w", err)
@@ -601,10 +612,8 @@ func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
 	results := []map[string]interface{}{}
 
 	for rows.Next() {
-		// Create a slice of interface{}'s to represent each column
 		values := make([]interface{}, len(columns))
 		valuePtrs := make([]interface{}, len(columns))
-
 		for i := range values {
 			valuePtrs[i] = &values[i]
 		}
@@ -613,10 +622,15 @@ func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
-		// Create map for this row
-		row := make(map[string]interface{})
+		row := make(map[string]interface{}, len(columns))
 		for i, col := range columns {
-			row[col] = values[i]
+			// lib/pq returns []byte for numeric, uuid, json and interval columns,
+			// which would otherwise be JSON-marshalled as base64.
+			if b, ok := values[i].([]byte); ok {
+				row[col] = string(b)
+			} else {
+				row[col] = values[i]
+			}
 		}
 
 		results = append(results, row)
