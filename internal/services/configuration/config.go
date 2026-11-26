@@ -427,8 +427,8 @@ func (c *Configuration) createDefaultConfiguration() error {
 		Database: DatabaseConfig{
 			Host:     getOrDefault(c.args.DBHost, "localhost"),
 			Port:     getOrDefaultInt(c.args.DBPort, 5432),
-			Name:     getOrDefault(c.args.DBName, "prtg_data_exporter"),
-			User:     getOrDefault(c.args.DBUser, "prtg_reader"),
+			Name:     getOrDefault(c.args.DBName, "prtg_data_exporter_collection"),
+			User:     getOrDefault(c.args.DBUser, "mcp_prtg_reader"),
 			Password: c.args.DBPassword,
 			SSLMode:  getOrDefault(c.args.DBSSLMode, "disable"),
 		},
