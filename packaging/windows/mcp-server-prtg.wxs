@@ -257,7 +257,7 @@
                   Arguments="config client --window"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="senhub.ico" />
-        <util:RemoveFolderEx Directory="ProgramMenuDir" On="uninstall" />
+        <RemoveFolder Id="RemoveProgramMenuDir" Directory="ProgramMenuDir" On="uninstall" />
       </Component>
     </Directory>
   </StandardDirectory>
