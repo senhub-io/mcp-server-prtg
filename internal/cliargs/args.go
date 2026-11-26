@@ -19,12 +19,12 @@ type ParsedArgs struct {
 	AuthKey     string `arg:"--api-key" help:"API key for authentication"`
 
 	// Database settings
-	DBHost     string `arg:"--db-host" help:"Database host" env:"PRTG_DB_HOST"`
-	DBPort     int    `arg:"--db-port" help:"Database port" env:"PRTG_DB_PORT"`
-	DBName     string `arg:"--db-name" help:"Database name" env:"PRTG_DB_NAME"`
-	DBUser     string `arg:"--db-user" help:"Database user" env:"PRTG_DB_USER"`
-	DBPassword string `arg:"--db-password" help:"Database password" env:"PRTG_DB_PASSWORD"`
-	DBSSLMode  string `arg:"--db-sslmode" help:"Database SSL mode" env:"PRTG_DB_SSLMODE"`
+	DBHost     string `arg:"--db-host,env:PRTG_DB_HOST" help:"Database host"`
+	DBPort     int    `arg:"--db-port,env:PRTG_DB_PORT" help:"Database port"`
+	DBName     string `arg:"--db-name,env:PRTG_DB_NAME" help:"Database name"`
+	DBUser     string `arg:"--db-user,env:PRTG_DB_USER" help:"Database user"`
+	DBPassword string `arg:"--db-password,env:PRTG_DB_PASSWORD" help:"Database password"`
+	DBSSLMode  string `arg:"--db-sslmode,env:PRTG_DB_SSLMODE" help:"Database SSL mode"`
 
 	// Logging
 	Verbose      bool     `arg:"--verbose,-v" help:"Enable verbose logging (debug level)"`
