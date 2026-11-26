@@ -29,6 +29,9 @@ type fakeChannelStore struct {
 	lastFrom     time.Time
 	lastTo       time.Time
 	lastBucket   time.Duration
+
+	state    *types.SensorExportState
+	stateErr error
 }
 
 func (f *fakeChannelStore) GetChannelLastValues(ctx context.Context, sensorID int, maxAge time.Duration) ([]types.ChannelLastValue, error) {
@@ -43,6 +46,10 @@ func (f *fakeChannelStore) GetChannelHistory(ctx context.Context, sensorID int, 
 	f.lastTo = to
 	f.lastBucket = bucket
 	return f.history, f.histErr
+}
+
+func (f *fakeChannelStore) GetSensorExportState(ctx context.Context, sensorID int) (*types.SensorExportState, error) {
+	return f.state, f.stateErr
 }
 
 type fakePRTGClient struct {

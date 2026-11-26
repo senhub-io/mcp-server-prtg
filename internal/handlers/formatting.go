@@ -1082,6 +1082,41 @@ func formatStatisticsResponse(stats *types.Statistics) string {
 		sb.WriteString("\n")
 	}
 
+	// 4b. Data Exporter collection profiles
+	if len(stats.Profiles) > 0 {
+		sb.WriteString("**Data Exporter collection:**\n")
+		for _, p := range stats.Profiles {
+			line := fmt.Sprintf("- **%s** (%s): last collection %s",
+				p.Alias, p.Kind, p.LastEndUTC.UTC().Format("2006-01-02 15:04"))
+			if p.NextUTC != nil {
+				line += fmt.Sprintf(", next %s", p.NextUTC.UTC().Format("2006-01-02 15:04"))
+			}
+			if p.Paused {
+				line += " ⏸️ flagged paused by Data Exporter"
+			}
+			if p.HasErrors {
+				line += " ❌ errors"
+			}
+			if p.HasWarnings {
+				line += " ⚠️ warnings"
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// 4c. Channel history coverage
+	if stats.ExportCoverage != nil {
+		c := stats.ExportCoverage
+		sb.WriteString(fmt.Sprintf("**Channel history coverage** (fresh = exported within %d h):\n", c.FreshWithinHours))
+		sb.WriteString(fmt.Sprintf("- ✅ Up to date: %d\n", c.UpToDate))
+		sb.WriteString(fmt.Sprintf("- 🕓 Stale: %d\n", c.Stale))
+		sb.WriteString(fmt.Sprintf("- 🚫 Never fetched: %d\n", c.NeverFetched))
+		sb.WriteString(fmt.Sprintf("- 📭 Without data: %d\n", c.NoData))
+		sb.WriteString(fmt.Sprintf("- ❓ Not tracked: %d\n", c.NotTracked))
+		sb.WriteString("\n")
+	}
+
 	// 5. Full JSON data
 	sb.WriteString("---\n\n")
 	sb.WriteString("💾 **Complete statistics data below** (downloadable)\n\n")

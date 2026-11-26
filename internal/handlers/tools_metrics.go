@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ type PRTGClient interface {
 type ChannelStore interface {
 	GetChannelLastValues(ctx context.Context, sensorID int, maxAge time.Duration) ([]types.ChannelLastValue, error)
 	GetChannelHistory(ctx context.Context, sensorID int, from, to time.Time, bucket time.Duration) (*types.ChannelHistory, error)
+	GetSensorExportState(ctx context.Context, sensorID int) (*types.SensorExportState, error)
 }
 
 const (
@@ -165,6 +167,128 @@ func windowForTimeType(t prtg.TimeSeriesType) (window, bucket time.Duration) {
 	return 24 * time.Hour, 15 * time.Minute
 }
 
+// exportStaleness reports whether the Data Exporter export for a sensor is stale, with a human-readable reason.
+func exportStaleness(state *types.SensorExportState, now time.Time) (stale bool, note string) {
+	if state == nil {
+		return false, ""
+	}
+	switch {
+	case !state.Tracked:
+		return true, "Data Exporter does not export this sensor's channel history."
+	case state.NoMonitoringData:
+		return true, "Data Exporter reports no monitoring data for this sensor."
+	case state.LastFetchUTC == nil:
+		return true, "Data Exporter has not exported this sensor's channel history yet."
+	case now.Sub(*state.LastFetchUTC) > database.ExportFreshWithin:
+		return true, fmt.Sprintf("Data Exporter stopped exporting this sensor on %s; later values are missing.",
+			state.LastFetchUTC.UTC().Format("2006-01-02 15:04 UTC"))
+	}
+	return false, ""
+}
+
+// stalenessSuffix is appended to every staleness note.
+func (h *MetricsToolHandler) stalenessSuffix() string {
+	if h.prtgClient != nil {
+		return " Add the sensor to the Data Exporter metrics profile, or use source=prtg for real-time values."
+	}
+	return " Add the sensor to the Data Exporter metrics profile."
+}
+
+// checkExportFreshness queries the export state before reading the store.
+// notFound mirrors the store's own ErrSensorNotFound handling.
+func (h *MetricsToolHandler) checkExportFreshness(ctx context.Context, sensorID int) (stale bool, note string, notFound bool) {
+	if h.store == nil {
+		return false, "", false
+	}
+	state, err := h.store.GetSensorExportState(ctx, sensorID)
+	if err != nil {
+		if errors.Is(err, database.ErrNoChannelData) {
+			return false, "", false
+		}
+		if errors.Is(err, database.ErrSensorNotFound) {
+			return false, "", true
+		}
+		h.handler.logger.Warn().
+			Err(err).
+			Int("sensor_id", sensorID).
+			Msg("Failed to get sensor export state; continuing without freshness information")
+		return false, "", false
+	}
+	stale, reason := exportStaleness(state, time.Now())
+	if !stale {
+		return false, "", false
+	}
+	return true, reason + h.stalenessSuffix(), false
+}
+
+// resolveChannelNames replaces fallback channel names using the PRTG API when available.
+func (h *MetricsToolHandler) resolveChannelNames(ctx context.Context, sensorID int, channels []types.ChannelInfo) (resolved, stillMissing bool) {
+	hasMissing := false
+	for _, ch := range channels {
+		if ch.NameMissing {
+			hasMissing = true
+			break
+		}
+	}
+	if !hasMissing {
+		return false, false
+	}
+	if h.prtgClient == nil {
+		return false, true
+	}
+	prtgChannels, err := h.prtgClient.GetChannelsBySensor(ctx, sensorID)
+	if err != nil {
+		h.handler.logger.Warn().
+			Err(err).
+			Int("sensor_id", sensorID).
+			Msg("Failed to fetch channel names from PRTG API; keeping fallback names")
+		return false, true
+	}
+	byChannelID := make(map[string]prtg.Channel, len(prtgChannels))
+	for _, c := range prtgChannels {
+		if idx := strings.LastIndex(c.ID, "."); idx >= 0 {
+			byChannelID[c.ID[idx+1:]] = c
+		}
+	}
+	for i := range channels {
+		if !channels[i].NameMissing {
+			continue
+		}
+		c, ok := byChannelID[strconv.Itoa(channels[i].ID)]
+		if !ok {
+			continue
+		}
+		channels[i].Name = c.Name
+		channels[i].NameMissing = false
+		if channels[i].Unit == "" {
+			channels[i].Unit = c.Basic.DisplayUnit
+		}
+		resolved = true
+	}
+	for _, ch := range channels {
+		if ch.NameMissing {
+			stillMissing = true
+			break
+		}
+	}
+	return resolved, stillMissing
+}
+
+// resolveLastValueNames is resolveChannelNames for ChannelLastValue slices.
+func (h *MetricsToolHandler) resolveLastValueNames(ctx context.Context, sensorID int, values []types.ChannelLastValue) (resolved, stillMissing bool) {
+	infos := make([]types.ChannelInfo, len(values))
+	for i, v := range values {
+		infos[i] = v.ChannelInfo
+	}
+	resolved, stillMissing = h.resolveChannelNames(ctx, sensorID, infos)
+	for i := range values {
+		values[i].ChannelInfo = infos[i]
+	}
+	return resolved, stillMissing
+}
+
+const missingNamesNote = "Note: channel names are not exported for this sensor; channels are identified by their PRTG channel ID."
+
 // handleGetSensorTimeSeries handles prtg_get_sensor_timeseries tool requests.
 func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var params struct {
@@ -210,10 +334,14 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 		if h.store == nil {
 			return mcp.NewToolResultError("source=database requested but no channel database is configured"), nil
 		}
-		result, err := h.timeSeriesFromStore(ctx, params.SensorID, timeType)
+		_, note, notFound := h.checkExportFreshness(ctx, params.SensorID)
+		if notFound {
+			return mcp.NewToolResultText(fmt.Sprintf("No exported channel history for sensor %d", params.SensorID)), nil
+		}
+		result, err := h.timeSeriesFromStore(ctx, params.SensorID, timeType, note)
 		if err != nil {
 			if errors.Is(err, errNoStoreData) {
-				return mcp.NewToolResultText(fmt.Sprintf("No exported channel history for sensor %d", params.SensorID)), nil
+				return mcp.NewToolResultText(noHistoryText(params.SensorID, note)), nil
 			}
 			h.handler.logger.Error().
 				Err(err).
@@ -227,7 +355,21 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 			return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
 		}
 		if h.store != nil {
-			result, err := h.timeSeriesFromStore(ctx, params.SensorID, timeType)
+			stale, note, notFound := h.checkExportFreshness(ctx, params.SensorID)
+			if notFound {
+				if h.prtgClient != nil {
+					return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+				}
+				return mcp.NewToolResultText(fmt.Sprintf("No exported channel history for sensor %d", params.SensorID)), nil
+			}
+			if stale && h.prtgClient != nil {
+				h.handler.logger.Info().
+					Int("sensor_id", params.SensorID).
+					Str("reason", "export_stale").
+					Msg("Data Exporter export is stale; serving time series from PRTG API")
+				return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
+			}
+			result, err := h.timeSeriesFromStore(ctx, params.SensorID, timeType, note)
 			if err == nil {
 				return result, nil
 			}
@@ -241,13 +383,22 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 			if h.prtgClient != nil {
 				return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
 			}
-			return mcp.NewToolResultText(fmt.Sprintf("No exported channel history for sensor %d", params.SensorID)), nil
+			return mcp.NewToolResultText(noHistoryText(params.SensorID, note)), nil
 		}
 		if h.prtgClient != nil {
 			return h.timeSeriesFromPRTG(ctx, params.SensorID, timeType)
 		}
 		return mcp.NewToolResultError("No metrics source configured: neither channel database nor PRTG API client is available"), nil
 	}
+}
+
+// noHistoryText builds the no-data message, carrying the staleness note when present.
+func noHistoryText(sensorID int, note string) string {
+	text := fmt.Sprintf("No exported channel history for sensor %d", sensorID)
+	if note != "" {
+		text += "\n" + note
+	}
+	return text
 }
 
 // timeSeriesFromPRTG fetches time series from the PRTG API v2.
@@ -272,7 +423,7 @@ func (h *MetricsToolHandler) timeSeriesFromPRTG(ctx context.Context, sensorID in
 }
 
 // timeSeriesFromStore fetches time series from the channel database.
-func (h *MetricsToolHandler) timeSeriesFromStore(ctx context.Context, sensorID int, timeType prtg.TimeSeriesType) (*mcp.CallToolResult, error) {
+func (h *MetricsToolHandler) timeSeriesFromStore(ctx context.Context, sensorID int, timeType prtg.TimeSeriesType, note string) (*mcp.CallToolResult, error) {
 	window, bucket := windowForTimeType(timeType)
 	to := time.Now()
 	from := to.Add(-window)
@@ -288,6 +439,8 @@ func (h *MetricsToolHandler) timeSeriesFromStore(ctx context.Context, sensorID i
 		return nil, errNoStoreData
 	}
 
+	resolved, stillMissing := h.resolveChannelNames(ctx, sensorID, hist.Channels)
+
 	h.handler.logger.Info().
 		Int("sensor_id", sensorID).
 		Str("source", sourceDatabase).
@@ -301,10 +454,21 @@ func (h *MetricsToolHandler) timeSeriesFromStore(ctx context.Context, sensorID i
 	if len(hist.Points) > 0 {
 		latest = hist.Points[len(hist.Points)-1].Timestamp
 	}
-	prefix := fmt.Sprintf("Source: PRTG Data Exporter database (averages per %s, latest point %s)\n",
-		hist.Bucket, latest.UTC().Format(time.RFC3339))
+	var prefix strings.Builder
+	prefix.WriteString(fmt.Sprintf("Source: PRTG Data Exporter database (averages per %s, latest point %s)",
+		hist.Bucket, latest.UTC().Format(time.RFC3339)))
+	if resolved {
+		prefix.WriteString(" (channel names from the PRTG API)")
+	}
+	prefix.WriteString("\n")
+	if note != "" {
+		prefix.WriteString(note + "\n")
+	}
+	if stillMissing {
+		prefix.WriteString(missingNamesNote + "\n")
+	}
 
-	return mcp.NewToolResultText(prefix + formatted), nil
+	return mcp.NewToolResultText(prefix.String() + formatted), nil
 }
 
 // historyToTimeSeries converts a ChannelHistory into prtg.TimeSeriesData.
@@ -381,10 +545,14 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 		if h.store == nil {
 			return mcp.NewToolResultError("source=database requested but no channel database is configured"), nil
 		}
-		result, err := h.currentValuesFromStore(ctx, params.SensorID)
+		_, note, notFound := h.checkExportFreshness(ctx, params.SensorID)
+		if notFound {
+			return mcp.NewToolResultText(noValuesText(params.SensorID, "")), nil
+		}
+		result, err := h.currentValuesFromStore(ctx, params.SensorID, note)
 		if err != nil {
 			if errors.Is(err, errNoStoreData) {
-				return mcp.NewToolResultText(fmt.Sprintf("No exported channel values for sensor %d in the last 7 days", params.SensorID)), nil
+				return mcp.NewToolResultText(noValuesText(params.SensorID, note)), nil
 			}
 			h.handler.logger.Error().
 				Err(err).
@@ -395,7 +563,21 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 		return result, nil
 	default: // auto
 		if h.store != nil {
-			result, err := h.currentValuesFromStore(ctx, params.SensorID)
+			stale, note, notFound := h.checkExportFreshness(ctx, params.SensorID)
+			if notFound {
+				if h.prtgClient != nil {
+					return h.currentValuesFromPRTG(ctx, params.SensorID)
+				}
+				return mcp.NewToolResultText(noValuesText(params.SensorID, "")), nil
+			}
+			if stale && h.prtgClient != nil {
+				h.handler.logger.Info().
+					Int("sensor_id", params.SensorID).
+					Str("reason", "export_stale").
+					Msg("Data Exporter export is stale; serving current values from PRTG API")
+				return h.currentValuesFromPRTG(ctx, params.SensorID)
+			}
+			result, err := h.currentValuesFromStore(ctx, params.SensorID, note)
 			if err == nil {
 				return result, nil
 			}
@@ -409,13 +591,22 @@ func (h *MetricsToolHandler) handleGetChannelCurrentValues(ctx context.Context, 
 			if h.prtgClient != nil {
 				return h.currentValuesFromPRTG(ctx, params.SensorID)
 			}
-			return mcp.NewToolResultText(fmt.Sprintf("No exported channel values for sensor %d in the last 7 days", params.SensorID)), nil
+			return mcp.NewToolResultText(noValuesText(params.SensorID, note)), nil
 		}
 		if h.prtgClient != nil {
 			return h.currentValuesFromPRTG(ctx, params.SensorID)
 		}
 		return mcp.NewToolResultError("No metrics source configured: neither channel database nor PRTG API client is available"), nil
 	}
+}
+
+// noValuesText builds the no-data message, carrying the staleness note when present.
+func noValuesText(sensorID int, note string) string {
+	text := fmt.Sprintf("No exported channel values for sensor %d in the last 7 days", sensorID)
+	if note != "" {
+		text += "\n" + note
+	}
+	return text
 }
 
 // currentValuesFromPRTG fetches current channel values from the PRTG API v2.
@@ -444,7 +635,7 @@ func (h *MetricsToolHandler) currentValuesFromPRTG(ctx context.Context, sensorID
 }
 
 // currentValuesFromStore fetches the latest exported channel values from the database.
-func (h *MetricsToolHandler) currentValuesFromStore(ctx context.Context, sensorID int) (*mcp.CallToolResult, error) {
+func (h *MetricsToolHandler) currentValuesFromStore(ctx context.Context, sensorID int, note string) (*mcp.CallToolResult, error) {
 	values, err := h.store.GetChannelLastValues(ctx, sensorID, 7*24*time.Hour)
 	if err != nil {
 		if errors.Is(err, database.ErrNoChannelData) || errors.Is(err, database.ErrSensorNotFound) {
@@ -455,6 +646,8 @@ func (h *MetricsToolHandler) currentValuesFromStore(ctx context.Context, sensorI
 	if len(values) == 0 {
 		return nil, errNoStoreData
 	}
+
+	resolved, stillMissing := h.resolveLastValueNames(ctx, sensorID, values)
 
 	h.handler.logger.Info().
 		Int("sensor_id", sensorID).
@@ -469,7 +662,17 @@ func (h *MetricsToolHandler) currentValuesFromStore(ctx context.Context, sensorI
 	}
 
 	var b strings.Builder
-	b.WriteString("Source: PRTG Data Exporter database\n")
+	b.WriteString("Source: PRTG Data Exporter database")
+	if resolved {
+		b.WriteString(" (channel names from the PRTG API)")
+	}
+	b.WriteString("\n")
+	if note != "" {
+		b.WriteString(note + "\n")
+	}
+	if stillMissing {
+		b.WriteString(missingNamesNote + "\n")
+	}
 	if age := time.Since(newest); age > 2*time.Hour {
 		b.WriteString(fmt.Sprintf("Note: the newest exported value is %s old; use source=prtg for real-time values.\n", age.Round(time.Minute)))
 	}
