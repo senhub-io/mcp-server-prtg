@@ -16,8 +16,9 @@ func TestGetDatabaseConnectionStringQuotesValues(t *testing.T) {
 
 	for password, want := range cases {
 		c := &Configuration{data: ConfigData{Database: DatabaseConfig{
-			Host: "localhost", Port: 5432, Name: "prtg", User: "reader", Password: password, SSLMode: "disable",
+			Host: "localhost", Port: 5432, Name: "prtg", User: "reader", SSLMode: "disable",
 		}}}
+		c.plain.dbPassword = password
 
 		assert.Equal(t, "host='localhost' port=5432 dbname='prtg' user='reader' "+want, c.GetDatabaseConnectionString(), password)
 	}

@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/secrets"
 	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
 )
 
@@ -33,6 +34,15 @@ type Configuration struct {
 	logger     *logger.ModuleLogger
 	watcher    *fsnotify.Watcher
 	args       *cliargs.ParsedArgs
+	secrets    secrets.Protector
+
+	// plain holds the decrypted in-memory copies of the secrets; data always
+	// holds the encrypted values once loaded.
+	plain struct {
+		apiKey     string
+		dbPassword string
+		prtgToken  string
+	}
 
 	// Configuration data
 	data ConfigData
@@ -95,15 +105,34 @@ type LoggingConfig struct {
 	Compress   bool   `yaml:"compress"`
 }
 
+// newConfigurationBase builds a Configuration with its secret protector, without loading or watching any file.
+func newConfigurationBase(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
+	moduleLogger := logger.NewModuleLogger(baseLogger, logger.ModuleConfiguration)
+
+	absPath, err := filepath.Abs(args.ConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolving configuration path %s: %w", args.ConfigPath, err)
+	}
+
+	protector, err := secrets.NewProtector(filepath.Dir(absPath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize secret protector: %w", err)
+	}
+
+	return &Configuration{
+		configPath:        args.ConfigPath,
+		logger:            moduleLogger,
+		args:              args,
+		secrets:           protector,
+		onChangeCallbacks: make([]func(), 0),
+	}, nil
+}
+
 // NewConfiguration creates a new configuration manager.
 func NewConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
-	logger := logger.NewModuleLogger(baseLogger, logger.ModuleConfiguration)
-
-	config := &Configuration{
-		configPath:        args.ConfigPath,
-		logger:            logger,
-		args:              args,
-		onChangeCallbacks: make([]func(), 0),
+	config, err := newConfigurationBase(args, baseLogger)
+	if err != nil {
+		return nil, err
 	}
 
 	// Load or create configuration
@@ -113,10 +142,120 @@ func NewConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Con
 
 	// Initialize file watcher
 	if err := config.initWatcher(); err != nil {
-		logger.Warn().Err(err).Msg("Failed to initialize config file watcher")
+		config.logger.Warn().Err(err).Msg("Failed to initialize config file watcher")
 	}
 
 	return config, nil
+}
+
+// LoadConfiguration loads and decrypts an existing configuration file without creating it or starting the watcher.
+func LoadConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
+	config, err := newConfigurationBase(args, baseLogger)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := config.loadConfiguration(); err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	return config, nil
+}
+
+// InitConfiguration creates or updates the configuration file from command-line arguments without starting the watcher.
+func InitConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
+	config, err := newConfigurationBase(args, baseLogger)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := os.Stat(config.configPath); os.IsNotExist(err) {
+		if err := config.createDefaultConfiguration(); err != nil {
+			return nil, fmt.Errorf("failed to create default configuration: %w", err)
+		}
+	} else if err := config.loadConfiguration(); err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	if err := config.applyArgs(args); err != nil {
+		return nil, fmt.Errorf("failed to apply command-line settings: %w", err)
+	}
+
+	if err := config.saveConfiguration(); err != nil {
+		return nil, fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	return config, nil
+}
+
+// applyArgs overrides only the settings explicitly provided on the command line.
+func (c *Configuration) applyArgs(args *cliargs.ParsedArgs) error {
+	if args.BindAddress != "" {
+		c.data.Server.BindAddress = args.BindAddress
+	}
+
+	if args.Port != 0 {
+		c.data.Server.Port = args.Port
+	}
+
+	if args.AuthKey != "" {
+		c.plain.apiKey = args.AuthKey
+	}
+
+	if args.DBHost != "" {
+		c.data.Database.Host = args.DBHost
+	}
+
+	if args.DBPort != 0 {
+		c.data.Database.Port = args.DBPort
+	}
+
+	if args.DBName != "" {
+		c.data.Database.Name = args.DBName
+	}
+
+	if args.DBUser != "" {
+		c.data.Database.User = args.DBUser
+	}
+
+	if args.DBPassword != "" {
+		c.plain.dbPassword = args.DBPassword
+	}
+
+	if args.DBSSLMode != "" {
+		c.data.Database.SSLMode = args.DBSSLMode
+	}
+
+	if args.PRTGURL != "" {
+		c.data.PRTG.BaseURL = args.PRTGURL
+		c.data.PRTG.Enabled = true
+	}
+
+	if args.PRTGDisable {
+		c.data.PRTG.Enabled = false
+	}
+
+	if args.PRTGToken != "" {
+		c.plain.prtgToken = args.PRTGToken
+	}
+
+	if args.PRTGVerifySSL != nil {
+		c.data.PRTG.VerifySSL = *args.PRTGVerifySSL
+	}
+
+	if args.PRTGTimeout != 0 {
+		c.data.PRTG.Timeout = args.PRTGTimeout
+	}
+
+	if args.LogLevel != "" {
+		c.data.Logging.Level = args.LogLevel
+	}
+
+	if args.LogFile != "" {
+		c.data.Logging.File = args.LogFile
+	}
+
+	return c.encryptSecrets()
 }
 
 // loadOrCreate loads existing config or creates a new one.
@@ -140,10 +279,110 @@ func (c *Configuration) loadConfiguration() error {
 		return fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	encrypted, err := c.processSecrets()
+	if err != nil {
+		return err
+	}
+
+	if encrypted > 0 {
+		if err := c.saveConfiguration(); err != nil {
+			return fmt.Errorf("failed to rewrite configuration with encrypted secrets: %w", err)
+		}
+
+		c.logger.Info().Int("count", encrypted).Msg("encrypted clear-text secrets in configuration file")
+	}
+
 	c.logger.Info().
 		Str("path", c.configPath).
 		Int("version", c.data.ConfigVersion).
 		Msg("Configuration loaded successfully")
+
+	return nil
+}
+
+// processSecrets decrypts encrypted secrets into memory and encrypts clear-text ones in c.data.
+// It returns the number of values that were clear text and therefore must be persisted encrypted.
+func (c *Configuration) processSecrets() (int, error) {
+	encrypted := 0
+
+	apiKey := c.data.Server.APIKey
+	switch {
+	case secrets.IsEncrypted(apiKey):
+		plain, err := c.secrets.Decrypt(apiKey)
+		if err != nil {
+			return 0, fmt.Errorf("server.api_key: %w", err)
+		}
+
+		c.plain.apiKey = plain
+	case apiKey != "":
+		enc, err := c.secrets.Encrypt(apiKey)
+		if err != nil {
+			return 0, fmt.Errorf("server.api_key: %w", err)
+		}
+
+		c.data.Server.APIKey = enc
+		c.plain.apiKey = apiKey
+		encrypted++
+	}
+
+	dbPassword := c.data.Database.Password
+	switch {
+	case secrets.IsEncrypted(dbPassword):
+		plain, err := c.secrets.Decrypt(dbPassword)
+		if err != nil {
+			return 0, fmt.Errorf("database.password: %w", err)
+		}
+
+		c.plain.dbPassword = plain
+	case dbPassword != "":
+		enc, err := c.secrets.Encrypt(dbPassword)
+		if err != nil {
+			return 0, fmt.Errorf("database.password: %w", err)
+		}
+
+		c.data.Database.Password = enc
+		c.plain.dbPassword = dbPassword
+		encrypted++
+	}
+
+	prtgToken := c.data.PRTG.APIToken
+	switch {
+	case secrets.IsEncrypted(prtgToken):
+		plain, err := c.secrets.Decrypt(prtgToken)
+		if err != nil {
+			return 0, fmt.Errorf("prtg.api_token: %w", err)
+		}
+
+		c.plain.prtgToken = plain
+	case prtgToken != "":
+		enc, err := c.secrets.Encrypt(prtgToken)
+		if err != nil {
+			return 0, fmt.Errorf("prtg.api_token: %w", err)
+		}
+
+		c.data.PRTG.APIToken = enc
+		c.plain.prtgToken = prtgToken
+		encrypted++
+	}
+
+	return encrypted, nil
+}
+
+// encryptSecrets writes the encrypted form of the plain in-memory secrets into c.data.
+func (c *Configuration) encryptSecrets() error {
+	var err error
+
+	if c.data.Server.APIKey, err = c.secrets.Encrypt(c.plain.apiKey); err != nil {
+		return fmt.Errorf("server.api_key: %w", err)
+	}
+
+	if c.data.Database.Password, err = c.secrets.Encrypt(c.plain.dbPassword); err != nil {
+		return fmt.Errorf("database.password: %w", err)
+	}
+
+	if c.data.PRTG.APIToken, err = c.secrets.Encrypt(c.plain.prtgToken); err != nil {
+		return fmt.Errorf("prtg.api_token: %w", err)
+	}
 
 	return nil
 }
@@ -226,6 +465,14 @@ func (c *Configuration) createDefaultConfiguration() error {
 			MaxAgeDays: 30,
 			Compress:   true,
 		},
+	}
+
+	c.plain.apiKey = c.data.Server.APIKey
+	c.plain.dbPassword = c.data.Database.Password
+	c.plain.prtgToken = c.data.PRTG.APIToken
+
+	if err := c.encryptSecrets(); err != nil {
+		return err
 	}
 
 	// Generate TLS certificates if enabled and not provided
@@ -416,9 +663,14 @@ func generateUUIDKey() (string, error) {
 
 // Get methods for accessing configuration.
 
+// Path returns the configuration file path.
+func (c *Configuration) Path() string {
+	return c.configPath
+}
+
 // GetAPIKey returns the API key (Bearer token).
 func (c *Configuration) GetAPIKey() string {
-	return c.data.Server.APIKey
+	return c.plain.apiKey
 }
 
 // GetServerAddress returns the full server address.
@@ -433,7 +685,7 @@ func (c *Configuration) GetDatabaseConnectionString() string {
 		c.data.Database.Port,
 		quoteConnValue(c.data.Database.Name),
 		quoteConnValue(c.data.Database.User),
-		quoteConnValue(c.data.Database.Password),
+		quoteConnValue(c.plain.dbPassword),
 		quoteConnValue(c.data.Database.SSLMode),
 	)
 }
@@ -512,7 +764,7 @@ func (c *Configuration) GetPRTGBaseURL() string {
 
 // GetPRTGAPIToken returns the PRTG API token.
 func (c *Configuration) GetPRTGAPIToken() string {
-	return c.data.PRTG.APIToken
+	return c.plain.prtgToken
 }
 
 // GetPRTGTimeout returns the PRTG API timeout duration.

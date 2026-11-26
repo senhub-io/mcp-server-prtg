@@ -7,6 +7,9 @@ type ParsedArgs struct {
 	// Command to execute
 	Command string `arg:"positional" help:"Command to execute (run, stdio, install, start, stop, status, uninstall, config)"`
 
+	// Subcommand for the config command
+	Subcommand string `arg:"positional" help:"Subcommand for config: init, show-api-key"`
+
 	// Configuration
 	ConfigPath string `arg:"--config,-c" help:"Path to configuration file" default:"./config.yaml"`
 
@@ -25,6 +28,13 @@ type ParsedArgs struct {
 	DBUser     string `arg:"--db-user,env:PRTG_DB_USER" help:"Database user"`
 	DBPassword string `arg:"--db-password,env:PRTG_DB_PASSWORD" help:"Database password"`
 	DBSSLMode  string `arg:"--db-sslmode,env:PRTG_DB_SSLMODE" help:"Database SSL mode"`
+
+	// PRTG API settings
+	PRTGURL       string `arg:"--prtg-url,env:PRTG_URL" help:"PRTG API v2 base URL, e.g. https://prtg.example.com:1616"`
+	PRTGToken     string `arg:"--prtg-token,env:PRTG_API_TOKEN" help:"PRTG API v2 token"`
+	PRTGVerifySSL *bool  `arg:"--prtg-verify-ssl" help:"Verify the PRTG TLS certificate (true/false)"`
+	PRTGTimeout   int    `arg:"--prtg-timeout" help:"PRTG API timeout in seconds"`
+	PRTGDisable   bool   `arg:"--prtg-disable" help:"Disable PRTG API access"`
 
 	// Logging
 	Verbose      bool     `arg:"--verbose,-v" help:"Enable verbose logging (debug level)"`
