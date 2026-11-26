@@ -287,6 +287,15 @@ func (c *Configuration) loadConfiguration() error {
 		return err
 	}
 
+	// Configurations written by earlier versions carry doubled backslashes.
+	if parsed.Server.CertFile != "" {
+		parsed.Server.CertFile = filepath.Clean(parsed.Server.CertFile)
+	}
+
+	if parsed.Server.KeyFile != "" {
+		parsed.Server.KeyFile = filepath.Clean(parsed.Server.KeyFile)
+	}
+
 	c.data = parsed
 
 	if encrypted > 0 {
@@ -396,13 +405,6 @@ func (c *Configuration) createDefaultConfiguration() error {
 
 	defaultCertFile := filepath.Join(configDir, "certs", "server.crt")
 	defaultKeyFile := filepath.Join(configDir, "certs", "server.key")
-
-	// On Windows, double backslashes for YAML compatibility
-	// Windows accepts both C:\\path and C:/path but YAML needs escaped backslashes
-	if filepath.Separator == '\\' {
-		defaultCertFile = strings.ReplaceAll(defaultCertFile, "\\", "\\\\")
-		defaultKeyFile = strings.ReplaceAll(defaultKeyFile, "\\", "\\\\")
-	}
 
 	c.logger.Debug().
 		Str("config_dir", configDir).
