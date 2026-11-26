@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
@@ -159,6 +160,10 @@ func handleConfigCommand(args *cliargs.ParsedArgs) error {
 		return nil
 
 	case "client":
+		if args.Window && runtime.GOOS == "windows" {
+			return openElevatedConsole(clientArgsWithoutWindow(os.Args[1:]))
+		}
+
 		cfg, err := configuration.LoadConfiguration(args, logger.NewSilentLogger())
 		if err != nil {
 			return fmt.Errorf("failed to load configuration: %w", err)
@@ -169,7 +174,7 @@ func handleConfigCommand(args *cliargs.ParsedArgs) error {
 			return fmt.Errorf("failed to parse server address %q: %w", cfg.GetServerAddress(), err)
 		}
 
-		return renderClientConfig(os.Stdout, clientHost(args.Host), port, cfg.IsTLSEnabled(), cfg.GetAPIKey())
+		return renderClientConfig(os.Stdout, clientHost(args.Host), port, cfg.IsTLSEnabled(), cfg.GetAPIKey(), cfg.GetTLSCertFile())
 
 	default:
 		fmt.Println("Configuration management")

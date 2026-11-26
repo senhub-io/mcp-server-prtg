@@ -40,7 +40,7 @@ func clientHost(override string) string {
 	return "localhost"
 }
 
-func renderClientConfig(w io.Writer, host string, port string, tls bool, apiKey string) error {
+func renderClientConfig(w io.Writer, host string, port string, tls bool, apiKey, certFile string) error {
 	scheme := "http"
 	if tls {
 		scheme = "https"
@@ -56,7 +56,7 @@ func renderClientConfig(w io.Writer, host string, port string, tls bool, apiKey 
 
 	env := map[string]string{"MCP_PRTG_API_KEY": apiKey}
 	if tls {
-		env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
+		env["NODE_EXTRA_CA_CERTS"] = "<path on the client computer to a copy of server.crt>"
 	}
 
 	if _, err := fmt.Fprintln(w, "Claude Desktop (claude_desktop_config.json):"); err != nil {
@@ -111,7 +111,7 @@ func renderClientConfig(w io.Writer, host string, port string, tls bool, apiKey 
 	}
 
 	if tls {
-		if _, err := fmt.Fprintln(w, "\nThe server uses a self-signed certificate by default: Claude Desktop accepts it through NODE_TLS_REJECT_UNAUTHORIZED=0 above; for the other clients install a certificate they trust or add the server certificate to the client machine's trust store."); err != nil {
+		if _, err := fmt.Fprintf(w, "\nTLS: copy the server certificate %s to each client computer. Claude Desktop trusts it through NODE_EXTRA_CA_CERTS above; for Claude Code, Cursor and VS Code, import it into the computer's trusted root certificates. Clients must use a host name or address the certificate covers (%s by default).\n", certFile, host); err != nil {
 			return err
 		}
 	}

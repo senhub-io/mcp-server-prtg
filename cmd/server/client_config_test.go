@@ -12,7 +12,7 @@ import (
 func renderToString(t *testing.T, host, port string, tls bool, apiKey string) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := renderClientConfig(&buf, host, port, tls, apiKey); err != nil {
+	if err := renderClientConfig(&buf, host, port, tls, apiKey, "/etc/mcp-server-prtg/certs/server.crt"); err != nil {
 		t.Fatalf("renderClientConfig: %v", err)
 	}
 	return buf.String()
@@ -27,8 +27,8 @@ func TestRenderClientConfigTLS(t *testing.T) {
 		"Cursor (~/.cursor/mcp.json):",
 		"VS Code (.vscode/mcp.json):",
 		"https://prtg.example.com:8443/mcp",
-		"NODE_TLS_REJECT_UNAUTHORIZED",
-		"self-signed certificate",
+		"NODE_EXTRA_CA_CERTS",
+		"copy the server certificate",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q", want)
@@ -52,10 +52,10 @@ func TestRenderClientConfigNoTLS(t *testing.T) {
 	if strings.Contains(out, "https://") {
 		t.Error("unexpected https URL in non-TLS output")
 	}
-	if strings.Contains(out, "NODE_TLS_REJECT_UNAUTHORIZED") {
-		t.Error("NODE_TLS_REJECT_UNAUTHORIZED must not appear when tls is false")
+	if strings.Contains(out, "NODE_EXTRA_CA_CERTS") {
+		t.Error("NODE_EXTRA_CA_CERTS must not appear when tls is false")
 	}
-	if strings.Contains(out, "self-signed certificate") {
+	if strings.Contains(out, "copy the server certificate") {
 		t.Error("TLS note must not appear when tls is false")
 	}
 }
