@@ -120,7 +120,7 @@ func NewAgent(args *cliargs.ParsedArgs) (*Agent, error) {
 			metricsHandler := handlers.NewMetricsToolHandler(prtgClient, toolHandler)
 			metricsHandler.RegisterMetricsTools(mcpServer)
 
-			toolsCount += 3 // Add 3 metrics tools
+			toolsCount += 2
 			moduleLogger.Info().Msg("PRTG metrics tools registered")
 		}
 	} else {
