@@ -57,25 +57,25 @@ func (db *DB) GetSensorsExtended(ctx context.Context, deviceName, sensorName, se
 	// Add filters
 	if deviceName != "" {
 		query += fmt.Sprintf(" AND d.name ILIKE $%d", argPos)
-		args = append(args, "%"+deviceName+"%")
+		args = append(args, likeContains(deviceName))
 		argPos++
 	}
 
 	if sensorName != "" {
 		query += fmt.Sprintf(" AND s.name ILIKE $%d", argPos)
-		args = append(args, "%"+sensorName+"%")
+		args = append(args, likeContains(sensorName))
 		argPos++
 	}
 
 	if sensorType != "" {
 		query += fmt.Sprintf(" AND s.sensor_type ILIKE $%d", argPos)
-		args = append(args, "%"+sensorType+"%")
+		args = append(args, likeContains(sensorType))
 		argPos++
 	}
 
 	if groupName != "" {
 		query += fmt.Sprintf(" AND g.name ILIKE $%d", argPos)
-		args = append(args, "%"+groupName+"%")
+		args = append(args, likeContains(groupName))
 		argPos++
 	}
 
@@ -312,7 +312,7 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
 	if deviceName != "" {
 		query += fmt.Sprintf(" AND d.name ILIKE $%d", argPos)
 
-		args = append(args, "%"+deviceName+"%")
+		args = append(args, likeContains(deviceName))
 	}
 
 	// Order by severity: Down statuses first, then Warning, then others
@@ -373,7 +373,7 @@ func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.
 	`
 
 	var device types.Device
-	err := db.QueryRow(ctx, deviceQuery, "%"+deviceName+"%").Scan(
+	err := db.QueryRow(ctx, deviceQuery, likeContains(deviceName)).Scan(
 		&device.ID,
 		&device.ServerID,
 		&device.Name,
@@ -508,7 +508,7 @@ func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limi
 	if sensorType != "" {
 		query += fmt.Sprintf(" AND s.sensor_type ILIKE $%d", argPos)
 
-		args = append(args, "%"+sensorType+"%")
+		args = append(args, likeContains(sensorType))
 		argPos++
 	}
 
@@ -639,6 +639,12 @@ func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
 	return results, rows.Err()
 }
 
+// likeContains builds an ILIKE pattern matching s literally anywhere in the value.
+func likeContains(s string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+	return "%" + escaped + "%"
+}
+
 // GetGroups retrieves all PRTG groups matching the given filters.
 func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, limit int) ([]types.Group, error) {
 	query := `
@@ -661,7 +667,7 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 
 	if groupName != "" {
 		query += fmt.Sprintf(" AND g.name ILIKE $%d", argPos)
-		args = append(args, "%"+groupName+"%")
+		args = append(args, likeContains(groupName))
 		argPos++
 	}
 
@@ -972,7 +978,7 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 		LIMIT $2
 	`
 
-	groupRows, err := db.Query(ctx, groupQuery, "%"+searchTerm+"%", limit)
+	groupRows, err := db.Query(ctx, groupQuery, likeContains(searchTerm), limit)
 	if err != nil {
 		return nil, fmt.Errorf("group search failed: %w", err)
 	}
@@ -1034,7 +1040,7 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 		LIMIT $2
 	`
 
-	deviceRows, err := db.Query(ctx, deviceQuery, "%"+searchTerm+"%", limit)
+	deviceRows, err := db.Query(ctx, deviceQuery, likeContains(searchTerm), limit)
 	if err != nil {
 		return nil, fmt.Errorf("device search failed: %w", err)
 	}
@@ -1095,7 +1101,7 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 		LIMIT $2
 	`
 
-	sensorRows, err := db.Query(ctx, sensorQuery, "%"+searchTerm+"%", limit)
+	sensorRows, err := db.Query(ctx, sensorQuery, likeContains(searchTerm), limit)
 	if err != nil {
 		return nil, fmt.Errorf("sensor search failed: %w", err)
 	}
@@ -1134,7 +1140,7 @@ func (db *DB) GetTags(ctx context.Context, tagName string, limit int) ([]types.T
 
 	if tagName != "" {
 		query += fmt.Sprintf(" AND t.name ILIKE $%d", argPos)
-		args = append(args, "%"+tagName+"%")
+		args = append(args, likeContains(tagName))
 		argPos++
 	}
 
@@ -1216,7 +1222,7 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 
 	if processName != "" {
 		query += fmt.Sprintf(" AND s.name ILIKE $%d", argPos)
-		args = append(args, "%"+processName+"%")
+		args = append(args, likeContains(processName))
 		argPos++
 	}
 

@@ -192,3 +192,19 @@ func TestExecuteCustomQuery_QueryErrorStillRollsBack(t *testing.T) {
 
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestLikeContains(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"abc", "%abc%"},
+		{"_", `%\_%`},
+		{"50%", `%50\%%`},
+		{`a\b`, `%a\\b%`},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, likeContains(tt.input), "input %q", tt.input)
+	}
+}
