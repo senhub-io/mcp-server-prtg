@@ -164,17 +164,17 @@ func (c *Configuration) createDefaultConfiguration() error {
 		c.logger.Info().Msg("Generated new API key (Bearer token)")
 	}
 
-	// Get absolute paths for certificates (relative to executable directory)
-	// This ensures paths work correctly when running as a Windows service
-	exePath, err := os.Executable()
+	// Certificates live next to the configuration file, so an installer that
+	// owns the program directory never finds generated files in it.
+	configPath, err := filepath.Abs(c.args.ConfigPath)
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return fmt.Errorf("resolving configuration path %s: %w", c.args.ConfigPath, err)
 	}
 
-	exeDir := filepath.Dir(exePath)
+	configDir := filepath.Dir(configPath)
 
-	defaultCertFile := filepath.Join(exeDir, "certs", "server.crt")
-	defaultKeyFile := filepath.Join(exeDir, "certs", "server.key")
+	defaultCertFile := filepath.Join(configDir, "certs", "server.crt")
+	defaultKeyFile := filepath.Join(configDir, "certs", "server.key")
 
 	// On Windows, double backslashes for YAML compatibility
 	// Windows accepts both C:\\path and C:/path but YAML needs escaped backslashes
@@ -184,10 +184,10 @@ func (c *Configuration) createDefaultConfiguration() error {
 	}
 
 	c.logger.Debug().
-		Str("exe_dir", exeDir).
+		Str("config_dir", configDir).
 		Str("cert_file", defaultCertFile).
 		Str("key_file", defaultKeyFile).
-		Msg("Using executable directory for certificate paths")
+		Msg("Using configuration directory for certificate paths")
 
 	// Create default config
 	c.data = ConfigData{

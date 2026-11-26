@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.get_tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +32,7 @@ jobs:
 
           echo "Production version: $PROD_TAG"
           echo "TAG=$PROD_TAG" >> $GITHUB_ENV
+          echo "tag=$PROD_TAG" >> "$GITHUB_OUTPUT"
 
           # Create the production tag if it doesn't exist
           if ! git tag -l | grep -q "^$PROD_TAG$"; then
@@ -43,7 +46,7 @@ jobs:
           fi
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
 
@@ -102,7 +105,7 @@ jobs:
           dist/mcp-server-prtg_linux_amd64 --version || true
 
       - name: Create Production Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: Release ${{ env.TAG }}
@@ -115,3 +118,13 @@ jobs:
             dist/mcp-server-prtg_darwin_arm64
           generate_release_notes: true
           prerelease: false
+
+  windows_msi:
+    needs: create_release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/windows-msi.yml
+    with:
+      version: ${{ needs.create_release.outputs.tag }}
+      release_tag: ${{ needs.create_release.outputs.tag }}
+    secrets: inherit

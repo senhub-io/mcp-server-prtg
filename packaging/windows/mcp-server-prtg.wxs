@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MSI for the MCP Server PRTG Go service.
+
+  Build (see .github/workflows/windows-msi.yml):
+    wix build packaging/windows/mcp-server-prtg.wxs \
+      -d Version=X.Y.Z -d BinDir=dist/windows-amd64 \
+      -arch x64 -ext WixToolset.Util.wixext \
+      -out dist/mcp-server-prtg-X.Y.Z-amd64.msi
+
+  Silent install:
+    msiexec /i mcp-server-prtg-X.Y.Z-amd64.msi /qn [ADOPT=1] /l*v install.log
+
+  The MSI installs only the service executable under Program Files.
+  config.yaml, certs and logs live in the CommonAppDataFolder data directory
+  and are created by the service itself at first start, so upgrades and
+  repairs never touch operator configuration. The data directory is kept
+  on uninstall.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!-- The UpgradeCode below identifies the product line across versions.
+       Never change it once an MSI has shipped: upgrades would stop being
+       detected and two products would install side by side. -->
+  <Package Name="MCP Server PRTG"
+           Manufacturer="Sensor Factory"
+           Version="$(var.Version)"
+           Language="1033"
+           InstallerVersion="500"
+           Scope="perMachine"
+           UpgradeCode="E64EA25F-6444-43A4-9E8E-29CAFB43ACEE">
+
+  <MajorUpgrade AllowSameVersionUpgrades="yes"
+                Schedule="afterInstallInitialize"
+                DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+  <MediaTemplate EmbedCab="yes" />
+
+
+  <Property Id="ARPNOMODIFY" Value="1" />
+  <Property Id="ARPURLINFOABOUT" Value="https://github.com/senhub-io/mcp-server-prtg" />
+
+  <!-- Foreign-install guard. EXISTING_SERVICE detects a service created by
+       another method (the built-in install command). MSI_MARKER detects our
+       own registry marker. When a foreign service exists and ADOPT is not
+       set, refuse to install so we do not clobber a live configuration. -->
+  <Property Id="EXISTING_SERVICE">
+    <RegistrySearch Id="ExistingServiceSearch"
+                    Root="HKLM"
+                    Key="SYSTEM\CurrentControlSet\Services\mcp-server-prtg"
+                    Name="ImagePath"
+                    Type="raw"
+                    Bitness="always64" />
+  </Property>
+
+  <Property Id="MSI_MARKER">
+    <RegistrySearch Id="MsiMarkerSearch"
+                    Root="HKLM"
+                    Key="SOFTWARE\Sensor Factory\MCP Server PRTG"
+                    Name="Version"
+                    Type="raw"
+                    Bitness="always64" />
+  </Property>
+
+  <!-- Secure so it can be passed on the msiexec command line under /qn. -->
+  <Property Id="ADOPT" Secure="yes" />
+
+  <Launch Condition="Installed OR MSI_MARKER OR NOT EXISTING_SERVICE OR ADOPT"
+          Message="MCP Server PRTG is already installed on this machine as a service created by another method (the built-in install command), so setup will now stop. Either re-run setup with ADOPT=1 to let this installer take it over (copy your existing config.yaml to %ProgramData%\Sensor Factory\MCP Server PRTG\ first to keep it), or remove the existing service first with: sc stop mcp-server-prtg and sc delete mcp-server-prtg." />
+
+  <!-- ADOPT mode: stop and delete the foreign service so ServiceInstall can
+       create it under MSI control. Return is ignored on purpose: the service
+       may already be stopped or gone. -->
+  <SetProperty Id="AdoptQuietExec"
+               Value="&quot;[SystemFolder]cmd.exe&quot; /c &quot;sc stop mcp-server-prtg &amp; sc delete mcp-server-prtg&quot;"
+               Before="AdoptQuietExec"
+               Sequence="execute"
+               Condition="ADOPT AND EXISTING_SERVICE AND NOT MSI_MARKER AND NOT Installed" />
+
+  <CustomAction Id="AdoptQuietExec"
+                BinaryRef="Wix4UtilCA_X64"
+                DllEntry="WixQuietExec64"
+                Execute="deferred"
+                Impersonate="no"
+                Return="ignore" />
+
+  <InstallExecuteSequence>
+    <Custom Action="AdoptQuietExec"
+            Before="InstallServices"
+            Condition="ADOPT AND EXISTING_SERVICE AND NOT MSI_MARKER AND NOT Installed" />
+  </InstallExecuteSequence>
+
+  <StandardDirectory Id="ProgramFiles64Folder">
+    <Directory Id="SensorFactoryPf" Name="Sensor Factory">
+      <Directory Id="INSTALLFOLDER" Name="MCP Server PRTG">
+        <Component Id="MainBinary"
+                   Guid="F2E0FDFE-79F6-4C1C-A0EF-73A2B5BCA555">
+          <File Id="McpServerPrtgExe"
+                Source="$(var.BinDir)\mcp-server-prtg.exe"
+                KeyPath="yes" />
+
+          <ServiceInstall Id="McpServerPrtgService"
+                          Name="mcp-server-prtg"
+                          DisplayName="MCP Server PRTG"
+                          Description="MCP server exposing PRTG monitoring data over Streamable HTTP"
+                          Type="ownProcess"
+                          Start="auto"
+                          ErrorControl="normal"
+                          Account="LocalSystem"
+                          Vital="yes"
+                          Arguments='run --config "[DATAFOLDER]config.yaml" --log-file "[DATAFOLDER]logs\mcp-server-prtg.log" --working-dir "[DATAFOLDER]"'>
+            <util:ServiceConfig FirstFailureActionType="restart"
+                                SecondFailureActionType="restart"
+                                ThirdFailureActionType="none"
+                                RestartServiceDelayInSeconds="10"
+                                ResetPeriodInDays="1" />
+          </ServiceInstall>
+
+          <ServiceControl Id="McpServerPrtgServiceControl"
+                          Name="mcp-server-prtg"
+                          Start="install"
+                          Stop="both"
+                          Remove="uninstall"
+                          Wait="yes" />
+        </Component>
+      </Directory>
+    </Directory>
+  </StandardDirectory>
+
+  <StandardDirectory Id="CommonAppDataFolder">
+    <Directory Id="SensorFactoryData" Name="Sensor Factory">
+      <Directory Id="DATAFOLDER" Name="MCP Server PRTG">
+        <Directory Id="DataLogsFolder" Name="logs" />
+
+        <!-- Permanent so the operator's data (config.yaml, certs, logs)
+             survives uninstall and downgrade repairs. -->
+        <Component Id="DataFolders"
+                   Guid="3D08AF39-9CBE-4570-BEB2-437A2CE34D04"
+                   Permanent="yes">
+          <RegistryValue Root="HKLM"
+                         Key="SOFTWARE\Sensor Factory\MCP Server PRTG"
+                         Name="DataFolderFlag"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
+
+          <!-- Folders only; the service writes its own files. The DACL is
+               built from scratch (no ProgramData inheritance) because
+               config.yaml holds the API key and database password. -->
+          <CreateFolder Directory="DATAFOLDER">
+            <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+            <util:PermissionEx User="Administrators" GenericAll="yes" />
+          </CreateFolder>
+          <CreateFolder Directory="DataLogsFolder">
+            <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+            <util:PermissionEx User="Administrators" GenericAll="yes" />
+          </CreateFolder>
+        </Component>
+
+        <Component Id="RegistryMarker"
+                   Guid="AF327DC1-70F9-4FBD-8EFB-68CF399271B7">
+          <RegistryValue Root="HKLM"
+                         Key="SOFTWARE\Sensor Factory\MCP Server PRTG"
+                         Name="Version"
+                         Value="[ProductVersion]"
+                         Type="string"
+                         KeyPath="yes" />
+          <RegistryValue Root="HKLM"
+                         Key="SOFTWARE\Sensor Factory\MCP Server PRTG"
+                         Name="InstallFolder"
+                         Value="[INSTALLFOLDER]"
+                         Type="string" />
+          <RegistryValue Root="HKLM"
+                         Key="SOFTWARE\Sensor Factory\MCP Server PRTG"
+                         Name="DataFolder"
+                         Value="[DATAFOLDER]"
+                         Type="string" />
+        </Component>
+      </Directory>
+    </Directory>
+  </StandardDirectory>
+
+  <Feature Id="Main" Level="1">
+    <ComponentRef Id="MainBinary" />
+    <ComponentRef Id="DataFolders" />
+    <ComponentRef Id="RegistryMarker" />
+  </Feature>
+
+  </Package>
+</Wix>
