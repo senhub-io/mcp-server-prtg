@@ -5,7 +5,7 @@ import "github.com/alexflint/go-arg"
 // ParsedArgs contains all command-line arguments for the MCP Server.
 type ParsedArgs struct {
 	// Command to execute
-	Command string `arg:"positional" help:"Command to execute (run, install, start, stop, uninstall, config)"`
+	Command string `arg:"positional" help:"Command to execute (run, stdio, install, start, stop, status, uninstall, config)"`
 
 	// Configuration
 	ConfigPath string `arg:"--config,-c" help:"Path to configuration file" default:"./config.yaml"`
@@ -60,7 +60,7 @@ type argsWithVersion struct {
 
 // Description returns the program description.
 func (a *argsWithVersion) Description() string {
-	return "MCP Server for PRTG monitoring data - provides remote access to PRTG PostgreSQL database via MCP protocol over SSE transport"
+	return "MCP Server for PRTG monitoring data - exposes PRTG monitoring data to MCP clients over Streamable HTTP or stdio"
 }
 
 // Version returns the version information.

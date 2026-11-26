@@ -209,7 +209,7 @@ func showHelp() error {
 	fmt.Printf("  %s install --config /etc/mcp-server-prtg/config.yaml\n", os.Args[0])
 	fmt.Printf("  %s start\n", os.Args[0])
 	fmt.Println()
-	fmt.Println("For more information, see: https://github.com/matthieu/mcp-server-prtg")
+	fmt.Println("For more information, see: https://github.com/senhub-io/mcp-server-prtg")
 
 	return nil
 }
