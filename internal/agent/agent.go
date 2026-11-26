@@ -82,7 +82,15 @@ func NewAgent(args *cliargs.ParsedArgs) (*Agent, error) {
 
 	toolsCount := 12 // Base tools from database
 
+	// Channel store from the PRTG Data Exporter database, when it holds channel values
+	var store handlers.ChannelStore
+	if db != nil && db.HasChannelValues() {
+		store = db
+		moduleLogger.Info().Msg("Channel history available in database - metrics tools will read from the database first")
+	}
+
 	// Initialize PRTG API client if enabled
+	var client handlers.PRTGClient
 	if config.IsPRTGEnabled() {
 		moduleLogger.Info().
 			Str("base_url", config.GetPRTGBaseURL()).
@@ -116,19 +124,24 @@ func NewAgent(args *cliargs.ParsedArgs) (*Agent, error) {
 				moduleLogger.Info().Msg("PRTG API connection successful")
 			}
 
-			// Register metrics tools
-			metricsHandler := handlers.NewMetricsToolHandler(prtgClient, toolHandler)
-			metricsHandler.RegisterMetricsTools(mcpServer)
-
-			toolsCount += 3 // Add 3 metrics tools
-			moduleLogger.Info().Msg("PRTG metrics tools registered")
+			client = prtgClient
 		}
 	} else {
 		moduleLogger.Info().Msg("PRTG API client disabled in configuration")
 	}
 
+	// Register metrics tools when at least one source is available
+	if store != nil || client != nil {
+		metricsHandler := handlers.NewMetricsToolHandlerWithStore(client, store, toolHandler)
+		metricsHandler.RegisterMetricsTools(mcpServer)
+
+		toolsCount += 2 // Add the 2 metrics tools
+	}
+
 	moduleLogger.Info().
 		Int("tools_count", toolsCount).
+		Bool("metrics_source_database", store != nil).
+		Bool("metrics_source_prtg", client != nil).
 		Msg("MCP tools registered")
 
 	// Create Streamable HTTP server (modern MCP transport)

@@ -4,6 +4,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -74,7 +75,11 @@ func formatAlertsResponse(alerts []types.Sensor) string {
 
 	// 1. Header with count
 	sb.WriteString(fmt.Sprintf("## 🚨 Alert Summary\n\n"))
-	sb.WriteString(fmt.Sprintf("Found **%d alert(s)** requiring attention\n\n", len(alerts)))
+	if len(alerts) >= 100 {
+		sb.WriteString("Showing the first **100** alerts (limit reached; filter with status or device_name)\n\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("Found **%d alert(s)** requiring attention\n\n", len(alerts)))
+	}
 
 	if len(alerts) == 0 {
 		sb.WriteString("✅ No alerts found. All systems operational!\n")
@@ -87,15 +92,15 @@ func formatAlertsResponse(alerts []types.Sensor) string {
 		statusCount[alert.Status]++
 	}
 
+	statuses := make([]int, 0, len(statusCount))
+	for s := range statusCount {
+		statuses = append(statuses, s)
+	}
+	sort.Ints(statuses)
+
 	sb.WriteString("**Breakdown by status:**\n")
-	if count, ok := statusCount[5]; ok {
-		sb.WriteString(fmt.Sprintf("- 🔴 **Critical (Down):** %d sensor(s)\n", count))
-	}
-	if count, ok := statusCount[4]; ok {
-		sb.WriteString(fmt.Sprintf("- 🟡 **Warning:** %d sensor(s)\n", count))
-	}
-	if count, ok := statusCount[13]; ok {
-		sb.WriteString(fmt.Sprintf("- ❓ **Unknown:** %d sensor(s)\n", count))
+	for _, s := range statuses {
+		sb.WriteString(fmt.Sprintf("- %s **%s:** %d sensor(s)\n", getStatusEmoji(s), types.GetStatusText(s), statusCount[s]))
 	}
 	sb.WriteString("\n")
 
@@ -1079,6 +1084,41 @@ func formatStatisticsResponse(stats *types.Statistics) string {
 				percentage,
 			))
 		}
+		sb.WriteString("\n")
+	}
+
+	// 4b. Data Exporter collection profiles
+	if len(stats.Profiles) > 0 {
+		sb.WriteString("**Data Exporter collection:**\n")
+		for _, p := range stats.Profiles {
+			line := fmt.Sprintf("- **%s** (%s): last collection %s",
+				p.Alias, p.Kind, p.LastEndUTC.UTC().Format("2006-01-02 15:04"))
+			if p.NextUTC != nil {
+				line += fmt.Sprintf(", next %s", p.NextUTC.UTC().Format("2006-01-02 15:04"))
+			}
+			if p.Paused {
+				line += " ⏸️ flagged paused by Data Exporter"
+			}
+			if p.HasErrors {
+				line += " ❌ errors"
+			}
+			if p.HasWarnings {
+				line += " ⚠️ warnings"
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// 4c. Channel history coverage
+	if stats.ExportCoverage != nil {
+		c := stats.ExportCoverage
+		sb.WriteString(fmt.Sprintf("**Channel history coverage** (fresh = exported within %d h):\n", c.FreshWithinHours))
+		sb.WriteString(fmt.Sprintf("- ✅ Up to date: %d\n", c.UpToDate))
+		sb.WriteString(fmt.Sprintf("- 🕓 Stale: %d\n", c.Stale))
+		sb.WriteString(fmt.Sprintf("- 🚫 Never fetched: %d\n", c.NeverFetched))
+		sb.WriteString(fmt.Sprintf("- 📭 Without data: %d\n", c.NoData))
+		sb.WriteString(fmt.Sprintf("- ❓ Not tracked: %d\n", c.NotTracked))
 		sb.WriteString("\n")
 	}
 

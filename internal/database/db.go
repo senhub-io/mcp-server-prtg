@@ -16,6 +16,7 @@ import (
 type DB struct {
 	conn   *sql.DB
 	logger *zerolog.Logger
+	schema schemaFeatures
 }
 
 // New creates a PostgreSQL database connection with optimized pool settings.
@@ -47,10 +48,37 @@ func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 
 	logger.Info().Msg("database connection established")
 
+	detectCtx, detectCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer detectCancel()
+
+	features, detectErr := detectSchema(detectCtx, conn)
+	if detectErr != nil {
+		logger.Warn().Err(detectErr).Msg("schema detection failed, assuming default layout")
+	} else {
+		logger.Info().
+			Bool("soft_delete", features.softDelete).
+			Bool("tree_depth", features.treeDepth).
+			Bool("channel_values", features.channelValues).
+			Bool("collection_status", features.collectionStatus).
+			Bool("last_fetched", features.lastFetched).
+			Msg("database schema detected")
+	}
+
 	return &DB{
 		conn:   conn,
 		logger: logger,
+		schema: features,
 	}, nil
+}
+
+// HasChannelValues reports whether the prtg_channel_value table exists.
+func (db *DB) HasChannelValues() bool {
+	return db.schema.channelValues
+}
+
+// HasCollectionStatus reports whether the data_collection_status table exists.
+func (db *DB) HasCollectionStatus() bool {
+	return db.schema.collectionStatus
 }
 
 // Close closes the database connection.
