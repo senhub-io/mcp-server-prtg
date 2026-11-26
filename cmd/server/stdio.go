@@ -91,18 +91,29 @@ func runStdioMode() error {
 	toolHandler := handlers.NewToolHandler(nil, nil, &logger)
 
 	// DO NOT register database tools in stdio mode - they will crash with nil DB
-	// Only metrics tools (API v2) are registered below
+	// Only API v2 tools are registered below
 	toolsCount := 0 // Will be updated as we register tools
 
-	// Initialize metrics tools (PRTG API v2)
+	// Initialize PRTG API v2 tools
 	if config.PRTGEnabled {
+		// Register metrics tools (timeseries, channels)
 		metricsHandler := handlers.NewMetricsToolHandler(prtgClient, toolHandler)
 		metricsHandler.RegisterMetricsTools(mcpServer)
-		toolsCount += 3 // prtg_get_sensor_timeseries, prtg_get_sensor_history_custom, prtg_get_channel_current_values
+		toolsCount += 2
 
 		logger.Info().
-			Int("tools_count", 3).
+			Int("tools_count", 2).
 			Msg("PRTG API v2 metrics tools registered")
+
+		// Register database-replacement API v2 tools
+		// These tools replace the 12 PostgreSQL-dependent tools with API v2 equivalents
+		apiv2Handler := handlers.NewAPIv2ToolHandler(prtgClient, toolHandler)
+		apiv2Handler.RegisterAPIv2Tools(mcpServer)
+		toolsCount += 11 // All database-free tools except prtg_query_sql (removed by design)
+
+		logger.Info().
+			Int("tools_count", 11).
+			Msg("PRTG API v2 database-replacement tools registered")
 	}
 
 	logger.Info().

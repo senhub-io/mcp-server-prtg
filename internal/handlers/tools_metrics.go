@@ -4,7 +4,6 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -14,9 +13,18 @@ import (
 
 // PRTGClient interface for PRTG API operations.
 type PRTGClient interface {
+	// Metrics operations
 	GetTimeSeries(ctx context.Context, objectID int, timeType prtg.TimeSeriesType) (*prtg.TimeSeriesData, error)
-	GetTimeSeriesCustom(ctx context.Context, objectID int, start, end time.Time) (*prtg.TimeSeriesData, error)
 	GetChannelsBySensor(ctx context.Context, sensorID int) ([]prtg.Channel, error)
+
+	// API v2 operations
+	GetSensors(ctx context.Context, filters map[string]interface{}) ([]prtg.Sensor, error)
+	GetSensorByID(ctx context.Context, sensorID int) (*prtg.Sensor, error)
+	GetDeviceByID(ctx context.Context, deviceID int, includes ...string) (*prtg.Device, error)
+	GetGroups(ctx context.Context, filters map[string]interface{}) ([]prtg.Group, error)
+	GetObjects(ctx context.Context, filters map[string]interface{}) ([]prtg.PRTGObject, error)
+	GetObjectCounts(ctx context.Context) (*prtg.SensorCount, error)
+	GetStatusSummary(ctx context.Context) (*prtg.StatusSummary, error)
 }
 
 // MetricsToolHandler handles MCP tool requests for PRTG metrics/historical data.
@@ -61,34 +69,7 @@ func (h *MetricsToolHandler) RegisterMetricsTools(s *server.MCPServer) {
 		},
 	}, h.handleGetSensorTimeSeries)
 
-	// Tool 2: prtg_get_sensor_history_custom
-	s.AddTool(mcp.Tool{
-		Name: "prtg_get_sensor_history_custom",
-		Description: "Retrieve **HISTORICAL** data for a specific date/time range. " +
-			"**For CURRENT values, use prtg_get_channel_current_values instead.** " +
-			"Use this when you need to analyze a specific incident timeframe (e.g., 'what happened last Tuesday between 2pm-4pm'). " +
-			"Useful for: incident investigation, comparing specific time windows, generating reports for past periods.",
-		InputSchema: mcp.ToolInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"sensor_id": map[string]interface{}{
-					"type":        "integer",
-					"description": "PRTG sensor ID",
-				},
-				"start_time": map[string]interface{}{
-					"type":        "string",
-					"description": "Start time in RFC3339 format (e.g., '2025-10-30T00:00:00Z')",
-				},
-				"end_time": map[string]interface{}{
-					"type":        "string",
-					"description": "End time in RFC3339 format (e.g., '2025-10-31T23:59:59Z')",
-				},
-			},
-			Required: []string{"sensor_id", "start_time", "end_time"},
-		},
-	}, h.handleGetSensorHistoryCustom)
-
-	// Tool 3: prtg_get_channel_current_values
+	// Tool 2: prtg_get_channel_current_values
 	s.AddTool(mcp.Tool{
 		Name: "prtg_get_channel_current_values",
 		Description: "**PRIMARY TOOL for checking sensor current state and discovering available channels.** " +
@@ -153,61 +134,6 @@ func (h *MetricsToolHandler) handleGetSensorTimeSeries(ctx context.Context, requ
 			Err(err).
 			Int("sensor_id", params.SensorID).
 			Msg("Failed to fetch time series from PRTG API")
-		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch time series: %v", err)), nil
-	}
-
-	// Format response for LLM
-	formatted := formatTimeSeriesForLLM(data)
-
-	return mcp.NewToolResultText(formatted), nil
-}
-
-// handleGetSensorHistoryCustom handles prtg_get_sensor_history_custom tool requests.
-func (h *MetricsToolHandler) handleGetSensorHistoryCustom(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var params struct {
-		SensorID  int    `json:"sensor_id"`
-		StartTime string `json:"start_time"`
-		EndTime   string `json:"end_time"`
-	}
-
-	if err := parseArguments(request.Params.Arguments, &params); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Invalid parameters: %v", err)), nil
-	}
-
-	// Validate sensor_id
-	if params.SensorID <= 0 {
-		return ErrInvalidSensorID(), nil
-	}
-
-	// Parse timestamps
-	startTime, err := time.Parse(time.RFC3339, params.StartTime)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Invalid start_time format (use RFC3339): %v", err)), nil
-	}
-
-	endTime, err := time.Parse(time.RFC3339, params.EndTime)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Invalid end_time format (use RFC3339): %v", err)), nil
-	}
-
-	// Validate time range
-	if endTime.Before(startTime) {
-		return ErrInvalidTimeRange(), nil
-	}
-
-	h.handler.logger.Info().
-		Int("sensor_id", params.SensorID).
-		Time("start", startTime).
-		Time("end", endTime).
-		Msg("Fetching custom time range from PRTG API")
-
-	// Fetch data from PRTG API
-	data, err := h.prtgClient.GetTimeSeriesCustom(ctx, params.SensorID, startTime, endTime)
-	if err != nil {
-		h.handler.logger.Error().
-			Err(err).
-			Int("sensor_id", params.SensorID).
-			Msg("Failed to fetch custom time series from PRTG API")
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch time series: %v", err)), nil
 	}
 

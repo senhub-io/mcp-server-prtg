@@ -97,34 +97,6 @@ func (c *Client) GetTimeSeries(ctx context.Context, objectID int, timeType TimeS
 	return c.parseRawTimeSeriesData(objectID, timeType, nil, nil, rawData, channels)
 }
 
-// GetTimeSeriesCustom retrieves time series data for a custom time range.
-// objectID: The PRTG object ID
-// start: Start time (RFC3339)
-// end: End time (RFC3339)
-func (c *Client) GetTimeSeriesCustom(ctx context.Context, objectID int, start, end time.Time) (*TimeSeriesData, error) {
-	endpoint := fmt.Sprintf("/api/v2/experimental/timeseries/%d", objectID)
-
-	// Add query parameters for custom time range
-	params := url.Values{}
-	params.Set("start", start.Format(time.RFC3339))
-	params.Set("end", end.Format(time.RFC3339))
-
-	// PRTG API returns array of arrays directly
-	var rawData [][]interface{}
-	if err := c.doRequest(ctx, "GET", endpoint+"?"+params.Encode(), nil, &rawData); err != nil {
-		return nil, err
-	}
-
-	// Get channel names from /channels endpoint
-	channels, err := c.GetChannelsBySensor(ctx, objectID)
-	if err != nil {
-		c.logger.Warn().Err(err).Msg("Could not fetch channel names, using generic names")
-		channels = nil
-	}
-
-	return c.parseRawTimeSeriesData(objectID, "", &start, &end, rawData, channels)
-}
-
 // GetChannels retrieves all channels with optional filters.
 func (c *Client) GetChannels(ctx context.Context, filters map[string]string) ([]Channel, error) {
 	endpoint := "/api/v2/experimental/channels"
