@@ -1408,20 +1408,79 @@ func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	}
 
 	if db.schema.collectionStatus {
-		var lastCollection sql.NullTime
-		var hasErrors bool
-
-		err := db.QueryRow(ctx, `
-			SELECT MAX(last_collection_end_date), COALESCE(bool_or(has_errors), false)
+		profileRows, err := db.Query(ctx, `
+			SELECT profile_alias, profile_type, last_collection_end_date, next_scheduled_collection, has_errors, has_warnings, is_paused
 			FROM data_collection_status
-		`).Scan(&lastCollection, &hasErrors)
+			ORDER BY profile_type, profile_alias
+		`)
 		if err != nil {
 			db.logger.Warn().Err(err).Msg("failed to query data_collection_status")
 		} else {
-			if lastCollection.Valid {
-				stats.LastCollectionUTC = &lastCollection.Time
+			defer profileRows.Close()
+			stats.Profiles = []types.CollectionProfile{}
+			for profileRows.Next() {
+				var (
+					p           types.CollectionProfile
+					profileType int16
+					lastEnd     time.Time
+					next        sql.NullTime
+				)
+				if err := profileRows.Scan(&p.Alias, &profileType, &lastEnd, &next, &p.HasErrors, &p.HasWarnings, &p.Paused); err != nil {
+					db.logger.Warn().Err(err).Msg("failed to scan data_collection_status row")
+					break
+				}
+				switch profileType {
+				case 0:
+					p.Kind = "metrics"
+				case 1:
+					p.Kind = "status"
+				default:
+					p.Kind = fmt.Sprintf("type %d", profileType)
+				}
+				p.LastEndUTC = lastEnd.UTC()
+				if next.Valid {
+					t := next.Time.UTC()
+					p.NextUTC = &t
+				}
+				if stats.LastCollectionUTC == nil || lastEnd.After(*stats.LastCollectionUTC) {
+					t := lastEnd.UTC()
+					stats.LastCollectionUTC = &t
+				}
+				if p.HasErrors {
+					stats.CollectionErrors = true
+				}
+				stats.Profiles = append(stats.Profiles, p)
 			}
-			stats.CollectionErrors = hasErrors
+			if err := profileRows.Err(); err != nil {
+				db.logger.Warn().Err(err).Msg("failed to iterate data_collection_status rows")
+			}
+		}
+	}
+
+	if db.schema.lastFetched {
+		freshCutoff := time.Now().UTC().Add(-ExportFreshWithin)
+		coverage := &types.ExportCoverage{FreshWithinHours: int(ExportFreshWithin.Hours())}
+		err := db.QueryRow(ctx, `
+			SELECT
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NOT NULL AND f.no_monitoring_data = false AND f.last_fetch_date_utc >= $1),
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NOT NULL AND f.no_monitoring_data = false AND f.last_fetch_date_utc < $1),
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NOT NULL AND f.no_monitoring_data = false AND f.last_fetch_date_utc IS NULL),
+				count(*) FILTER (WHERE f.no_monitoring_data = true),
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NULL)
+			FROM prtg_sensor s
+			LEFT JOIN prtg_sensor_last_fetched_day f
+				ON f.prtg_sensor_id = s.id AND f.prtg_server_address_id = s.prtg_server_address_id
+			WHERE 1=1`+db.notDeleted("s"), freshCutoff).Scan(
+			&coverage.UpToDate,
+			&coverage.Stale,
+			&coverage.NeverFetched,
+			&coverage.NoData,
+			&coverage.NotTracked,
+		)
+		if err != nil {
+			db.logger.Warn().Err(err).Msg("failed to query sensor export coverage")
+		} else {
+			stats.ExportCoverage = coverage
 		}
 	}
 

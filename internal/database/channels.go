@@ -21,11 +21,14 @@ var (
 const channelQueryTimeout = 15 * time.Second
 const maxHistoryBuckets = 2000
 
-func channelDisplayName(id int, name sql.NullString) string {
+// ExportFreshWithin is the age after which an exported sensor is considered stale.
+const ExportFreshWithin = 24 * time.Hour
+
+func channelDisplayName(id int, name sql.NullString) (string, bool) {
 	if name.Valid && name.String != "" {
-		return name.String
+		return name.String, false
 	}
-	return fmt.Sprintf("Channel %d", id)
+	return fmt.Sprintf("Channel %d", id), true
 }
 
 func (db *DB) resolveServerID(ctx context.Context, sensorID int) (int, error) {
@@ -83,7 +86,7 @@ ORDER BY v.prtg_channel_id, v.date_time DESC`
 		if err := rows.Scan(&ch.ID, &ch.Value, &ch.Timestamp, &name, &unit); err != nil {
 			return nil, fmt.Errorf("scan last channel value: %w", err)
 		}
-		ch.Name = channelDisplayName(ch.ID, name)
+		ch.Name, ch.NameMissing = channelDisplayName(ch.ID, name)
 		if unit.Valid {
 			ch.Unit = unit.String
 		}
@@ -207,8 +210,47 @@ GROUP BY 1, 2 ORDER BY 2, 1`
 		if info, ok := names[id]; ok {
 			history.Channels = append(history.Channels, info)
 		} else {
-			history.Channels = append(history.Channels, types.ChannelInfo{ID: id, Name: fmt.Sprintf("Channel %d", id)})
+			name, missing := channelDisplayName(id, sql.NullString{})
+			history.Channels = append(history.Channels, types.ChannelInfo{ID: id, Name: name, NameMissing: missing})
 		}
 	}
 	return history, nil
+}
+
+// GetSensorExportState reports how fresh Data Exporter's export is for one sensor.
+func (db *DB) GetSensorExportState(ctx context.Context, sensorID int) (*types.SensorExportState, error) {
+	if !db.schema.lastFetched {
+		return nil, ErrNoChannelData
+	}
+	if sensorID <= 0 {
+		return nil, fmt.Errorf("invalid sensor id %d", sensorID)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, channelQueryTimeout)
+	defer cancel()
+
+	serverID, err := db.resolveServerID(ctx, sensorID)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &types.SensorExportState{SensorID: sensorID, ServerID: serverID}
+	var lastFetch sql.NullTime
+	err = db.QueryRow(ctx, `
+		SELECT last_fetch_date_utc, no_monitoring_data
+		FROM prtg_sensor_last_fetched_day
+		WHERE prtg_sensor_id = $1 AND prtg_server_address_id = $2
+	`, sensorID, serverID).Scan(&lastFetch, &state.NoMonitoringData)
+	if errors.Is(err, sql.ErrNoRows) {
+		return state, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query export state for sensor %d: %w", sensorID, err)
+	}
+	state.Tracked = true
+	if lastFetch.Valid {
+		t := lastFetch.Time.UTC()
+		state.LastFetchUTC = &t
+	}
+	return state, nil
 }

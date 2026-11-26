@@ -23,8 +23,8 @@ func newMockDBWithSchema(t *testing.T, f schemaFeatures) (*DB, sqlmock.Sqlmock) 
 func TestDetectSchema(t *testing.T) {
 	db, mock := newMockDB(t)
 
-	rows := sqlmock.NewRows([]string{"soft_delete", "tree_depth", "channel_values", "collection_status"}).
-		AddRow(true, false, true, false)
+	rows := sqlmock.NewRows([]string{"soft_delete", "tree_depth", "channel_values", "collection_status", "last_fetched"}).
+		AddRow(true, false, true, false, true)
 	mock.ExpectQuery("EXISTS").WillReturnRows(rows)
 
 	f, err := detectSchema(context.Background(), db.conn)
@@ -33,6 +33,7 @@ func TestDetectSchema(t *testing.T) {
 	assert.False(t, f.treeDepth)
 	assert.True(t, f.channelValues)
 	assert.False(t, f.collectionStatus)
+	assert.True(t, f.lastFetched)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -152,7 +153,8 @@ func TestGetStatisticsCollectionStatus(t *testing.T) {
 		sqlmock.NewRows([]string{"sensor_type", "count"}).AddRow("ping", 10),
 	)
 	mock.ExpectQuery("data_collection_status").WillReturnRows(
-		sqlmock.NewRows([]string{"max", "has_errors"}).AddRow(now, true),
+		sqlmock.NewRows([]string{"profile_alias", "profile_type", "last_collection_end_date", "next_scheduled_collection", "has_errors", "has_warnings", "is_paused"}).
+			AddRow("metrics", 0, now, nil, true, false, true),
 	)
 
 	stats, err := db.GetStatistics(context.Background())
@@ -161,6 +163,9 @@ func TestGetStatisticsCollectionStatus(t *testing.T) {
 	require.NotNil(t, stats.LastCollectionUTC)
 	assert.True(t, now.Equal(*stats.LastCollectionUTC))
 	assert.True(t, stats.CollectionErrors)
+	require.Len(t, stats.Profiles, 1)
+	assert.Equal(t, "metrics", stats.Profiles[0].Kind)
+	assert.True(t, stats.Profiles[0].Paused)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -183,5 +188,6 @@ func TestGetStatisticsCollectionStatusFailure(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, stats.LastCollectionUTC)
 	assert.False(t, stats.CollectionErrors)
+	assert.Empty(t, stats.Profiles)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }

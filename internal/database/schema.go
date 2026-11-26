@@ -11,6 +11,7 @@ type schemaFeatures struct {
 	treeDepth        bool
 	channelValues    bool
 	collectionStatus bool
+	lastFetched      bool
 }
 
 func detectSchema(ctx context.Context, conn *sql.DB) (schemaFeatures, error) {
@@ -23,7 +24,8 @@ func detectSchema(ctx context.Context, conn *sql.DB) (schemaFeatures, error) {
 				WHERE table_schema = current_schema() AND column_name = 'tree_depth'
 					AND table_name IN ('prtg_device', 'prtg_group')),
 			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'prtg_channel_value'),
-			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'data_collection_status')
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'data_collection_status'),
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'prtg_sensor_last_fetched_day')
 	`
 
 	var f schemaFeatures
@@ -32,6 +34,7 @@ func detectSchema(ctx context.Context, conn *sql.DB) (schemaFeatures, error) {
 		&f.treeDepth,
 		&f.channelValues,
 		&f.collectionStatus,
+		&f.lastFetched,
 	)
 	if err != nil {
 		return schemaFeatures{}, fmt.Errorf("detecting database schema: %w", err)

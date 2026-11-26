@@ -4,9 +4,10 @@ import "time"
 
 // ChannelInfo describes one channel of a sensor.
 type ChannelInfo struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-	Unit string `json:"unit,omitempty"`
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Unit        string `json:"unit,omitempty"`
+	NameMissing bool   `json:"name_missing,omitempty"`
 }
 
 // ChannelLastValue is the most recent exported value of a channel.
@@ -31,4 +32,13 @@ type ChannelHistory struct {
 	Bucket   time.Duration  `json:"bucket"`
 	Channels []ChannelInfo  `json:"channels"`
 	Points   []ChannelPoint `json:"points"`
+}
+
+// SensorExportState describes how far Data Exporter has exported a sensor's channel history.
+type SensorExportState struct {
+	SensorID         int        `json:"sensor_id"`
+	ServerID         int        `json:"server_id"`
+	Tracked          bool       `json:"tracked"` // a prtg_sensor_last_fetched_day row exists
+	LastFetchUTC     *time.Time `json:"last_fetch_utc,omitempty"`
+	NoMonitoringData bool       `json:"no_monitoring_data,omitempty"`
 }

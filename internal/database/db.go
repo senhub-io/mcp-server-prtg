@@ -60,6 +60,7 @@ func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 			Bool("tree_depth", features.treeDepth).
 			Bool("channel_values", features.channelValues).
 			Bool("collection_status", features.collectionStatus).
+			Bool("last_fetched", features.lastFetched).
 			Msg("database schema detected")
 	}
 

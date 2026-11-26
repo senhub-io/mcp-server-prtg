@@ -59,7 +59,7 @@ func TestGetChannelLastValues(t *testing.T) {
 	result, err := db.GetChannelLastValues(context.Background(), 7, time.Hour)
 	require.NoError(t, err)
 	require.Len(t, result, 3)
-	assert.Equal(t, types.ChannelLastValue{ChannelInfo: types.ChannelInfo{ID: 1, Name: "Channel 1"}, Value: 1.0, Timestamp: ts}, result[0])
+	assert.Equal(t, types.ChannelLastValue{ChannelInfo: types.ChannelInfo{ID: 1, Name: "Channel 1", NameMissing: true}, Value: 1.0, Timestamp: ts}, result[0])
 	assert.Equal(t, 3, result[1].ID)
 	assert.Equal(t, "alpha", result[1].Name)
 	assert.Equal(t, 2, result[2].ID)
