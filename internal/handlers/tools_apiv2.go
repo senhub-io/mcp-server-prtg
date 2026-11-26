@@ -10,7 +10,7 @@ import (
 	mcptool "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/matthieu/mcp-server-prtg/internal/prtg"
+	"github.com/senhub-io/mcp-server-prtg/internal/prtg"
 )
 
 // APIv2ToolHandler handles all MCP tools that use PRTG API v2.

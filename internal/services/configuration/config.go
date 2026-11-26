@@ -18,8 +18,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
 
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
 )
 
 const (

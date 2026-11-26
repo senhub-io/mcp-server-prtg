@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 var (

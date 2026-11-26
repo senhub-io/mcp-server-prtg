@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
-	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
-	"github.com/matthieu/mcp-server-prtg/internal/version"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/configuration"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/version"
 )
 
 // Build-time variables injected via ldflags.

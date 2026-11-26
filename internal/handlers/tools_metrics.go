@@ -12,9 +12,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/matthieu/mcp-server-prtg/internal/database"
-	"github.com/matthieu/mcp-server-prtg/internal/prtg"
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/database"
+	"github.com/senhub-io/mcp-server-prtg/internal/prtg"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 // PRTGClient interface for PRTG API operations.

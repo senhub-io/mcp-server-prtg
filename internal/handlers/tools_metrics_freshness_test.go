@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/matthieu/mcp-server-prtg/internal/database"
-	"github.com/matthieu/mcp-server-prtg/internal/prtg"
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/database"
+	"github.com/senhub-io/mcp-server-prtg/internal/prtg"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 func staleState() *types.SensorExportState {

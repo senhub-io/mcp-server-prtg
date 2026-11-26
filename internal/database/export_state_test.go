@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 func TestGetSensorExportStateFeatureOff(t *testing.T) {

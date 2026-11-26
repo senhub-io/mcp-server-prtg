@@ -5,7 +5,7 @@
 #
 # Security best practices are applied by default. Review and adjust as needed.
 #
-# For more information, see: https://github.com/matthieu/mcp-server-prtg
+# For more information, see: https://github.com/senhub-io/mcp-server-prtg
 
 # Configuration file format version (do not modify)
 config_version: 1

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 // formatDuration formats a duration in seconds to a human-readable string.

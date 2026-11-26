@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/matthieu/mcp-server-prtg/internal/database"
-	"github.com/matthieu/mcp-server-prtg/internal/prtg"
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/database"
+	"github.com/senhub-io/mcp-server-prtg/internal/prtg"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 type fakeChannelStore struct {

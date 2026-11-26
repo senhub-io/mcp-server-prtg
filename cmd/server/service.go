@@ -12,11 +12,11 @@ import (
 
 	"github.com/kardianos/service"
 
-	"github.com/matthieu/mcp-server-prtg/internal/agent"
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
-	"github.com/matthieu/mcp-server-prtg/internal/database"
-	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/agent"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/database"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/configuration"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
 )
 
 // program implements the service.Interface.

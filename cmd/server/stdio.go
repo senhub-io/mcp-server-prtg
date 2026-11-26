@@ -11,9 +11,9 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog"
 
-	"github.com/matthieu/mcp-server-prtg/internal/handlers"
-	"github.com/matthieu/mcp-server-prtg/internal/prtg"
-	"github.com/matthieu/mcp-server-prtg/internal/version"
+	"github.com/senhub-io/mcp-server-prtg/internal/handlers"
+	"github.com/senhub-io/mcp-server-prtg/internal/prtg"
+	"github.com/senhub-io/mcp-server-prtg/internal/version"
 )
 
 // runStdioMode starts the MCP server in stdio mode for use as a local plugin.

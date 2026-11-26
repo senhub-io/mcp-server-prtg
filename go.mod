@@ -1,4 +1,4 @@
-module github.com/matthieu/mcp-server-prtg
+module github.com/senhub-io/mcp-server-prtg
 
 go 1.26.0
 

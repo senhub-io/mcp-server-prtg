@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/matthieu/mcp-server-prtg/internal/types"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 // TestGetAlerts_SeveritySorting validates that alerts are sorted by severity (Down first, then Warning).

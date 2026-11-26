@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 // GetSensors retrieves sensors matching the given filters.
