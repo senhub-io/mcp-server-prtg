@@ -86,9 +86,18 @@ ORDER BY v.prtg_channel_id, v.date_time DESC`
 		if err := rows.Scan(&ch.ID, &ch.Value, &ch.Timestamp, &name, &unit); err != nil {
 			return nil, fmt.Errorf("scan last channel value: %w", err)
 		}
-		ch.Name, ch.NameMissing = channelDisplayName(ch.ID, name)
+		cleanedName := ""
+		if name.Valid {
+			cleanedName = cleanText(name.String)
+		}
+		if cleanedName != "" {
+			ch.Name = cleanedName
+			ch.NameMissing = false
+		} else {
+			ch.Name, ch.NameMissing = channelDisplayName(ch.ID, sql.NullString{})
+		}
 		if unit.Valid {
-			ch.Unit = unit.String
+			ch.Unit = cleanText(unit.String)
 		}
 		ch.Timestamp = ch.Timestamp.UTC()
 		result = append(result, ch)
@@ -146,8 +155,9 @@ func (db *DB) GetChannelHistory(ctx context.Context, sensorID int, from, to time
 			rows.Close()
 			return nil, fmt.Errorf("scan channel info: %w", err)
 		}
+		info.Name = cleanText(info.Name)
 		if unit.Valid {
-			info.Unit = unit.String
+			info.Unit = cleanText(unit.String)
 		}
 		names[info.ID] = info
 	}

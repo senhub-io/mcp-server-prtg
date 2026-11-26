@@ -243,12 +243,17 @@ func (db *DB) GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, e
 	}
 
 	if message.Valid {
-		sensor.Message = message.String
+		sensor.Message = cleanText(message.String)
 	}
 
 	if tags.Valid {
-		sensor.Tags = tags.String
+		sensor.Tags = cleanText(tags.String)
 	}
+
+	sensor.Name = cleanText(sensor.Name)
+	sensor.DeviceName = cleanText(sensor.DeviceName)
+	sensor.SensorType = cleanText(sensor.SensorType)
+	sensor.FullPath = cleanText(sensor.FullPath)
 
 	sensor.StatusText = types.GetStatusText(sensor.Status)
 
@@ -294,6 +299,10 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
 
 	args := []interface{}{types.StatusUp}
 	argPos := 2
+
+	if statusFilter == nil {
+		query += ` AND s.status NOT IN (7, 8, 9, 11, 12)`
+	}
 
 	if hours > 0 {
 		query += fmt.Sprintf(" AND s.last_check_utc >= NOW() - ($%d || ' hours')::interval", argPos)
@@ -393,6 +402,10 @@ func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.
 
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
+
+	device.Name = cleanText(device.Name)
+	device.GroupName = cleanText(device.GroupName)
+	device.FullPath = cleanText(device.FullPath)
 
 	// Get all sensors for this device
 	sensorsQuery := `
@@ -715,6 +728,9 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 			group.ParentID = &parentIDInt
 		}
 
+		group.Name = cleanText(group.Name)
+		group.FullPath = cleanText(group.FullPath)
+
 		groups = append(groups, group)
 	}
 
@@ -780,6 +796,9 @@ func (db *DB) getChildGroups(ctx context.Context, parent *types.Group, limit int
 			group.ParentID = &parentIDInt
 		}
 
+		group.Name = cleanText(group.Name)
+		group.FullPath = cleanText(group.FullPath)
+
 		groups = append(groups, group)
 	}
 
@@ -839,6 +858,10 @@ func (db *DB) GetDevicesByGroupID(ctx context.Context, groupID, serverID int) ([
 		if err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
+
+		device.Name = cleanText(device.Name)
+		device.GroupName = cleanText(device.GroupName)
+		device.FullPath = cleanText(device.FullPath)
 
 		devices = append(devices, device)
 	}
@@ -907,6 +930,9 @@ func (db *DB) GetHierarchy(ctx context.Context, groupName string, includeSensors
 				parentIDInt := int(parentID.Int32)
 				group.ParentID = &parentIDInt
 			}
+
+			group.Name = cleanText(group.Name)
+			group.FullPath = cleanText(group.FullPath)
 
 			groups = append(groups, group)
 		}
@@ -1077,6 +1103,9 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 			group.ParentID = &parentIDInt
 		}
 
+		group.Name = cleanText(group.Name)
+		group.FullPath = cleanText(group.FullPath)
+
 		results.Groups = append(results.Groups, group)
 	}
 
@@ -1135,6 +1164,10 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 		if err != nil {
 			return nil, fmt.Errorf("device scan failed: %w", err)
 		}
+
+		device.Name = cleanText(device.Name)
+		device.GroupName = cleanText(device.GroupName)
+		device.FullPath = cleanText(device.FullPath)
 
 		results.Devices = append(results.Devices, device)
 	}
@@ -1241,6 +1274,8 @@ func (db *DB) GetTags(ctx context.Context, tagName string, limit int) ([]types.T
 		if err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
+
+		tag.Name = cleanText(tag.Name)
 
 		tags = append(tags, tag)
 	}
@@ -1402,7 +1437,7 @@ func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 			return nil, fmt.Errorf("sensor type scan failed: %w", err)
 		}
 		stats.TopSensorTypes = append(stats.TopSensorTypes, types.SensorTypeCount{
-			Type:  sensorType,
+			Type:  cleanText(sensorType),
 			Count: count,
 		})
 	}
@@ -1542,12 +1577,17 @@ func scanSensors(rows *sql.Rows) ([]types.Sensor, error) {
 		}
 
 		if message.Valid {
-			sensor.Message = message.String
+			sensor.Message = cleanText(message.String)
 		}
 
 		if tags.Valid {
-			sensor.Tags = tags.String
+			sensor.Tags = cleanText(tags.String)
 		}
+
+		sensor.Name = cleanText(sensor.Name)
+		sensor.DeviceName = cleanText(sensor.DeviceName)
+		sensor.SensorType = cleanText(sensor.SensorType)
+		sensor.FullPath = cleanText(sensor.FullPath)
 
 		sensor.StatusText = types.GetStatusText(sensor.Status)
 
