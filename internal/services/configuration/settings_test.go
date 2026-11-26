@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func baseConfigData() ConfigData {
@@ -183,4 +185,35 @@ func TestApplySettingsEmptyPasswordClearsStored(t *testing.T) {
 	if cfg.Settings().Database.PasswordSet {
 		t.Error("empty string password should clear the stored password")
 	}
+}
+
+func TestApplySettingsRefusesStoredSecretsForAnotherTarget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	writeConfigFile(t, path, ConfigData{
+		ConfigVersion: CurrentConfigVersion,
+		Server:        ServerConfig{APIKey: "key-1234567890abcdef", Port: 8443},
+		Database:      DatabaseConfig{Host: "db", Port: 5432, Name: "prtg", User: "reader", Password: "pw", SSLMode: "disable"},
+		PRTG:          PRTGConfig{Enabled: true, BaseURL: "https://prtg:1616", APIToken: "tok", Timeout: 30},
+		Logging:       LoggingConfig{Level: "info"},
+	})
+
+	cfg, err := LoadConfiguration(newTestArgs(path), newTestLogger(dir))
+	require.NoError(t, err)
+
+	s := cfg.Settings()
+	s.Database.Host = "attacker.example"
+	err = cfg.ApplySettings(s)
+	require.ErrorIs(t, err, ErrInvalidSettings)
+
+	s = cfg.Settings()
+	s.PRTG.BaseURL = "https://attacker.example:1616"
+	err = cfg.ApplySettings(s)
+	require.ErrorIs(t, err, ErrInvalidSettings)
+
+	s = cfg.Settings()
+	pw := "new"
+	s.Database.Host = "other-db"
+	s.Database.Password = &pw
+	require.NoError(t, cfg.ApplySettings(s))
 }

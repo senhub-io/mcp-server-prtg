@@ -92,6 +92,10 @@ func (rt adminRuntime) testDatabase(ctx context.Context, s configuration.Databas
 	if s.Password != nil {
 		password = *s.Password
 	} else {
+		if !rt.config.SameDatabaseTarget(s) {
+			return admin.TestResult{OK: false, Message: "Enter the database password to test another server or user"}
+		}
+
 		password = rt.config.StoredDatabasePassword()
 	}
 	connStr := configuration.ConnectionString(s.Host, s.Port, s.Name, s.User, password, s.SSLMode)
@@ -137,6 +141,10 @@ func (rt adminRuntime) testPRTG(ctx context.Context, s configuration.PRTGSetting
 	if s.Token != nil {
 		token = *s.Token
 	} else {
+		if !rt.config.SamePRTGTarget(s) {
+			return admin.TestResult{OK: false, Message: "Enter the PRTG API token to test another PRTG URL"}
+		}
+
 		token = rt.config.StoredPRTGToken()
 	}
 	if s.BaseURL == "" {

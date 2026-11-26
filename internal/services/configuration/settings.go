@@ -61,6 +61,16 @@ func (c *Configuration) ApplySettings(s Settings) error {
 		return err
 	}
 
+	// A stored secret is only reused for the target it was entered for:
+	// pointing it at another server would hand it to that server.
+	if s.Database.Password == nil && c.plain.dbPassword != "" && !c.SameDatabaseTarget(s.Database) {
+		return fmt.Errorf("%w: enter the database password again when changing the host, port or user", ErrInvalidSettings)
+	}
+
+	if s.PRTG.Enabled && s.PRTG.Token == nil && c.plain.prtgToken != "" && !c.SamePRTGTarget(s.PRTG) {
+		return fmt.Errorf("%w: enter the PRTG API token again when changing the PRTG URL", ErrInvalidSettings)
+	}
+
 	data := c.data
 	data.Server.Port = s.ServerPort
 	data.Database.Host = s.Database.Host
@@ -142,4 +152,16 @@ func validateSettings(s Settings, hasStoredToken bool) error {
 		}
 	}
 	return nil
+}
+
+// SameDatabaseTarget reports whether s points at the stored database server and user.
+func (c *Configuration) SameDatabaseTarget(s DatabaseSettings) bool {
+	d := c.data.Database
+
+	return s.Host == d.Host && s.Port == d.Port && s.User == d.User
+}
+
+// SamePRTGTarget reports whether s points at the stored PRTG API URL.
+func (c *Configuration) SamePRTGTarget(s PRTGSettings) bool {
+	return s.BaseURL == c.data.PRTG.BaseURL
 }

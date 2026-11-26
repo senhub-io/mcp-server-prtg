@@ -240,3 +240,9 @@ func TestSettingsKeepSecretFlags(t *testing.T) {
 	assert.Nil(t, got.Database.Password)
 	assert.Nil(t, got.PRTG.Token)
 }
+
+func TestProxiedRequestForbidden(t *testing.T) {
+	h, _ := newTestHandler(t)
+	w := doReq(t, h, http.MethodGet, "/admin/", "127.0.0.1:12345", "", map[string]string{"X-Forwarded-For": "203.0.113.7"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}

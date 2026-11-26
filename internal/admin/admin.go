@@ -68,12 +68,24 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("POST /admin/api/restart", h.restart)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.setSecurityHeaders(w, r)
-		if !isLoopback(r.RemoteAddr) {
+		if !isLoopback(r.RemoteAddr) || isProxied(r) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// isProxied rejects requests relayed by a local proxy: the loopback check
+// would otherwise accept a remote client forwarded through it.
+func isProxied(r *http.Request) bool {
+	for _, h := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip"} {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isLoopback(remoteAddr string) bool {
