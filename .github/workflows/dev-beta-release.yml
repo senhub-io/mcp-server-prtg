@@ -25,7 +25,7 @@ jobs:
         run: |
           git fetch --all
           TAG_COMMIT=$(git rev-list -n 1 "$TAG")
-          if git branch -r --contains "$TAG_COMMIT" | grep -q "origin/dev"; then
+          if git merge-base --is-ancestor "$TAG_COMMIT" origin/dev; then
             echo "Tag $TAG is on dev, publishing a beta release"
           else
             echo "Tag $TAG is not on dev, skipping"
