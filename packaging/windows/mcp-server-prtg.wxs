@@ -39,7 +39,6 @@
 
   <MediaTemplate EmbedCab="yes" />
 
-  <Property Id="ARPNOMODIFY" Value="1" />
   <Property Id="ARPURLINFOABOUT" Value="https://github.com/senhub-io/mcp-server-prtg" />
 
   <!-- Detects an existing operator config so the setup dialogs are only
@@ -87,6 +86,7 @@
   <Property Id="PRTGURL" Secure="yes" />
   <Property Id="PRTGTOKEN" Secure="yes" Hidden="yes" />
   <Property Id="PRTGVERIFYSSL" Secure="yes" />
+  <Property Id="SHOWCLIENTCONFIG" Value="1" Secure="yes" />
 
   <Launch Condition="Installed OR MSI_MARKER OR NOT EXISTING_SERVICE OR ADOPT"
           Message="MCP Server PRTG is already installed on this machine as a service created by another method (the built-in install command), so setup will now stop. Either re-run setup with ADOPT=1 to let this installer take it over (copy your existing config.yaml to %ProgramData%\Sensor Factory\MCP Server PRTG\ first to keep it), or remove the existing service first with: sc stop mcp-server-prtg and sc delete mcp-server-prtg." />
@@ -239,65 +239,79 @@
     </Directory>
   </StandardDirectory>
 
+  <StandardDirectory Id="ProgramMenuFolder">
+    <Directory Id="ProgramMenuDir" Name="MCP Server PRTG">
+      <Component Id="ClientConfigShortcut"
+                 Guid="*"
+                 Directory="ProgramMenuDir">
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Sensor Factory\MCP Server PRTG"
+                       Name="ClientConfigShortcut"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+        <Shortcut Id="ClientConfigLnk"
+                  Name="MCP Server PRTG - AI client configuration"
+                  Description="Show the settings MCP clients need to connect"
+                  Target="[#McpServerPrtgExe]"
+                  Arguments="config client --window"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="senhub.ico" />
+        <util:RemoveFolderEx Directory="ProgramMenuDir" On="uninstall" />
+      </Component>
+    </Directory>
+  </StandardDirectory>
+
   <Feature Id="Main" Level="1">
     <ComponentRef Id="MainBinary" />
     <ComponentRef Id="DataFolders" />
     <ComponentRef Id="RegistryMarker" />
+    <ComponentRef Id="ClientConfigShortcut" />
   </Feature>
 
-  <!-- Wizard UI: WixUI_Common dialogs plus two custom config dialogs. -->
-  <UI Id="McpServerPrtgUI">
-    <ui:WixUI Id="WixUI_Common" />
+  <!-- ============================================================ -->
+  <!-- Guided installer UI.                                          -->
+  <!-- WixUI_InstallDir gives the standard wizard flow: Welcome →    -->
+  <!-- EULA → install directory → options → ready → progress →      -->
+  <!-- finish. A silent install (/qn) skips the UI entirely and      -->
+  <!-- drives the same properties from the command line / transform. -->
+  <!--                                                               -->
+  <!-- The two options pages (McpDatabaseDlg, McpPrtgDlg below) are  -->
+  <!-- inserted after the directory page on a fresh install only;    -->
+  <!-- when config.yaml already exists the built-in flow goes        -->
+  <!-- straight to VerifyReady, so upgrades and repairs never touch  -->
+  <!-- operator configuration.                                       -->
+  <!-- ============================================================ -->
+  <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
-              Value="The service is running. Show the API key for MCP clients with: &quot;C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe&quot; config show-api-key --config &quot;C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml&quot;" />
+  <UI>
+    <!--
+      Database page. Host, port, name, credentials, SSL mode and the MCP
+      HTTPS port are the settings a person installing by hand needs before
+      the service starts. Ports take integers only; the range is checked on
+      Next and refused with McpBadPortDlg before anything is installed.
+    -->
+    <Dialog Id="McpDatabaseDlg" Width="370" Height="270" Title="[ProductName] Setup">
+      <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+      <Control Id="Title" Type="Text" X="15" Y="6" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Data Exporter database" />
+      <Control Id="Description" Type="Text" X="25" Y="23" Width="330" Height="15" Transparent="yes" NoPrefix="yes" Text="Where the MCP server reads PRTG data. Use a read-only role on the target database." />
+      <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
 
-    <!-- Fresh install: Welcome goes to the config dialogs; otherwise straight to VerifyReady. -->
-    <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="DatabaseDlg" Condition="NOT CONFIG_EXISTS" />
-    <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="CONFIG_EXISTS" />
+      <Control Id="DBHostLabel" Type="Text" X="20" Y="52" Width="240" Height="10" NoPrefix="yes" Text="PostgreSQL host (the Data Exporter database server):" />
+      <Control Id="DBHostEdit" Type="Edit" X="20" Y="63" Width="250" Height="18" Property="DBHOST" />
+      <Control Id="DBPortLabel" Type="Text" X="280" Y="52" Width="70" Height="10" NoPrefix="yes" Text="Port:" />
+      <Control Id="DBPortEdit" Type="Edit" X="280" Y="63" Width="70" Height="18" Property="DBPORT" Integer="yes" />
 
+      <Control Id="DBNameLabel" Type="Text" X="20" Y="87" Width="330" Height="10" NoPrefix="yes" Text="Database name (the Data Exporter target database):" />
+      <Control Id="DBNameEdit" Type="Edit" X="20" Y="98" Width="330" Height="18" Property="DBNAME" />
 
+      <Control Id="DBUserLabel" Type="Text" X="20" Y="122" Width="160" Height="10" NoPrefix="yes" Text="User (read-only role):" />
+      <Control Id="DBUserEdit" Type="Edit" X="20" Y="133" Width="160" Height="18" Property="DBUSER" />
+      <Control Id="DBPasswordLabel" Type="Text" X="190" Y="122" Width="160" Height="10" NoPrefix="yes" Text="Password:" />
+      <Control Id="DBPasswordEdit" Type="Edit" X="190" Y="133" Width="160" Height="18" Property="DBPASSWORD" Password="yes" />
 
-    <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="PrtgDlg" Condition="NOT Installed AND NOT CONFIG_EXISTS" />
-    <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Condition="NOT Installed AND CONFIG_EXISTS" />
-    <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Condition="Installed" />
-
-    <!-- Repair and remove, as in WixUI_Minimal. -->
-    <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
-    <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
-    <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
-    <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
-    <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
-
-    <Dialog Id="DatabaseDlg" Width="370" Height="270" Title="PRTG Data Exporter database">
-      <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" />
-      <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="PRTG Data Exporter database" Transparent="yes" NoPrefix="yes" />
-      <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Text="Database connection for the PRTG Data Exporter target." Transparent="yes" NoPrefix="yes" />
-      <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-      <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
-        <Publish Event="NewDialog" Value="WelcomeDlg" />
-      </Control>
-      <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next">
-        <Publish Event="NewDialog" Value="PrtgDlg" />
-      </Control>
-      <Control Id="Cancel" Type="PushButton" X="300" Y="243" Width="56" Height="17" Text="Cancel">
-        <Publish Event="SpawnDialog" Value="CancelDlg" />
-      </Control>
-
-      <Control Id="InfoText" Type="Text" X="20" Y="50" Width="330" Height="20" Text="Use a read-only PostgreSQL role on the Data Exporter target database." NoPrefix="yes" />
-
-      <Control Id="DBHostLabel" Type="Text" X="20" Y="78" Width="100" Height="10" Text="DB host" />
-      <Control Id="DBHostEdit" Type="Edit" X="130" Y="75" Width="220" Height="18" Property="DBHOST" />
-      <Control Id="DBPortLabel" Type="Text" X="20" Y="100" Width="100" Height="10" Text="DB port" />
-      <Control Id="DBPortEdit" Type="Edit" X="130" Y="97" Width="80" Height="18" Property="DBPORT" />
-      <Control Id="DBNameLabel" Type="Text" X="20" Y="122" Width="100" Height="10" Text="DB name" />
-      <Control Id="DBNameEdit" Type="Edit" X="130" Y="119" Width="220" Height="18" Property="DBNAME" />
-      <Control Id="DBUserLabel" Type="Text" X="20" Y="144" Width="100" Height="10" Text="DB user" />
-      <Control Id="DBUserEdit" Type="Edit" X="130" Y="141" Width="220" Height="18" Property="DBUSER" />
-      <Control Id="DBPasswordLabel" Type="Text" X="20" Y="166" Width="100" Height="10" Text="DB password" />
-      <Control Id="DBPasswordEdit" Type="Edit" X="130" Y="163" Width="220" Height="18" Property="DBPASSWORD" Password="yes" />
-      <Control Id="DBSslModeLabel" Type="Text" X="20" Y="188" Width="100" Height="10" Text="DB SSL mode" />
-      <Control Id="DBSslModeCombo" Type="ComboBox" X="130" Y="185" Width="120" Height="18" Property="DBSSLMODE" ComboList="yes">
+      <Control Id="DBSslModeLabel" Type="Text" X="20" Y="157" Width="160" Height="10" NoPrefix="yes" Text="SSL mode:" />
+      <Control Id="DBSslModeCombo" Type="ComboBox" X="20" Y="168" Width="160" Height="16" Property="DBSSLMODE" ComboList="yes">
         <ComboBox Property="DBSSLMODE">
           <ListItem Text="disable" Value="disable" />
           <ListItem Text="require" Value="require" />
@@ -305,34 +319,112 @@
           <ListItem Text="verify-full" Value="verify-full" />
         </ComboBox>
       </Control>
-      <Control Id="MCPPortLabel" Type="Text" X="20" Y="210" Width="100" Height="10" Text="MCP server HTTPS port" />
-      <Control Id="MCPPortEdit" Type="Edit" X="130" Y="207" Width="80" Height="18" Property="MCPPORT" />
-    </Dialog>
+      <Control Id="MCPPortLabel" Type="Text" X="190" Y="157" Width="160" Height="10" NoPrefix="yes" Text="MCP server HTTPS port:" />
+      <Control Id="MCPPortEdit" Type="Edit" X="190" Y="168" Width="70" Height="18" Property="MCPPORT" Integer="yes" />
+      <Control Id="MCPPortHint" Type="Text" X="20" Y="196" Width="330" Height="24" NoPrefix="yes" Text="MCP clients will connect to https://&lt;this server&gt;:&lt;port&gt;/mcp. The password is stored encrypted on this machine." />
 
-    <Dialog Id="PrtgDlg" Width="370" Height="270" Title="PRTG API v2 (optional)">
-      <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" />
-      <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="PRTG API v2 (optional)" Transparent="yes" NoPrefix="yes" />
-      <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Text="Optional live PRTG API for real-time data." Transparent="yes" NoPrefix="yes" />
       <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
       <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
-        <Publish Event="NewDialog" Value="DatabaseDlg" />
+        <Publish Event="NewDialog" Value="InstallDirDlg" />
       </Control>
-      <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next">
-        <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+      <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
+        <Publish Event="SpawnDialog" Value="McpBadPortDlg" Order="1" Condition="NOT DBPORT OR DBPORT &lt; 1 OR DBPORT &gt; 65535 OR NOT MCPPORT OR MCPPORT &lt; 1 OR MCPPORT &gt; 65535" />
+        <Publish Event="NewDialog" Value="McpPrtgDlg" Order="2" Condition="DBPORT &gt;= 1 AND DBPORT &lt;= 65535 AND MCPPORT &gt;= 1 AND MCPPORT &lt;= 65535" />
       </Control>
-      <Control Id="Cancel" Type="PushButton" X="300" Y="243" Width="56" Height="17" Text="Cancel">
+      <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
         <Publish Event="SpawnDialog" Value="CancelDlg" />
       </Control>
-
-      <Control Id="PrtgEnable" Type="CheckBox" X="20" Y="60" Width="330" Height="17" Text="Use the PRTG API v2 for real-time data and sensors outside the export" Property="PRTGENABLE" CheckBoxValue="1" />
-
-      <Control Id="PRTGURLLabel" Type="Text" X="20" Y="90" Width="100" Height="10" Text="PRTG URL" />
-      <Control Id="PRTGURLEdit" Type="Edit" X="130" Y="87" Width="220" Height="18" Property="PRTGURL" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
-      <Control Id="PRTGTokenLabel" Type="Text" X="20" Y="113" Width="100" Height="10" Text="API token" />
-      <Control Id="PRTGTokenEdit" Type="Edit" X="130" Y="110" Width="220" Height="18" Property="PRTGTOKEN" Password="yes" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
-      <Control Id="PRTGVerifySSL" Type="CheckBox" X="20" Y="140" Width="330" Height="17" Text="Verify the PRTG certificate" Property="PRTGVERIFYSSL" CheckBoxValue="1" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
     </Dialog>
+
+    <Dialog Id="McpBadPortDlg" Width="260" Height="85" Title="[ProductName] Setup" NoMinimize="yes">
+      <Control Id="Text" Type="Text" X="48" Y="15" Width="194" Height="30" NoPrefix="yes" Text="Ports must be numbers between 1 and 65535." />
+      <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" ToolTip="Information icon" FixedSize="yes" IconSize="32" Text="WixUI_Ico_Info" />
+      <Control Id="Return" Type="PushButton" X="100" Y="57" Width="56" Height="17" Default="yes" Cancel="yes" Text="OK">
+        <Publish Event="EndDialog" Value="Return" />
+      </Control>
+    </Dialog>
+
+    <!--
+      Optional PRTG API v2 page. Real-time values and sensors that the Data
+      Exporter does not export. URL, token and certificate verification are
+      only meaningful when the API is enabled, so they are disabled while the
+      checkbox is clear. Next refuses an enabled API without a usable URL and
+      token via McpBadPrtgDlg.
+    -->
+    <Dialog Id="McpPrtgDlg" Width="370" Height="270" Title="[ProductName] Setup">
+      <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+      <Control Id="Title" Type="Text" X="15" Y="6" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}PRTG API v2 (optional)" />
+      <Control Id="Description" Type="Text" X="25" Y="23" Width="330" Height="15" Transparent="yes" NoPrefix="yes" Text="Real-time values and sensors that Data Exporter does not export." />
+      <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+
+      <Control Id="PrtgEnable" Type="CheckBox" X="20" Y="56" Width="330" Height="24" Property="PRTGENABLE" CheckBoxValue="1" Text="Use the PRTG API v2 (real-time data, sensors outside the export)" />
+
+      <Control Id="PRTGURLLabel" Type="Text" X="20" Y="90" Width="100" Height="10" NoPrefix="yes" Text="PRTG URL:" />
+      <Control Id="PRTGURLEdit" Type="Edit" X="130" Y="87" Width="220" Height="18" Property="PRTGURL" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
+      <Control Id="PRTGURLHint" Type="Text" X="20" Y="109" Width="330" Height="12" NoPrefix="yes" Text="Example: https://prtg.example.com:1616" />
+
+      <Control Id="PRTGTokenLabel" Type="Text" X="20" Y="128" Width="100" Height="10" NoPrefix="yes" Text="API token:" />
+      <Control Id="PRTGTokenEdit" Type="Edit" X="130" Y="125" Width="220" Height="18" Property="PRTGTOKEN" Password="yes" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
+      <Control Id="PRTGTokenHint" Type="Text" X="20" Y="147" Width="330" Height="12" NoPrefix="yes" Text="PRTG API key, type Scripting, read access" />
+
+      <Control Id="PRTGVerifySSL" Type="CheckBox" X="20" Y="168" Width="330" Height="17" Property="PRTGVERIFYSSL" CheckBoxValue="1" Text="Verify the PRTG server certificate" DisableCondition="NOT PRTGENABLE" EnableCondition="PRTGENABLE" />
+
+      <Control Id="SeparatorLine" Type="Line" X="20" Y="192" Width="330" Height="0" />
+
+      <Control Id="ShowClientConfig" Type="CheckBox" X="20" Y="200" Width="330" Height="24" Property="SHOWCLIENTCONFIG" CheckBoxValue="1" Text="Show the configuration for AI clients (Claude, Cursor, VS Code) when setup completes" />
+
+      <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+      <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
+        <Publish Event="NewDialog" Value="McpDatabaseDlg" />
+      </Control>
+      <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
+        <Publish Event="SpawnDialog" Value="McpBadPrtgDlg" Order="1" Condition="PRTGENABLE AND (NOT PRTGURL OR NOT PRTGTOKEN OR NOT (PRTGURL &lt;&lt; &quot;https://&quot; OR PRTGURL &lt;&lt; &quot;http://&quot;))" />
+        <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="2" Condition="NOT PRTGENABLE OR (PRTGURL AND PRTGTOKEN AND (PRTGURL &lt;&lt; &quot;https://&quot; OR PRTGURL &lt;&lt; &quot;http://&quot;))" />
+      </Control>
+      <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+        <Publish Event="SpawnDialog" Value="CancelDlg" />
+      </Control>
+    </Dialog>
+
+    <Dialog Id="McpBadPrtgDlg" Width="260" Height="85" Title="[ProductName] Setup" NoMinimize="yes">
+      <Control Id="Text" Type="Text" X="48" Y="15" Width="194" Height="40" NoPrefix="yes" Text="Enter the PRTG URL (starting with https://) and the API token, or clear the PRTG API v2 option." />
+      <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" ToolTip="Information icon" FixedSize="yes" IconSize="32" Text="WixUI_Ico_Info" />
+      <Control Id="Return" Type="PushButton" X="100" Y="57" Width="56" Height="17" Default="yes" Cancel="yes" Text="OK">
+        <Publish Event="EndDialog" Value="Return" />
+      </Control>
+    </Dialog>
+
+    <!-- Insert the options pages between the directory page and the
+         summary on a fresh install. A later Order on the same control
+         wins over the NewDialog the built-in set publishes. When
+         CONFIG_EXISTS the built-in InstallDirDlg → VerifyReadyDlg flow
+         applies unchanged. -->
+    <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="McpDatabaseDlg" Order="5" Condition="(WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;) AND NOT CONFIG_EXISTS" />
+    <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="McpPrtgDlg" Order="3" Condition="NOT Installed AND NOT CONFIG_EXISTS" />
+
+    <!-- Finish page: hand the Start Menu "AI client configuration"
+         shortcut to the shell, exactly what a click on it does. -->
+    <Publish Dialog="ExitDialog" Control="Finish" Property="WixShellExecTarget" Value="[ProgramMenuDir]MCP Server PRTG - AI client configuration.lnk" Order="1" Condition="SHOWCLIENTCONFIG = 1 AND NOT Installed" />
+    <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchClientConfig" Order="2" Condition="SHOWCLIENTCONFIG = 1 AND NOT Installed" />
   </UI>
 
-  </Package>
+  <CustomAction Id="LaunchClientConfig"
+                BinaryRef="Wix4UtilCA_X64"
+                DllEntry="WixShellExec"
+                Execute="immediate"
+                Impersonate="yes"
+                Return="ignore" />
+
+  <WixVariable Id="WixUILicenseRtf" Value="packaging/windows/license.rtf" />
+  <!-- Branded wizard art, replacing the default WiX bitmaps.
+       Dialog = 493x312 (Welcome/Finish background),
+       Banner = 493x58 (interior dialog top). -->
+  <WixVariable Id="WixUIDialogBmp" Value="packaging/windows/dialog.bmp" />
+  <WixVariable Id="WixUIBannerBmp" Value="packaging/windows/banner.bmp" />
+
+  <!-- Add/Remove Programs icon. -->
+  <Icon Id="senhub.ico" SourceFile="packaging/windows/senhub.ico" />
+  <Property Id="ARPPRODUCTICON" Value="senhub.ico" />
+
+</Package>
 </Wix>
