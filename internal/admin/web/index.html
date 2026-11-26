@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Server PRTG — Administration</title>
+<link rel="stylesheet" href="/admin/static/console.css">
+</head>
+<body>
+
+<div id="login-view" class="login-wrap hide">
+  <div class="card login-card">
+    <div class="brand mb3"><span class="mark">MCP</span><span>MCP Server PRTG</span></div>
+    <h1 class="mb2">Administration</h1>
+    <p class="muted small mb4">Sign in with the administration key (the MCP API key, shown by <code>mcp-server-prtg config show-api-key</code>).</p>
+    <form id="login-form" class="stack">
+      <div class="field">
+        <label class="lbl" for="login-key">Administration key</label>
+        <input class="in" id="login-key" type="password" autocomplete="current-password" required>
+      </div>
+      <div id="login-error" class="ferr hide"></div>
+      <div class="row">
+        <button class="btn primary lg" type="submit" id="login-btn">Sign in</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="app-view" class="hide">
+  <header class="hdr">
+    <div class="hdr-in">
+      <div class="brand"><span class="mark">MCP</span><span>MCP Server PRTG</span></div>
+      <nav class="nav" id="main-nav">
+        <a href="#overview" data-route="overview">Overview</a>
+        <a href="#settings" data-route="settings">Settings</a>
+        <a href="#clients" data-route="clients">AI clients</a>
+      </nav>
+      <div class="hdr-status">
+        <span class="host" id="hdr-host"></span>
+        <button class="btn sm ghost" id="signout-btn" type="button">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div id="restart-banner" class="banner warn hide"></div>
+
+    <section id="view-overview" class="view hide">
+      <div class="page-h">
+        <div>
+          <div class="crumb"><a href="#overview">Administration</a> / Overview</div>
+          <h1>Overview</h1>
+          <p class="sub">Live status of the service, database and PRTG connection.</p>
+        </div>
+        <div class="row">
+          <button class="btn" id="refresh-status" type="button">Refresh</button>
+        </div>
+      </div>
+      <div id="overview-body" class="stack"></div>
+    </section>
+
+    <section id="view-settings" class="view hide">
+      <div class="page-h">
+        <div>
+          <div class="crumb"><a href="#overview">Administration</a> / Settings</div>
+          <h1>Settings</h1>
+          <p class="sub">Database, PRTG API and server options. Secrets are never displayed.</p>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="card">
+          <div class="card-h"><h2>Database</h2></div>
+          <form id="db-form" class="fgrid">
+            <div class="field">
+              <label class="lbl" for="db-host">Host</label>
+              <input class="in" id="db-host" type="text" autocomplete="off">
+            </div>
+            <div class="field">
+              <label class="lbl" for="db-port">Port</label>
+              <input class="in" id="db-port" type="number" min="1" max="65535">
+            </div>
+            <div class="field">
+              <label class="lbl" for="db-name">Database name</label>
+              <input class="in" id="db-name" type="text" autocomplete="off">
+            </div>
+            <div class="field">
+              <label class="lbl" for="db-user">User</label>
+              <input class="in" id="db-user" type="text" autocomplete="off">
+            </div>
+            <div class="field span">
+              <label class="lbl" for="db-password">Password <span class="opt" id="db-pass-state"></span></label>
+              <input class="in" id="db-password" type="password" autocomplete="new-password" placeholder="">
+            </div>
+            <div class="field span row">
+              <label class="sw"><input type="checkbox" id="db-clear"><span class="k"></span><span class="sw-t">Clear stored password (send empty)</span></label>
+            </div>
+            <div class="field">
+              <label class="lbl" for="db-sslmode">SSL mode</label>
+              <select class="sel" id="db-sslmode">
+                <option value="disable">disable</option>
+                <option value="require">require</option>
+                <option value="verify-ca">verify-ca</option>
+                <option value="verify-full">verify-full</option>
+              </select>
+            </div>
+            <div class="field span row">
+              <button class="btn" id="test-db" type="button">Test connection</button>
+            </div>
+            <div class="span" id="db-test-result"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h2>PRTG API v2</h2></div>
+          <form id="prtg-form" class="fgrid">
+            <div class="field span row">
+              <label class="sw"><input type="checkbox" id="prtg-enabled"><span class="k"></span><span class="sw-t">Enabled</span></label>
+            </div>
+            <div class="field span">
+              <label class="lbl" for="prtg-url">Base URL</label>
+              <input class="in" id="prtg-url" type="url" placeholder="https://prtg.example.com" autocomplete="off">
+            </div>
+            <div class="field span">
+              <label class="lbl" for="prtg-token">API token <span class="opt" id="prtg-token-state"></span></label>
+              <input class="in" id="prtg-token" type="password" autocomplete="new-password" placeholder="">
+            </div>
+            <div class="field">
+              <label class="lbl" for="prtg-timeout">Timeout (seconds)</label>
+              <input class="in" id="prtg-timeout" type="number" min="1" max="600">
+            </div>
+            <div class="field row" data-align="end">
+              <label class="sw"><input type="checkbox" id="prtg-verify"><span class="k"></span><span class="sw-t">Verify SSL certificate</span></label>
+            </div>
+            <div class="field span row">
+              <button class="btn" id="test-prtg" type="button">Test connection</button>
+            </div>
+            <div class="span" id="prtg-test-result"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h2>Server</h2></div>
+          <form id="server-form" class="fgrid">
+            <div class="field">
+              <label class="lbl" for="server-port">MCP HTTPS port</label>
+              <input class="in" id="server-port" type="number" min="1" max="65535">
+            </div>
+            <div class="field">
+              <label class="lbl" for="log-level">Log level</label>
+              <select class="sel" id="log-level">
+                <option value="debug">debug</option>
+                <option value="info">info</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </select>
+            </div>
+          </form>
+        </div>
+
+        <div class="actbar">
+          <button class="btn primary" id="save-btn" type="button">Save</button>
+          <button class="btn" id="save-restart-btn" type="button">Save and restart</button>
+          <span class="state" id="save-state"></span>
+        </div>
+        <div id="save-error" class="banner err hide"></div>
+      </div>
+    </section>
+
+    <section id="view-clients" class="view hide">
+      <div class="page-h">
+        <div>
+          <div class="crumb"><a href="#overview">Administration</a> / AI clients</div>
+          <h1>AI clients</h1>
+          <p class="sub">Client configuration snippet for MCP clients.</p>
+        </div>
+      </div>
+      <div class="card stack">
+        <div class="row wrap">
+          <div class="field grow">
+            <label class="lbl" for="client-host">Host name clients use</label>
+            <input class="in" id="client-host" type="text" placeholder="localhost">
+          </div>
+          <div class="row" data-align="end">
+            <button class="btn" id="client-refresh" type="button">Refresh</button>
+            <button class="btn" id="client-copy" type="button">Copy</button>
+          </div>
+        </div>
+        <p class="muted small">The text below contains the API key. Keep it secret.</p>
+        <pre class="config-pre" id="client-config"></pre>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/admin/static/admin.js"></script>
+</body>
+</html>

@@ -76,6 +76,17 @@ func (db *DB) HasChannelValues() bool {
 	return db.schema.channelValues
 }
 
+// SchemaFeatures reports which optional Data Exporter tables and columns were detected.
+func (db *DB) SchemaFeatures() map[string]bool {
+	return map[string]bool{
+		"soft_delete":       db.schema.softDelete,
+		"tree_depth":        db.schema.treeDepth,
+		"channel_values":    db.schema.channelValues,
+		"collection_status": db.schema.collectionStatus,
+		"last_fetched":      db.schema.lastFetched,
+	}
+}
+
 // HasCollectionStatus reports whether the data_collection_status table exists.
 func (db *DB) HasCollectionStatus() bool {
 	return db.schema.collectionStatus

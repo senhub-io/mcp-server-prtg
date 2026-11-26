@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/clientconfig"
 	"github.com/senhub-io/mcp-server-prtg/internal/services/configuration"
 	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
 	"github.com/senhub-io/mcp-server-prtg/internal/version"
@@ -174,7 +175,7 @@ func handleConfigCommand(args *cliargs.ParsedArgs) error {
 			return fmt.Errorf("failed to parse server address %q: %w", cfg.GetServerAddress(), err)
 		}
 
-		return renderClientConfig(os.Stdout, clientHost(args.Host), port, cfg.IsTLSEnabled(), cfg.GetAPIKey(), cfg.GetTLSCertFile())
+		return clientconfig.Render(os.Stdout, clientconfig.Host(args.Host), port, cfg.IsTLSEnabled(), cfg.GetAPIKey(), cfg.GetTLSCertFile())
 
 	default:
 		fmt.Println("Configuration management")

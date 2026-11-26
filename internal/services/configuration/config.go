@@ -265,7 +265,19 @@ func (c *Configuration) loadOrCreate() error {
 		return c.createDefaultConfiguration()
 	}
 
-	return c.loadConfiguration()
+	if err := c.loadConfiguration(); err != nil {
+		return err
+	}
+
+	// A deleted certificate pair is regenerated so the service can start
+	// again; an existing pair, generated or provided, is never replaced.
+	if c.data.Server.EnableTLS {
+		if err := c.generateTLSCertificates(); err != nil {
+			return fmt.Errorf("failed to generate missing TLS certificates: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // loadConfiguration loads configuration from YAML file.
@@ -665,14 +677,24 @@ func (c *Configuration) GetServerAddress() string {
 
 // GetDatabaseConnectionString returns the PostgreSQL connection string.
 func (c *Configuration) GetDatabaseConnectionString() string {
+	return ConnectionString(c.data.Database.Host, c.data.Database.Port, c.data.Database.Name,
+		c.data.Database.User, c.plain.dbPassword, c.data.Database.SSLMode)
+}
+
+// ConnectionString builds a quoted libpq keyword/value connection string.
+func ConnectionString(host string, port int, name, user, password, sslmode string) string {
 	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s",
-		quoteConnValue(c.data.Database.Host),
-		c.data.Database.Port,
-		quoteConnValue(c.data.Database.Name),
-		quoteConnValue(c.data.Database.User),
-		quoteConnValue(c.plain.dbPassword),
-		quoteConnValue(c.data.Database.SSLMode),
-	)
+		quoteConnValue(host), port, quoteConnValue(name), quoteConnValue(user), quoteConnValue(password), quoteConnValue(sslmode))
+}
+
+// StoredDatabasePassword returns the decrypted database password, for connection tests.
+func (c *Configuration) StoredDatabasePassword() string {
+	return c.plain.dbPassword
+}
+
+// StoredPRTGToken returns the decrypted PRTG API token, for connection tests.
+func (c *Configuration) StoredPRTGToken() string {
+	return c.plain.prtgToken
 }
 
 // quoteConnValue quotes a libpq keyword/value: unquoted, an empty or

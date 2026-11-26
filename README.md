@@ -50,6 +50,8 @@ Setup ends by showing the ready-to-paste configuration for Claude Desktop, Claud
 
 Check `https://localhost:8443/health`. Full steps, silent install, updates and rollback: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+Settings, connection tests and the AI client configuration are also available on the administration page, from the server itself: `https://localhost:8443/admin/` (sign in with the API key).
+
 ### 2. HTTP service on Linux
 
 Download `mcp-server-prtg-<version>-linux-amd64.tar.gz` (or `-linux-arm64.tar.gz`), extract, then:

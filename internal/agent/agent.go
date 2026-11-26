@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -146,6 +147,26 @@ func NewAgent(args *cliargs.ParsedArgs) (*Agent, error) {
 
 	// Create Streamable HTTP server (modern MCP transport)
 	httpServer := server.NewStreamableHTTPServer(mcpServer, db, config, baseLogger)
+
+	adminLogger := logger.NewModuleLogger(baseLogger, "admin")
+	httpServer.SetAdminHandler(newAdminHandler(adminRuntime{
+		config:          config,
+		db:              db,
+		toolsCount:      toolsCount,
+		metricsFromDB:   store != nil,
+		metricsFromPRTG: client != nil,
+		started:         time.Now(),
+		logger:          adminLogger.Logger,
+	}))
+
+	if _, port, err := net.SplitHostPort(config.GetServerAddress()); err == nil {
+		scheme := "http"
+		if config.IsTLSEnabled() {
+			scheme = "https"
+		}
+
+		adminLogger.Info().Str("url", scheme+"://localhost:"+port+"/admin/").Msg("Administration page available from this machine only")
+	}
 
 	return &Agent{
 		config:     config,

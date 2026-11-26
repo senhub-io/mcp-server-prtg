@@ -1,0 +1,91 @@
+package clientconfig
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func renderToString(t *testing.T, host, port string, tls bool, apiKey string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := Render(&buf, host, port, tls, apiKey, "/etc/mcp-server-prtg/certs/server.crt"); err != nil {
+		t.Fatalf("renderClientConfig: %v", err)
+	}
+	return buf.String()
+}
+
+func TestRenderClientConfigTLS(t *testing.T) {
+	out := renderToString(t, "prtg.example.com", "8443", true, "secret-key")
+
+	for _, want := range []string{
+		"Claude Desktop (claude_desktop_config.json):",
+		"Claude Code:",
+		"Cursor (~/.cursor/mcp.json):",
+		"VS Code (.vscode/mcp.json):",
+		"https://prtg.example.com:8443/mcp",
+		"NODE_EXTRA_CA_CERTS",
+		"copy the server certificate",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q", want)
+		}
+	}
+
+	if strings.Count(out, "secret-key") != 4 {
+		t.Errorf("expected API key in 4 places, got %d", strings.Count(out, "secret-key"))
+	}
+	if strings.Contains(out, "http://prtg.example.com") {
+		t.Error("unexpected http URL in TLS output")
+	}
+}
+
+func TestRenderClientConfigNoTLS(t *testing.T) {
+	out := renderToString(t, "prtg.example.com", "8080", false, "secret-key")
+
+	if !strings.Contains(out, "http://prtg.example.com:8080/mcp") {
+		t.Error("missing http URL")
+	}
+	if strings.Contains(out, "https://") {
+		t.Error("unexpected https URL in non-TLS output")
+	}
+	if strings.Contains(out, "NODE_EXTRA_CA_CERTS") {
+		t.Error("NODE_EXTRA_CA_CERTS must not appear when tls is false")
+	}
+	if strings.Contains(out, "copy the server certificate") {
+		t.Error("TLS note must not appear when tls is false")
+	}
+}
+
+func TestRenderClientConfigKeyVerbatim(t *testing.T) {
+	key := "a&<>b"
+	out := renderToString(t, "host", "8443", true, key)
+	if strings.Count(out, key) != 4 {
+		t.Errorf("key with special chars not printed verbatim, count=%d", strings.Count(out, key))
+	}
+	if strings.Contains(out, "\\u0026") || strings.Contains(out, "\\u003c") {
+		t.Error("HTML escaping mangled the key")
+	}
+}
+
+func TestRenderClientConfigDesktopJSONParses(t *testing.T) {
+	out := renderToString(t, "host", "8443", true, "k")
+	start := strings.Index(out, "Claude Desktop (claude_desktop_config.json):")
+	if start < 0 {
+		t.Fatal("missing Claude Desktop section")
+	}
+	rest := out[start:]
+	end := strings.Index(rest, "\n\nClaude Code:")
+	if end < 0 {
+		t.Fatal("missing Claude Code section")
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(rest[len("Claude Desktop (claude_desktop_config.json):")+1:end]), &parsed); err != nil {
+		t.Fatalf("Claude Desktop JSON does not parse: %v", err)
+	}
+	servers, ok := parsed["mcpServers"].(map[string]any)
+	if !ok || servers["prtg"] == nil {
+		t.Error("parsed JSON missing mcpServers.prtg")
+	}
+}
