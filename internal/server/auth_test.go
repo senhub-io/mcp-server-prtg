@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -94,7 +95,12 @@ func TestAuthMiddlewareRateLimitLockout(t *testing.T) {
 
 	for i := 0; i < 6; i++ {
 		rec := doRequest(handler, remoteAddr, "Bearer wrong-token-wrong", "")
-		assert.Equal(t, http.StatusUnauthorized, rec.Code, "attempt %d", i+1)
+		want := http.StatusUnauthorized
+		if i == 5 {
+			want = http.StatusTooManyRequests
+		}
+
+		assert.Equal(t, want, rec.Code, "attempt %d", i+1)
 	}
 
 	rec := doRequest(handler, remoteAddr, "Bearer "+testAPIKey, "")
@@ -117,7 +123,12 @@ func TestAuthMiddlewareSpoofedHeadersIgnored(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusUnauthorized, rec.Code, "attempt %d", i+1)
+		want := http.StatusUnauthorized
+		if i == 5 {
+			want = http.StatusTooManyRequests
+		}
+
+		assert.Equal(t, want, rec.Code, "attempt %d", i+1)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
@@ -188,4 +199,47 @@ func strconvItoa(n int) string {
 	}
 
 	return digits
+}
+
+func TestLockedEntrySurvivesMapSaturation(t *testing.T) {
+	rl := &authRateLimiter{
+		attempts:    make(map[string]*authAttempt),
+		maxAttempts: 5,
+		window:      time.Minute,
+		lockoutTime: 5 * time.Minute,
+		maxEntries:  3,
+	}
+
+	target := "10.0.0.1"
+	for i := 0; i < rl.maxAttempts+1; i++ {
+		rl.recordFailure(target)
+	}
+	require.True(t, rl.isLocked(target))
+
+	for i := 0; i < 10; i++ {
+		locked := rl.recordFailure(fmt.Sprintf("192.0.2.%d", i+1))
+		assert.False(t, locked)
+	}
+
+	assert.True(t, rl.isLocked(target))
+}
+
+func TestIPv6SamePrefixSharesKey(t *testing.T) {
+	handler := newTestHandler(okHandler(), testAPIKey)
+
+	for i := 0; i < 6; i++ {
+		doRequest(handler, "[2001:db8:1:2::1]:1234", "", "")
+	}
+
+	rec := doRequest(handler, "[2001:db8:1:2::ffff]:5678", "", "")
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+
+	rec = doRequest(handler, "[2001:db8:1:3::1]:4321", "Bearer "+testAPIKey, "")
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestLimiterKey(t *testing.T) {
+	assert.Equal(t, "192.0.2.10", limiterKey("192.0.2.10"))
+	assert.Equal(t, "2001:db8:1:2::/64", limiterKey("2001:db8:1:2::dead:beef"))
+	assert.Equal(t, "not-an-ip", limiterKey("not-an-ip"))
 }

@@ -68,7 +68,8 @@ func (rl *authRateLimiter) isLocked(ip string) bool {
 }
 
 // recordFailure records a failed authentication attempt and may lock the IP.
-func (rl *authRateLimiter) recordFailure(ip string) {
+// It reports whether the key is locked after the call.
+func (rl *authRateLimiter) recordFailure(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -78,8 +79,12 @@ func (rl *authRateLimiter) recordFailure(ip string) {
 	if !exists {
 		if len(rl.attempts) >= rl.maxEntries {
 			rl.cleanupLocked(now)
-			if len(rl.attempts) >= rl.maxEntries {
-				rl.dropOldestLocked()
+		}
+		if len(rl.attempts) >= rl.maxEntries {
+			// Every entry is locked: leave the new key untracked rather than
+			// evict a lockout or turn every unknown client away.
+			if !rl.dropOldestUnlockedLocked(now) {
+				return false
 			}
 		}
 
@@ -101,6 +106,8 @@ func (rl *authRateLimiter) recordFailure(ip string) {
 	if attempt.count > rl.maxAttempts {
 		attempt.lockedUntil = now.Add(rl.lockoutTime)
 	}
+
+	return now.Before(attempt.lockedUntil)
 }
 
 // reset clears the entry for an IP after a successful authentication.
@@ -120,24 +127,30 @@ func (rl *authRateLimiter) cleanupLocked(now time.Time) {
 	}
 }
 
-// dropOldestLocked removes the entry with the oldest lastTry; caller must hold mu.
-func (rl *authRateLimiter) dropOldestLocked() {
+// dropOldestUnlockedLocked removes the non-locked entry with the oldest
+// lastTry and reports whether one was found; caller must hold mu.
+func (rl *authRateLimiter) dropOldestUnlockedLocked(now time.Time) bool {
 	var oldestIP string
 
 	var oldest time.Time
 
-	first := true
+	found := false
 	for ip, attempt := range rl.attempts {
-		if first || attempt.lastTry.Before(oldest) {
+		if now.Before(attempt.lockedUntil) {
+			continue
+		}
+		if !found || attempt.lastTry.Before(oldest) {
 			oldestIP = ip
 			oldest = attempt.lastTry
-			first = false
+			found = true
 		}
 	}
 
-	if !first {
+	if found {
 		delete(rl.attempts, oldestIP)
 	}
+
+	return found
 }
 
 // cleanup removes old entries.
@@ -146,6 +159,17 @@ func (rl *authRateLimiter) cleanup() {
 	defer rl.mu.Unlock()
 
 	rl.cleanupLocked(time.Now())
+}
+
+func limiterKey(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ip
+	}
+	if parsed.To4() != nil {
+		return parsed.To4().String()
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // StreamableHTTPServer implements MCP server using Streamable HTTP transport.
@@ -307,8 +331,9 @@ func extractBearerToken(r *http.Request) string {
 func createAuthMiddleware(next http.Handler, keyFn func() string, rl *authRateLimiter, log *logger.ModuleLogger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientIP := getClientIP(r)
+		key := limiterKey(clientIP)
 
-		if rl.isLocked(clientIP) {
+		if rl.isLocked(key) {
 			log.Warn().
 				Str("client_ip", clientIP).
 				Str("path", r.URL.Path).
@@ -328,7 +353,7 @@ func createAuthMiddleware(next http.Handler, keyFn func() string, rl *authRateLi
 			subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) == 1
 
 		if !authorized {
-			rl.recordFailure(clientIP)
+			locked := rl.recordFailure(key)
 
 			log.Warn().
 				Str("client_ip", clientIP).
@@ -338,12 +363,19 @@ func createAuthMiddleware(next http.Handler, keyFn func() string, rl *authRateLi
 				Bool("has_auth_header", r.Header.Get("Authorization") != "").
 				Msg("Unauthorized access attempt")
 
+			if locked {
+				w.Header().Set("Retry-After", "300")
+				http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
+
+				return
+			}
+
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 
 			return
 		}
 
-		rl.reset(clientIP)
+		rl.reset(key)
 
 		log.Debug().
 			Str("client_ip", clientIP).
