@@ -171,3 +171,23 @@ func TestReloadOfBrokenFileKeepsCurrentSecrets(t *testing.T) {
 	assert.Equal(t, "key-1234567890abcdef", cfg.GetAPIKey())
 	assert.Contains(t, cfg.GetDatabaseConnectionString(), "password='db-secret'")
 }
+
+func TestStartRegeneratesMissingCertificates(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	certFile := filepath.Join(dir, "certs", "server.crt")
+	keyFile := filepath.Join(dir, "certs", "server.key")
+	writeConfigFile(t, path, ConfigData{
+		ConfigVersion: CurrentConfigVersion,
+		Server:        ServerConfig{APIKey: "key-1234567890abcdef", EnableTLS: true, CertFile: certFile, KeyFile: keyFile},
+	})
+
+	cfg := &Configuration{configPath: path, args: newTestArgs(path), logger: logger.NewModuleLogger(newTestLogger(dir), "test")}
+	protector, err := secrets.NewProtector(dir)
+	require.NoError(t, err)
+	cfg.secrets = protector
+
+	require.NoError(t, cfg.loadOrCreate())
+	assert.FileExists(t, certFile)
+	assert.FileExists(t, keyFile)
+}

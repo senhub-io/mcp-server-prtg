@@ -265,7 +265,19 @@ func (c *Configuration) loadOrCreate() error {
 		return c.createDefaultConfiguration()
 	}
 
-	return c.loadConfiguration()
+	if err := c.loadConfiguration(); err != nil {
+		return err
+	}
+
+	// A deleted certificate pair is regenerated so the service can start
+	// again; an existing pair, generated or provided, is never replaced.
+	if c.data.Server.EnableTLS {
+		if err := c.generateTLSCertificates(); err != nil {
+			return fmt.Errorf("failed to generate missing TLS certificates: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // loadConfiguration loads configuration from YAML file.
