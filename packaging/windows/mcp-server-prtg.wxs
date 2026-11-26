@@ -111,18 +111,21 @@
        The SetProperty Id must equal the CustomAction Id: WixQuietExec64
        reads its command line from a property named after the action. -->
   <SetProperty Id="WriteConfigExec"
+               Action="SetWriteConfigExecNoPrtg"
                Value="&quot;[INSTALLFOLDER]mcp-server-prtg.exe&quot; config init --config &quot;[DATAFOLDER]config.yaml&quot; --https --port [MCPPORT] --db-host &quot;[DBHOST]&quot; --db-port [DBPORT] --db-name &quot;[DBNAME]&quot; --db-user &quot;[DBUSER]&quot; --db-password &quot;[DBPASSWORD]&quot; --db-sslmode [DBSSLMODE] --log-file &quot;[DATAFOLDER]logs\mcp-server-prtg.log&quot; --prtg-disable"
                Before="WriteConfigExec"
                Sequence="execute"
                Condition="NOT Installed AND NOT CONFIG_EXISTS AND NOT PRTGENABLE" />
 
   <SetProperty Id="WriteConfigExec"
+               Action="SetWriteConfigExecPrtgNoVerify"
                Value="&quot;[INSTALLFOLDER]mcp-server-prtg.exe&quot; config init --config &quot;[DATAFOLDER]config.yaml&quot; --https --port [MCPPORT] --db-host &quot;[DBHOST]&quot; --db-port [DBPORT] --db-name &quot;[DBNAME]&quot; --db-user &quot;[DBUSER]&quot; --db-password &quot;[DBPASSWORD]&quot; --db-sslmode [DBSSLMODE] --log-file &quot;[DATAFOLDER]logs\mcp-server-prtg.log&quot; --prtg-url &quot;[PRTGURL]&quot; --prtg-token &quot;[PRTGTOKEN]&quot; --prtg-verify-ssl=false"
                Before="WriteConfigExec"
                Sequence="execute"
                Condition="NOT Installed AND NOT CONFIG_EXISTS AND PRTGENABLE AND NOT PRTGVERIFYSSL" />
 
   <SetProperty Id="WriteConfigExec"
+               Action="SetWriteConfigExecPrtgVerify"
                Value="&quot;[INSTALLFOLDER]mcp-server-prtg.exe&quot; config init --config &quot;[DATAFOLDER]config.yaml&quot; --https --port [MCPPORT] --db-host &quot;[DBHOST]&quot; --db-port [DBPORT] --db-name &quot;[DBNAME]&quot; --db-user &quot;[DBUSER]&quot; --db-password &quot;[DBPASSWORD]&quot; --db-sslmode [DBSSLMODE] --log-file &quot;[DATAFOLDER]logs\mcp-server-prtg.log&quot; --prtg-url &quot;[PRTGURL]&quot; --prtg-token &quot;[PRTGTOKEN]&quot; --prtg-verify-ssl=true"
                Before="WriteConfigExec"
                Sequence="execute"
