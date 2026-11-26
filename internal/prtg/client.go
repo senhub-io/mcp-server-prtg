@@ -265,10 +265,13 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 	}
 	defer resp.Body.Close()
 
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if len(respBody) > maxResponseBytes {
+		return fmt.Errorf("%w: response from %s exceeds %d bytes", ErrAPIRequest, endpoint, maxResponseBytes)
 	}
 
 	// Handle HTTP errors (accept any 2xx status as success)
@@ -281,7 +284,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 		if err := json.Unmarshal(respBody, result); err != nil {
 			c.logger.Error().
 				Str("endpoint", endpoint).
-				Str("body", string(respBody)).
+				Str("body", truncateBody(respBody)).
 				Err(err).
 				Msg("Failed to parse PRTG API response")
 			return fmt.Errorf("failed to parse response: %w", err)
@@ -298,7 +301,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body io
 
 // handleHTTPError converts HTTP status codes to appropriate errors.
 func (c *Client) handleHTTPError(statusCode int, endpoint string, body []byte) error {
-	message := string(body)
+	message := truncateBody(body)
 	if message == "" {
 		message = http.StatusText(statusCode)
 	}
@@ -347,4 +350,17 @@ func (c *Client) Ping(ctx context.Context) error {
 
 	c.logger.Info().Int("status", resp.StatusCode).Msg("PRTG API connection successful")
 	return nil
+}
+
+const (
+	maxResponseBytes = 64 << 20
+	maxLoggedBody    = 512
+)
+
+func truncateBody(body []byte) string {
+	if len(body) <= maxLoggedBody {
+		return string(body)
+	}
+
+	return string(body[:maxLoggedBody]) + "...(truncated)"
 }
