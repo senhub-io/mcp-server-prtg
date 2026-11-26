@@ -252,3 +252,49 @@ func TestGuardCacheDisabled(t *testing.T) {
 	assert.EqualValues(t, 2, stats.UpstreamRequests)
 	assert.EqualValues(t, 0, stats.CacheHits)
 }
+
+func TestStoreOversizeBodyNotCached(t *testing.T) {
+	g := newRequestGuard(2, false, time.Second)
+	g.maxEntryBytes = 16
+	g.maxCacheBytes = 1024
+
+	body := make([]byte, 17)
+	g.store("k", body, time.Minute)
+
+	assert.NotContains(t, g.cache, "k")
+	assert.Zero(t, g.cacheBytes)
+}
+
+func TestStoreRespectsMaxCacheBytes(t *testing.T) {
+	g := newRequestGuard(2, false, time.Second)
+	g.maxEntryBytes = 64
+	g.maxCacheBytes = 128
+
+	for i := 0; i < 50; i++ {
+		g.store(fmt.Sprintf("key-%d", i), make([]byte, 32), time.Minute)
+		assert.LessOrEqual(t, g.cacheBytes, g.maxCacheBytes)
+	}
+
+	total := 0
+	for _, e := range g.cache {
+		total += len(e.body)
+	}
+	assert.Equal(t, total, g.cacheBytes)
+	assert.LessOrEqual(t, total, g.maxCacheBytes)
+}
+
+func TestStoreOverwriteKeepsCacheBytesExact(t *testing.T) {
+	g := newRequestGuard(2, false, time.Second)
+	g.maxEntryBytes = 1024
+	g.maxCacheBytes = 4096
+
+	g.store("k", make([]byte, 100), time.Minute)
+	g.store("k", make([]byte, 300), time.Minute)
+
+	assert.Len(t, g.cache, 1)
+	assert.Equal(t, 300, g.cacheBytes)
+	assert.Equal(t, 300, len(g.cache["k"].body))
+
+	g.store("k", make([]byte, 50), time.Minute)
+	assert.Equal(t, 50, g.cacheBytes)
+}

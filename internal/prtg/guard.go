@@ -14,6 +14,8 @@ import (
 const (
 	defaultMaxConcurrent   = 2
 	defaultMaxCacheEntries = 500
+	defaultMaxEntryBytes   = 8 << 20
+	defaultMaxCacheBytes   = 128 << 20
 	defaultFlightTimeout   = 60 * time.Second
 )
 
@@ -25,6 +27,9 @@ type cacheEntry struct {
 type requestGuard struct {
 	maxConcurrent   int
 	maxCacheEntries int
+	maxEntryBytes   int
+	maxCacheBytes   int
+	cacheBytes      int
 	cacheDisabled   bool
 	flightTimeout   time.Duration
 
@@ -54,6 +59,8 @@ func newRequestGuard(maxConcurrent int, cacheDisabled bool, requestTimeout time.
 		maxConcurrent:   maxConcurrent,
 		flightTimeout:   flightTimeout,
 		maxCacheEntries: defaultMaxCacheEntries,
+		maxEntryBytes:   defaultMaxEntryBytes,
+		maxCacheBytes:   defaultMaxCacheBytes,
 		cacheDisabled:   cacheDisabled,
 		sem:             make(chan struct{}, maxConcurrent),
 		cache:           make(map[string]cacheEntry),
@@ -128,19 +135,31 @@ func (g *requestGuard) store(key string, body []byte, ttl time.Duration) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if len(g.cache) >= g.maxCacheEntries {
-		g.evictLocked(now)
+	if len(body) > g.maxEntryBytes {
+		return
 	}
+	if _, ok := g.cache[key]; ok {
+		g.deleteLocked(key)
+	}
+	g.evictLocked(now, len(body))
 	g.cache[key] = cacheEntry{body: body, expires: now.Add(ttl)}
+	g.cacheBytes += len(body)
 }
 
-func (g *requestGuard) evictLocked(now time.Time) {
+func (g *requestGuard) deleteLocked(key string) {
+	if e, ok := g.cache[key]; ok {
+		g.cacheBytes -= len(e.body)
+		delete(g.cache, key)
+	}
+}
+
+func (g *requestGuard) evictLocked(now time.Time, incoming int) {
 	for k, e := range g.cache {
 		if !now.Before(e.expires) {
-			delete(g.cache, k)
+			g.deleteLocked(k)
 		}
 	}
-	if len(g.cache) >= g.maxCacheEntries {
+	for len(g.cache)+1 > g.maxCacheEntries || g.cacheBytes+incoming > g.maxCacheBytes {
 		soonest := ""
 		var min time.Time
 		for k, e := range g.cache {
@@ -149,9 +168,10 @@ func (g *requestGuard) evictLocked(now time.Time) {
 				min = e.expires
 			}
 		}
-		if soonest != "" {
-			delete(g.cache, soonest)
+		if soonest == "" {
+			return
 		}
+		g.deleteLocked(soonest)
 	}
 }
 
