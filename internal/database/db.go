@@ -16,6 +16,7 @@ import (
 type DB struct {
 	conn   *sql.DB
 	logger *zerolog.Logger
+	schema schemaFeatures
 }
 
 // New creates a PostgreSQL database connection with optimized pool settings.
@@ -47,10 +48,48 @@ func New(connStr string, logger *zerolog.Logger) (*DB, error) {
 
 	logger.Info().Msg("database connection established")
 
+	detectCtx, detectCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer detectCancel()
+
+	features, detectErr := detectSchema(detectCtx, conn)
+	if detectErr != nil {
+		logger.Warn().Err(detectErr).Msg("schema detection failed, assuming default layout")
+	} else {
+		logger.Info().
+			Bool("soft_delete", features.softDelete).
+			Bool("tree_depth", features.treeDepth).
+			Bool("channel_values", features.channelValues).
+			Bool("collection_status", features.collectionStatus).
+			Bool("last_fetched", features.lastFetched).
+			Msg("database schema detected")
+	}
+
 	return &DB{
 		conn:   conn,
 		logger: logger,
+		schema: features,
 	}, nil
+}
+
+// HasChannelValues reports whether the prtg_channel_value table exists.
+func (db *DB) HasChannelValues() bool {
+	return db.schema.channelValues
+}
+
+// SchemaFeatures reports which optional Data Exporter tables and columns were detected.
+func (db *DB) SchemaFeatures() map[string]bool {
+	return map[string]bool{
+		"soft_delete":       db.schema.softDelete,
+		"tree_depth":        db.schema.treeDepth,
+		"channel_values":    db.schema.channelValues,
+		"collection_status": db.schema.collectionStatus,
+		"last_fetched":      db.schema.lastFetched,
+	}
+}
+
+// HasCollectionStatus reports whether the data_collection_status table exists.
+func (db *DB) HasCollectionStatus() bool {
+	return db.schema.collectionStatus
 }
 
 // Close closes the database connection.
@@ -81,10 +120,8 @@ func (db *DB) Query(ctx context.Context, query string, args ...interface{}) (*sq
 }
 
 // QueryRow executes a query expected to return at most one row.
+// The context must stay valid until Scan is called on the returned row.
 func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	db.logger.Debug().
 		Str("query", query).
 		Interface("args", args).

@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Complete reference documentation for all 15 MCP tools provided by MCP Server PRTG.
+Complete reference documentation for the MCP tools provided by MCP Server PRTG.
 
 ## Table of Contents
 
@@ -19,18 +19,19 @@ Complete reference documentation for all 15 MCP tools provided by MCP Server PRT
   - [prtg_get_business_processes](#prtg_get_business_processes)
   - [prtg_get_statistics](#prtg_get_statistics)
   - [prtg_query_sql](#prtg_query_sql)
-- [PRTG API v2 Tools (3)](#prtg-api-v2-tools)
+- [PRTG API v2 Tools (2)](#prtg-api-v2-tools)
   - [prtg_get_channel_current_values](#prtg_get_channel_current_values)
   - [prtg_get_sensor_timeseries](#prtg_get_sensor_timeseries)
-  - [prtg_get_sensor_history_custom](#prtg_get_sensor_history_custom)
 - [Database Schema](#database-schema)
 - [Common Patterns](#common-patterns)
 
 ## Overview
 
-MCP Server PRTG exposes 15 tools through the Model Context Protocol:
+In HTTP mode (service), MCP Server PRTG exposes 14 tools through the Model Context Protocol:
 - **12 PostgreSQL-based tools** - Query sensor status, configuration, and hierarchy from PRTG Data Exporter database
-- **3 PRTG API v2 tools** - Query historical metrics and real-time channel data directly from PRTG Core Server
+- **2 PRTG API v2 tools** - Query historical metrics and real-time channel data directly from PRTG Core Server (when `prtg.enabled: true`)
+
+In stdio mode (npm package or `mcp-server-prtg stdio`), there is no database: the server exposes 13 tools, all backed by PRTG API v2. They are the 11 tools named like the PostgreSQL-based tools above (all except `prtg_query_sql`), plus the 2 PRTG API v2 tools.
 
 All tools return JSON responses with consistent visual formatting including markdown tables and complete JSON data.
 
@@ -455,6 +456,8 @@ Returns all sensors that are currently in a non-operational state (Warning, Down
 - Sensors with status 3 (Up) are never included
 
 ---
+
+**Paused sensors and limit.** By default, paused sensors are excluded from the alert list unless a `status` filter is given; when the result reaches the 100-row limit, the response states that the limit was reached and suggests narrowing the filter.
 
 ### prtg_device_overview
 
@@ -1034,16 +1037,20 @@ Execute a custom SQL query on the PRTG database.
 
 #### Description
 
-Executes custom SELECT queries for advanced analysis not covered by other tools. **SELECT only** - write operations are blocked for security.
+Executes custom SELECT queries for advanced analysis not covered by other tools. **SELECT only** - write operations are blocked for security. Available in HTTP mode only, and only when `allow_custom_queries: true` (see [CONFIGURATION.md](CONFIGURATION.md#allow_custom_queries)).
 
 #### Security
 
 This tool implements multiple security measures:
-- Only SELECT queries are allowed
-- Forbidden keywords: DROP, DELETE, UPDATE, INSERT, ALTER, CREATE, TRUNCATE, EXEC, EXECUTE
-- SQL comments (`--`, `/*`) are blocked to prevent bypass attempts
-- Maximum limit enforced (1000 results)
-- 30-second query timeout
+- Only queries starting with SELECT (or WITH) are allowed
+- Queries run in a read-only transaction
+- Multiple statements and SQL comments (`--`, `/*`) are rejected
+- References to PRTG Data Exporter configuration and credential tables (`prtg_server_address`, `target_database`, `grafana_*`, `licensing_*`, `setting`, `audit_trail`) are rejected
+- Functions `pg_*`, `dblink*`, `lo_*`, `current_setting` and `set_config` are rejected
+- Results capped at 1 to 1000 rows (default 100), regardless of any LIMIT in the query
+- 15-second statement timeout
+
+For defense in depth, connect with a dedicated PostgreSQL role that only has SELECT on the `prtg_*` data tables.
 
 #### Parameters
 
@@ -1145,55 +1152,50 @@ For security reasons, prtg_query_sql is disabled by default.
 **Forbidden operation:**
 ```json
 {
-  "error": "query execution failed: only SELECT queries are allowed"
+  "error": "query execution failed: custom query rejected: query must start with SELECT or WITH"
 }
 ```
 
-**Forbidden keyword:**
+**Restricted table or function:**
 ```json
 {
-  "error": "query execution failed: query contains forbidden keyword: DELETE"
+  "error": "query execution failed: custom query rejected: query references a restricted table or function"
 }
 ```
 
 #### Notes
 
-- If query doesn't include LIMIT, the `limit` parameter is automatically appended
+- The `limit` parameter (1 to 1000, default 100) always applies, even if the query has its own LIMIT
 - Results are returned as an array of objects with column names as keys
 - All PostgreSQL data types are supported
 - Use fully qualified table names (see [Database Schema](#database-schema))
-- Query timeout is 30 seconds
+- Statement timeout is 15 seconds
 
 ---
 
 ## PRTG API v2 Tools
 
-These tools query data directly from PRTG Core Server via API v2. They require PRTG API v2 configuration in `config.yaml` (see [CONFIGURATION.md](CONFIGURATION.md)).
+These tools query data directly from PRTG Core Server via API v2. They require PRTG API v2 configuration in `config.yaml` (see [CONFIGURATION.md](CONFIGURATION.md)). Calls go through a request guard (response cache, coalescing of identical concurrent requests, at most 2 requests in flight by default) to protect the PRTG Core Server.
+
+### prtg_get_channel_current_values` through the end of `### prtg_get_sensor_timeseries` (i.e. everything from the first heading up to, but not including, `## Database Schema`).
 
 ### prtg_get_channel_current_values
 
-**PRIMARY TOOL for checking sensor current state and discovering available channels.**
+Retrieve the current values of all channels of a sensor.
 
 #### Description
 
-Returns ALL channels of a sensor with their current values, names, units, and last update timestamp. This is the main tool for understanding a sensor's current state.
-
-Each PRTG sensor has multiple channels (individual measurements). Examples:
-- **SSL sensors**: 'Days to Expiration', 'Response Time'
-- **Server sensors**: 'CPU Load', 'Memory Usage', 'Disk Space'
-- **Network sensors**: 'Traffic In', 'Traffic Out', 'Packet Loss'
-
-**Always use this tool first** when asked about a sensor's current state, values, or status.
+Reads the current channel values of a sensor. In the default `auto` source the values come from the PRTG Data Exporter target database (`prtg_channel_value`) first; the PRTG API is called only when needed (for example for the `live` period, or when the sensor's export is older than 24 h). Each answer starts with a `Source:` line stating where the data came from. Byte-size units (Ko…To, KB…TB) are converted from raw bytes (base 1024). Channel names are HTML-decoded; a missing channel name is fetched once from the PRTG API when configured, otherwise it is flagged.
 
 #### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `sensor_id` | integer | **Yes** | - | PRTG sensor ID (use `prtg_get_sensors` to find sensor IDs) |
+| `sensor_id` | integer | Yes | - | PRTG sensor ID |
+| `source` | string | No | `auto` | `auto` (database first, PRTG API only when needed), `database` (never call PRTG), `prtg` (real time from the PRTG API) |
 
 #### Examples
 
-**Get all current channel values for a sensor:**
 ```json
 {
   "name": "prtg_get_channel_current_values",
@@ -1203,284 +1205,90 @@ Each PRTG sensor has multiple channels (individual measurements). Examples:
 }
 ```
 
+```json
+{
+  "name": "prtg_get_channel_current_values",
+  "arguments": {
+    "sensor_id": 12345,
+    "source": "prtg"
+  }
+}
+```
+
 #### Response Format
 
-Returns a markdown table with current channel values:
-
 ```
+Source: database (PRTG Data Exporter, last fetch 2026-...)
+
 # Current Channel Values - Sensor 12345
 
-Total channels: 5
-
-| Channel | Value | Unit | Timestamp |
-|---------|-------|------|----------|
-| Response Time | 45.23 | ms | 2025-10-26 10:30:00 |
-| Days to Expiration | 89.00 | days | 2025-10-26 10:30:00 |
-| Traffic In | 1234567.89 | kbit/s | 2025-10-26 10:30:00 |
-| Traffic Out | 987654.32 | kbit/s | 2025-10-26 10:30:00 |
-| Downtime | 0.00 | % | 2025-10-26 10:30:00 |
+| Channel | Value | Unit |
+|---------|-------|------|
+| Traffic | 12.4 | Mbit/s |
 ```
 
 #### Notes
 
-- This tool queries PRTG API v2 in real-time (not PostgreSQL database)
-- Returns the most recent measurement for each channel
-- Channel names, units, and values come directly from PRTG
-- Use this instead of `prtg_get_sensor_status` when you need detailed channel data
-- For historical trends, use `prtg_get_sensor_timeseries`
-
----
+- The tool is registered when the database holds channel history or the PRTG API is configured.
+- If the PRTG API fails in `auto` mode, the database answer is returned with a note.
 
 ### prtg_get_sensor_timeseries
 
-Retrieve **HISTORICAL** time series data for analyzing trends over time.
+Retrieve a time series of channel values for a sensor.
 
 #### Description
 
-Returns time-stamped measurements showing how channel values evolved over predefined time periods. Use this to analyze performance trends, identify when issues started, compare metrics between time periods, and detect patterns in historical data.
+Reads historical channel values. In the default `auto` source the series comes from the PRTG Data Exporter target database (`prtg_channel_value`) first; the `live` period and sensors whose export is older than 24 h fall back to the PRTG API when configured. Each answer starts with a `Source:` line. Byte-size units are converted from raw bytes (base 1024).
 
-**For CURRENT values, use `prtg_get_channel_current_values` instead.**
+Windows and buckets from the database:
+
+| Period | Window | Bucket |
+|--------|--------|--------|
+| `live` | 2 h | 5 min |
+| `short` | 24 h | 15 min |
+| `medium` | 7 d | 1 h |
+| `long` | 30 d | 6 h |
 
 #### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `sensor_id` | integer | **Yes** | - | PRTG sensor ID |
-| `time_type` | string | **Yes** | - | Time period: `live`, `short`, `medium`, or `long` |
-
-#### Time Periods
-
-| Time Type | Coverage | Typical Use Case |
-|-----------|----------|------------------|
-| `live` | Last few minutes | Real-time monitoring, immediate troubleshooting |
-| `short` | Last 24 hours | Daily trend analysis, recent performance issues |
-| `medium` | Last 7 days | Weekly trends, recurring issues |
-| `long` | Last 30+ days | Monthly trends, long-term capacity planning |
+| `sensor_id` | integer | Yes | - | PRTG sensor ID |
+| `period` | string | No | `short` | `live`, `short`, `medium` or `long` |
+| `source` | string | No | `auto` | `auto`, `database` or `prtg` |
 
 #### Examples
 
-**Analyze last 24 hours of sensor data:**
 ```json
 {
   "name": "prtg_get_sensor_timeseries",
   "arguments": {
     "sensor_id": 12345,
-    "time_type": "short"
-  }
-}
-```
-
-**Check recent activity (live data):**
-```json
-{
-  "name": "prtg_get_sensor_timeseries",
-  "arguments": {
-    "sensor_id": 54321,
-    "time_type": "live"
-  }
-}
-```
-
-**Analyze weekly trends:**
-```json
-{
-  "name": "prtg_get_sensor_timeseries",
-  "arguments": {
-    "sensor_id": 67890,
-    "time_type": "medium"
+    "period": "medium"
   }
 }
 ```
 
 #### Response Format
 
-Returns a visual summary with sparklines, trends, and statistics, followed by a data table:
-
 ```
-# Time Series Data - Sensor 12345 (short)
+Source: database (PRTG Data Exporter)
 
-Total data points: 145
-Channels: Response Time, Traffic In, Traffic Out
+# Time Series Data - Sensor 12345 (medium)
 
 ## Quick Trend
-
-**Sparkline (Response Time):** ▁▂▃▅▇▅▃▂▁ UP
-**Stats:** Min: 42.1 | Max: 48.6 | Avg: 44.5 | Current: 45.2
-
-WARNING: **1 anomaly/anomalies detected**
-- Index 87: 78.3 (expected: ~44.5)
+▁▂▃▅▇▅▃▂▁
 
 ## Measurements
-
-| Timestamp | Response Time | Traffic In | Traffic Out |
-|-----------|---------------|------------|-------------|
-| 2025-10-26 10:30:00 | 45.23 | 1234567.89 | 987654.32 |
-| 2025-10-26 10:25:00 | 43.12 | 1198765.43 | 965432.10 |
-| 2025-10-26 10:20:00 | 48.56 | 1345678.90 | 1023456.78 |
-| 2025-10-26 10:15:00 | 42.34 | 1123456.78 | 945678.90 |
-| ... | ... | ... | ... |
-| 2025-10-25 10:35:00 | 44.67 | 1267890.12 | 978901.23 |
-```
-
-**Visualization Elements:**
-
-- **Sparkline**: ASCII visualization using `▁▂▃▄▅▆▇█` characters showing value progression
-- **Trend Indicator**: `UP` (rising), `DOWN` (falling), or `FLAT` (stable) based on comparing first and second half averages
-- **Compact Stats**: Min, Max, Average, and Current value for quick reference
-- **Anomaly Detection**: Automatic detection of outliers (values >2 standard deviations from mean)
-
-**Note:**
-- If more than 15 data points exist, the table shows the first 10 and last 5 points with "..." indicating truncation
-- Visualizations are automatically generated for the first numeric channel in the response
-- Anomaly detection requires at least 10 data points
-
-#### Notes
-
-- This tool queries PRTG API v2 for historical data
-- Data granularity depends on PRTG's configured averaging intervals
-- Not all channels may be available for all time periods
-- For custom date ranges, use `prtg_get_sensor_history_custom`
-- Large datasets may be truncated in display (summary provided)
-
----
-
-### prtg_get_sensor_history_custom
-
-Retrieve **HISTORICAL** data for a specific date/time range.
-
-#### Description
-
-Returns time series data for a custom time window. Use this when you need to analyze a specific incident timeframe (e.g., "what happened last Tuesday between 2pm-4pm").
-
-**For CURRENT values, use `prtg_get_channel_current_values` instead.**
-
-Useful for:
-- Incident investigation and root cause analysis
-- Comparing specific time windows
-- Generating reports for past periods
-- Analyzing scheduled events (maintenance windows, batch jobs)
-
-#### Parameters
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `sensor_id` | integer | **Yes** | - | PRTG sensor ID |
-| `start_time` | string | **Yes** | - | Start time in RFC3339 format (e.g., `2025-10-30T00:00:00Z`) |
-| `end_time` | string | **Yes** | - | End time in RFC3339 format (e.g., `2025-10-31T23:59:59Z`) |
-
-#### Time Format
-
-Use RFC3339 format for timestamps:
-- **UTC**: `2025-10-30T14:00:00Z`
-- **With timezone**: `2025-10-30T14:00:00+02:00`
-- **Date only** (midnight UTC): `2025-10-30T00:00:00Z`
-
-#### Examples
-
-**Analyze specific incident window:**
-```json
-{
-  "name": "prtg_get_sensor_history_custom",
-  "arguments": {
-    "sensor_id": 12345,
-    "start_time": "2025-10-29T14:00:00Z",
-    "end_time": "2025-10-29T16:00:00Z"
-  }
-}
-```
-
-**Full day analysis:**
-```json
-{
-  "name": "prtg_get_sensor_history_custom",
-  "arguments": {
-    "sensor_id": 54321,
-    "start_time": "2025-10-25T00:00:00Z",
-    "end_time": "2025-10-25T23:59:59Z"
-  }
-}
-```
-
-**Compare before/after maintenance:**
-```json
-{
-  "name": "prtg_get_sensor_history_custom",
-  "arguments": {
-    "sensor_id": 67890,
-    "start_time": "2025-10-20T22:00:00Z",
-    "end_time": "2025-10-21T02:00:00Z"
-  }
-}
-```
-
-#### Response Format
-
-Returns a visual summary with sparklines, trends, and statistics, followed by a data table:
-
-```
-# Time Series Data - Sensor 12345
-Period: 2025-10-29 14:00:00 to 2025-10-29 16:00:00
-
-Total data points: 48
-Channels: CPU Load, Memory Usage, Disk I/O
-
-## Quick Trend
-
-**Sparkline (CPU Load):** ▁▂▃▄▅▇██▇▅▃▂ DOWN
-**Stats:** Min: 43.2 | Max: 68.9 | Avg: 52.4 | Current: 43.2
-
-WARNING: **2 anomaly/anomalies detected**
-- Index 12: 68.9 (expected: ~52.4)
-- Index 24: 35.1 (expected: ~52.4)
-
-## Measurements
-
-| Timestamp | CPU Load | Memory Usage | Disk I/O |
-|-----------|----------|--------------|----------|
-| 2025-10-29 14:00:00 | 45.23 | 78.90 | 1234.56 |
-| 2025-10-29 14:05:00 | 48.12 | 79.45 | 1298.76 |
-| 2025-10-29 14:10:00 | 52.34 | 81.23 | 1456.78 |
-| ... | ... | ... | ... |
-| 2025-10-29 15:55:00 | 43.21 | 77.65 | 1198.90 |
-```
-
-**Visualization Elements:**
-
-- **Sparkline**: ASCII visualization showing value progression over the custom time range
-- **Trend Indicator**: Direction analysis comparing first and second half of the period
-- **Compact Stats**: Statistical summary for quick context
-- **Anomaly Detection**: Highlights unusual spikes or drops during the period
-
-#### Error Responses
-
-**Invalid time range:**
-```
-❌ **Invalid time range**
-
-end_time must be after start_time. Expected format: RFC3339 (e.g., 2025-01-15T14:00:00Z)
-
-💡 **How to resolve:**
-1. Example for last 24h: start_time=2025-01-14T00:00:00Z, end_time=2025-01-15T00:00:00Z
-2. Use time_type instead for standard periods: `prtg_get_sensor_timeseries sensor_id=X time_type=short`
-3. Available time_type: live (minutes), short (24h), medium (7d), long (30d)
-```
-
-**Invalid time format:**
-```json
-{
-  "error": "Invalid start_time format (use RFC3339): parsing time \"2025-10-30\" as \"2006-01-02T15:04:05Z07:00\": cannot parse \"\" as \"T\""
-}
+| Time | Value | Unit |
+|------|-------|------|
+| ... | ... | ... |
 ```
 
 #### Notes
 
-- This tool queries PRTG API v2 for historical data
-- Time range validation ensures end_time is after start_time
-- Data granularity depends on PRTG's configured averaging intervals
-- Very large time ranges may result in truncated display (summary provided)
-- For predefined periods (24h, 7d, 30d), use `prtg_get_sensor_timeseries` instead
-
----
+- The tool is registered when the database holds channel history or the PRTG API is configured.
+- If the PRTG API fails in `auto` mode, the database answer is returned with a note.
 
 ## Database Schema
 

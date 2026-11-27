@@ -25,7 +25,7 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(postgres|postgresql|mysql)://([^:]+):([^@]+)@`),
 
 	// UUIDs (potential keys)
-	regexp.MustCompile(`([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})`),
+	regexp.MustCompile(`(?i)([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})`),
 }
 
 // MaskSensitiveData masks sensitive information in log output.
@@ -35,14 +35,14 @@ func MaskSensitiveData(input string) string {
 	for _, pattern := range sensitivePatterns {
 		masked = pattern.ReplaceAllStringFunc(masked, func(match string) string {
 			parts := pattern.FindStringSubmatch(match)
-			if len(parts) >= 3 {
-				value := parts[len(parts)-1]
-				maskedValue := maskValue(value)
-
-				return strings.Replace(match, value, maskedValue, 1)
+			if len(parts) < 2 {
+				return match
 			}
 
-			return match
+			value := parts[len(parts)-1]
+			maskedValue := maskValue(value)
+
+			return strings.Replace(match, value, maskedValue, 1)
 		})
 	}
 
@@ -59,7 +59,6 @@ func maskValue(value string) string {
 		return "***"
 	}
 
-	// Keep first 2 and last 2 characters
 	return value[:2] + "***" + value[len(value)-2:]
 }
 
@@ -76,5 +75,9 @@ func NewMaskingWriter(w io.Writer) *MaskingWriter {
 // Write implements io.Writer interface with automatic masking.
 func (m *MaskingWriter) Write(p []byte) (n int, err error) {
 	masked := MaskSensitiveData(string(p))
-	return m.writer.Write([]byte(masked))
+	if _, err := m.writer.Write([]byte(masked)); err != nil {
+		return 0, err
+	}
+
+	return len(p), nil
 }

@@ -11,9 +11,9 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/rs/zerolog"
 
-	"github.com/matthieu/mcp-server-prtg/internal/handlers"
-	"github.com/matthieu/mcp-server-prtg/internal/prtg"
-	"github.com/matthieu/mcp-server-prtg/internal/version"
+	"github.com/senhub-io/mcp-server-prtg/internal/handlers"
+	"github.com/senhub-io/mcp-server-prtg/internal/prtg"
+	"github.com/senhub-io/mcp-server-prtg/internal/version"
 )
 
 // runStdioMode starts the MCP server in stdio mode for use as a local plugin.
@@ -54,11 +54,13 @@ func runStdioMode() error {
 
 	// Initialize PRTG client
 	prtgClient, err := prtg.NewClient(prtg.ClientConfig{
-		BaseURL:   config.PRTGURL,
-		Token:     config.PRTGToken,
-		Timeout:   time.Duration(config.Timeout) * time.Second,
-		VerifySSL: config.VerifySSL,
-		Logger:    &logger,
+		BaseURL:       config.PRTGURL,
+		Token:         config.PRTGToken,
+		Timeout:       time.Duration(config.Timeout) * time.Second,
+		VerifySSL:     config.VerifySSL,
+		Logger:        &logger,
+		MaxConcurrent: config.MaxConcurrent,
+		CacheDisabled: config.CacheDisabled,
 	})
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to create PRTG client")
@@ -90,22 +92,30 @@ func runStdioMode() error {
 	// Initialize tool handler (no database in stdio mode, API v2 only)
 	toolHandler := handlers.NewToolHandler(nil, nil, &logger)
 
-	// Register database-free tools (if any)
-	// For now, only metrics tools work in stdio mode
-	// TODO: Migrate all tools to API v2 to work without database
-	toolHandler.RegisterTools(mcpServer)
-
+	// DO NOT register database tools in stdio mode - they will crash with nil DB
+	// Only API v2 tools are registered below
 	toolsCount := 0 // Will be updated as we register tools
 
-	// Initialize metrics tools (PRTG API v2)
+	// Initialize PRTG API v2 tools
 	if config.PRTGEnabled {
+		// Register metrics tools (timeseries, channels)
 		metricsHandler := handlers.NewMetricsToolHandler(prtgClient, toolHandler)
 		metricsHandler.RegisterMetricsTools(mcpServer)
-		toolsCount += 3 // prtg_get_sensor_timeseries, prtg_get_sensor_history_custom, prtg_get_channel_current_values
+		toolsCount += 2
 
 		logger.Info().
-			Int("tools_count", 3).
+			Int("tools_count", 2).
 			Msg("PRTG API v2 metrics tools registered")
+
+		// Register database-replacement API v2 tools
+		// These tools replace the 12 PostgreSQL-dependent tools with API v2 equivalents
+		apiv2Handler := handlers.NewAPIv2ToolHandler(prtgClient, toolHandler)
+		apiv2Handler.RegisterAPIv2Tools(mcpServer)
+		toolsCount += 11 // All database-free tools except prtg_query_sql (removed by design)
+
+		logger.Info().
+			Int("tools_count", 11).
+			Msg("PRTG API v2 database-replacement tools registered")
 	}
 
 	logger.Info().
@@ -143,24 +153,28 @@ func runStdioMode() error {
 
 // Config holds stdio mode configuration loaded from environment variables.
 type Config struct {
-	PRTGURL     string
-	PRTGToken   string
-	PRTGEnabled bool
-	Timeout     int
-	VerifySSL   bool
-	LogLevel    string
+	PRTGURL       string
+	PRTGToken     string
+	PRTGEnabled   bool
+	Timeout       int
+	VerifySSL     bool
+	LogLevel      string
+	MaxConcurrent int
+	CacheDisabled bool
 }
 
 // loadConfigFromEnv loads configuration from environment variables.
 // This replaces the YAML config file for stdio mode.
 func loadConfigFromEnv(logger *zerolog.Logger) (*Config, error) {
 	config := &Config{
-		PRTGURL:     getEnv("PRTG_URL", ""),
-		PRTGToken:   getEnv("PRTG_API_TOKEN", ""),
-		PRTGEnabled: getEnvBool("PRTG_ENABLED", true),
-		Timeout:     getEnvInt("PRTG_TIMEOUT", 30, logger),
-		VerifySSL:   getEnvBool("PRTG_VERIFY_SSL", true),
-		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		PRTGURL:       getEnv("PRTG_URL", ""),
+		PRTGToken:     getEnv("PRTG_API_TOKEN", ""),
+		PRTGEnabled:   getEnvBool("PRTG_ENABLED", true),
+		Timeout:       getEnvInt("PRTG_TIMEOUT", 30, logger),
+		VerifySSL:     getEnvBool("PRTG_VERIFY_SSL", true),
+		MaxConcurrent: getEnvInt("PRTG_MAX_CONCURRENT", 2, logger),
+		CacheDisabled: getEnvBool("PRTG_CACHE_DISABLED", false),
+		LogLevel:      getEnv("LOG_LEVEL", "info"),
 	}
 
 	return config, nil

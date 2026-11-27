@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,10 +15,15 @@ import (
 
 	server "github.com/mark3labs/mcp-go/server"
 
-	"github.com/matthieu/mcp-server-prtg/internal/database"
-	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
-	"github.com/matthieu/mcp-server-prtg/internal/version"
+	"github.com/senhub-io/mcp-server-prtg/internal/database"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/configuration"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/version"
+)
+
+const (
+	minAPIKeyLength     = 16
+	rateLimitMaxEntries = 10000
 )
 
 // authAttempt tracks authentication attempts for rate limiting.
@@ -26,37 +34,60 @@ type authAttempt struct {
 	lockedUntil time.Time
 }
 
-// authRateLimiter manages rate limiting for authentication attempts per IP.
+// authRateLimiter manages rate limiting for failed authentication attempts per IP.
 type authRateLimiter struct {
-	attempts map[string]*authAttempt
-	mu       sync.RWMutex
-
-	// Configuration
-	maxAttempts int           // Max attempts before lockout
-	window      time.Duration // Time window for counting attempts
-	lockoutTime time.Duration // How long to lock out after max attempts
+	attempts    map[string]*authAttempt
+	mu          sync.Mutex
+	maxAttempts int
+	window      time.Duration
+	lockoutTime time.Duration
+	maxEntries  int
 }
 
-// newAuthRateLimiter creates a new rate limiter with default settings.
 func newAuthRateLimiter() *authRateLimiter {
 	return &authRateLimiter{
 		attempts:    make(map[string]*authAttempt),
-		maxAttempts: 5,               // 5 attempts max
-		window:      1 * time.Minute, // per minute
-		lockoutTime: 5 * time.Minute, // locked for 5 minutes after max attempts
+		maxAttempts: 5,
+		window:      1 * time.Minute,
+		lockoutTime: 5 * time.Minute,
+		maxEntries:  rateLimitMaxEntries,
 	}
 }
 
-// Returns true if the request should be allowed, false if rate limited.
-func (rl *authRateLimiter) checkAndRecord(ip string, success bool) bool {
+// isLocked reports whether the IP is currently locked out.
+func (rl *authRateLimiter) isLocked(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	attempt, exists := rl.attempts[ip]
+	if !exists {
+		return false
+	}
+
+	return time.Now().Before(attempt.lockedUntil)
+}
+
+// recordFailure records a failed authentication attempt and may lock the IP.
+// It reports whether the key is locked after the call.
+func (rl *authRateLimiter) recordFailure(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	now := time.Now()
 
-	// Get or create attempt record
 	attempt, exists := rl.attempts[ip]
 	if !exists {
+		if len(rl.attempts) >= rl.maxEntries {
+			rl.cleanupLocked(now)
+		}
+		if len(rl.attempts) >= rl.maxEntries {
+			// Every entry is locked: leave the new key untracked rather than
+			// evict a lockout or turn every unknown client away.
+			if !rl.dropOldestUnlockedLocked(now) {
+				return false
+			}
+		}
+
 		attempt = &authAttempt{
 			count:    0,
 			firstTry: now,
@@ -64,48 +95,81 @@ func (rl *authRateLimiter) checkAndRecord(ip string, success bool) bool {
 		rl.attempts[ip] = attempt
 	}
 
-	// Check if IP is currently locked out
-	if now.Before(attempt.lockedUntil) {
-		return false // Still locked out
-	}
-
-	// If successful auth, reset the counter
-	if success {
-		delete(rl.attempts, ip)
-		return true
-	}
-
-	// Reset counter if window has expired
 	if now.Sub(attempt.firstTry) > rl.window {
 		attempt.count = 0
 		attempt.firstTry = now
 	}
 
-	// Increment counter
 	attempt.count++
 	attempt.lastTry = now
 
-	// Check if max attempts exceeded
 	if attempt.count > rl.maxAttempts {
 		attempt.lockedUntil = now.Add(rl.lockoutTime)
-		return false // Lock out this IP
 	}
 
-	return true // Allow attempt
+	return now.Before(attempt.lockedUntil)
 }
 
-// cleanup removes old entries (optional, called periodically).
-func (rl *authRateLimiter) cleanup() {
+// reset clears the entry for an IP after a successful authentication.
+func (rl *authRateLimiter) reset(ip string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	now := time.Now()
+	delete(rl.attempts, ip)
+}
+
+// cleanupLocked removes stale entries; caller must hold mu.
+func (rl *authRateLimiter) cleanupLocked(now time.Time) {
 	for ip, attempt := range rl.attempts {
-		// Remove entries older than lockout time
 		if now.Sub(attempt.lastTry) > rl.lockoutTime {
 			delete(rl.attempts, ip)
 		}
 	}
+}
+
+// dropOldestUnlockedLocked removes the non-locked entry with the oldest
+// lastTry and reports whether one was found; caller must hold mu.
+func (rl *authRateLimiter) dropOldestUnlockedLocked(now time.Time) bool {
+	var oldestIP string
+
+	var oldest time.Time
+
+	found := false
+	for ip, attempt := range rl.attempts {
+		if now.Before(attempt.lockedUntil) {
+			continue
+		}
+		if !found || attempt.lastTry.Before(oldest) {
+			oldestIP = ip
+			oldest = attempt.lastTry
+			found = true
+		}
+	}
+
+	if found {
+		delete(rl.attempts, oldestIP)
+	}
+
+	return found
+}
+
+// cleanup removes old entries.
+func (rl *authRateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	rl.cleanupLocked(time.Now())
+}
+
+func limiterKey(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ip
+	}
+	if parsed.To4() != nil {
+		return parsed.To4().String()
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // StreamableHTTPServer implements MCP server using Streamable HTTP transport.
@@ -118,7 +182,9 @@ type StreamableHTTPServer struct {
 	db             *database.DB
 	rateLimiter    *authRateLimiter
 	address        string
-	shutdownCh     chan struct{} // Channel for graceful shutdown of background tasks
+	shutdownCh     chan struct{}
+	shutdownOnce   sync.Once
+	adminHandler   http.Handler
 }
 
 // NewStreamableHTTPServer creates a new Streamable HTTP-based MCP server.
@@ -128,205 +194,207 @@ func NewStreamableHTTPServer(
 	config *configuration.Configuration,
 	baseLogger *logger.Logger,
 ) *StreamableHTTPServer {
-	logger := logger.NewModuleLogger(baseLogger, logger.ModuleServer)
-
-	// Get server address for binding
-	address := config.GetServerAddress()
+	moduleLogger := logger.NewModuleLogger(baseLogger, logger.ModuleServer)
 
 	return &StreamableHTTPServer{
 		mcpServer:   mcpServer,
 		config:      config,
-		logger:      logger,
+		logger:      moduleLogger,
 		db:          db,
 		rateLimiter: newAuthRateLimiter(),
-		address:     address,
+		address:     config.GetServerAddress(),
 		shutdownCh:  make(chan struct{}),
 	}
 }
 
+// SetAdminHandler mounts the local administration page under /admin/.
+// It must be called before Start.
+func (s *StreamableHTTPServer) SetAdminHandler(h http.Handler) {
+	s.adminHandler = h
+}
+
 // Start starts the Streamable HTTP server.
 func (s *StreamableHTTPServer) Start(_ context.Context) error {
+	apiKey := s.config.GetAPIKey()
+	if len(apiKey) < minAPIKeyLength {
+		return fmt.Errorf("API key must be at least %d characters, refusing to start with a weak or empty key", minAPIKeyLength)
+	}
+
 	s.logger.Info().
 		Str("address", s.address).
 		Bool("tls", s.config.IsTLSEnabled()).
 		Msg("Starting MCP Server with Streamable HTTP transport")
 
-	// Create Streamable HTTP server with heartbeat support
-	// Default heartbeat interval is 30 seconds, can be configured
 	heartbeatInterval := 30 * time.Second
 	heartbeatOption := server.WithHeartbeatInterval(heartbeatInterval)
 	s.streamableHTTP = server.NewStreamableHTTPServer(s.mcpServer, heartbeatOption)
 
-	// Start rate limiter cleanup goroutine
 	go s.cleanupRateLimiterPeriodically()
 
-	// Create HTTP server with endpoints
 	if err := s.startHTTPServer(); err != nil {
 		return fmt.Errorf("failed to start HTTP server: %w", err)
 	}
 
-	// Log startup information
 	s.logStartupInfo()
 
 	return nil
 }
 
-// startHTTPServer starts the HTTP server with all endpoints.
-//
-//nolint:unparam // error return kept for consistency and future-proofing
+// startHTTPServer binds the listener and starts serving.
 func (s *StreamableHTTPServer) startHTTPServer() error {
-	// Create mux with all endpoints
 	mux := http.NewServeMux()
 
-	// MCP endpoint with authentication middleware
-	mux.Handle("/mcp", s.createAuthMiddleware(s.streamableHTTP))
+	mux.Handle("/mcp", createAuthMiddleware(s.streamableHTTP, s.config.GetAPIKey, s.rateLimiter, s.logger))
 
-	// Health check endpoint (no auth)
 	mux.HandleFunc("/health", s.handleHealth)
 
-	// Status endpoint (auth required)
-	statusHandler := s.createAuthMiddleware(http.HandlerFunc(s.handleStatus))
-	mux.Handle("/status", statusHandler)
+	mux.Handle("/status", createAuthMiddleware(http.HandlerFunc(s.handleStatus), s.config.GetAPIKey, s.rateLimiter, s.logger))
 
-	// Create HTTP server with optimized timeouts
+	if s.adminHandler != nil {
+		mux.Handle("/admin/", s.adminHandler)
+		mux.Handle("/admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently))
+	}
+
 	s.httpServer = &http.Server{
 		Addr:              s.address,
 		Handler:           mux,
-		ReadTimeout:       0,                // No read timeout for streaming connections
-		WriteTimeout:      0,                // No write timeout for streaming connections
-		IdleTimeout:       60 * time.Minute, // Close inactive connections after 1 hour
-		ReadHeaderTimeout: 10 * time.Second, // Protection against slow-loris attacks
-		MaxHeaderBytes:    1 << 20,          // 1MB max header size
+		ReadTimeout:       0,
+		WriteTimeout:      0,
+		IdleTimeout:       60 * time.Minute,
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
-	// Configure TLS if enabled
+	listener, err := net.Listen("tcp", s.address)
+	if err != nil {
+		return fmt.Errorf("failed to bind %s: %w", s.address, err)
+	}
+
 	if s.config.IsTLSEnabled() {
 		certFile := s.config.GetTLSCertFile()
 		keyFile := s.config.GetTLSKeyFile()
 
-		tlsConfig := &tls.Config{
-			MinVersion:               tls.VersionTLS12,
-			PreferServerCipherSuites: true,
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			if closeErr := listener.Close(); closeErr != nil {
+				s.logger.Warn().Err(closeErr).Msg("Failed to close listener after TLS setup error")
+			}
+
+			return fmt.Errorf("failed to load TLS key pair: %w", err)
 		}
 
-		s.httpServer.TLSConfig = tlsConfig
+		s.httpServer.TLSConfig = &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+		}
+
+		tlsListener := tls.NewListener(listener, s.httpServer.TLSConfig)
 
 		s.logger.Info().
 			Str("cert", certFile).
 			Str("key", keyFile).
 			Msg("Starting HTTPS server")
 
-		// Start server in background
-		go func() {
-			if err := s.httpServer.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
-				s.logger.Error().Err(err).Msg("HTTPS server error")
-			}
-		}()
+		go s.serve(tlsListener)
 	} else {
 		s.logger.Warn().Msg("Starting HTTP server (TLS disabled - not recommended for production)")
 
-		// Start server in background
-		go func() {
-			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				s.logger.Error().Err(err).Msg("HTTP server error")
-			}
-		}()
+		go s.serve(listener)
 	}
 
 	return nil
 }
 
-// Handles X-Forwarded-For and X-Real-IP headers for proxy situations.
-func getClientIP(r *http.Request) string {
-	// Try X-Real-IP first (single IP from trusted proxy)
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
+func (s *StreamableHTTPServer) serve(listener net.Listener) {
+	if err := s.httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		s.logger.Error().Err(err).Msg("HTTP server error")
 	}
-
-	// Try X-Forwarded-For (can be a list)
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		// Take the first IP (client IP)
-		if idx := strings.Index(forwarded, ","); idx != -1 {
-			return strings.TrimSpace(forwarded[:idx])
-		}
-
-		return strings.TrimSpace(forwarded)
-	}
-
-	// Fall back to RemoteAddr
-	// RemoteAddr is in format "IP:port", extract just the IP
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-
-	return r.RemoteAddr
 }
 
-// createAuthMiddleware creates authentication middleware using Bearer token with rate limiting.
-func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Handler {
-	expectedToken := s.config.GetAPIKey()
+// getClientIP extracts the client IP. Headers are intentionally ignored: they
+// are client-controlled and would let an attacker bypass or poison the limiter.
+func getClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
 
+	return host
+}
+
+// extractBearerToken returns the token from an Authorization: Bearer header.
+func extractBearerToken(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return ""
+	}
+
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+		return ""
+	}
+
+	return strings.TrimSpace(parts[1])
+}
+
+// createAuthMiddleware creates authentication middleware using a Bearer token
+// with rate limiting on failed attempts. The expected key is read through
+// keyFn at request time so rotation applies without a restart.
+func createAuthMiddleware(next http.Handler, keyFn func() string, rl *authRateLimiter, log *logger.ModuleLogger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Extract client IP for rate limiting
 		clientIP := getClientIP(r)
+		key := limiterKey(clientIP)
 
-		// Check rate limit BEFORE validating token (prevent brute-force)
-		if !s.rateLimiter.checkAndRecord(clientIP, false) {
-			s.logger.Warn().
+		if rl.isLocked(key) {
+			log.Warn().
 				Str("client_ip", clientIP).
 				Str("path", r.URL.Path).
 				Msg("Rate limit exceeded - IP temporarily blocked")
 
-			w.Header().Set("Retry-After", "300") // 5 minutes
+			w.Header().Set("Retry-After", "300")
 			http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
 
 			return
 		}
 
-		// Extract Bearer token from Authorization header
-		authHeader := r.Header.Get("Authorization")
+		providedToken := extractBearerToken(r)
+		expectedToken := keyFn()
 
-		var providedToken string
+		authorized := expectedToken != "" &&
+			len(expectedToken) >= minAPIKeyLength &&
+			subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) == 1
 
-		if authHeader != "" {
-			// Check for "Bearer <token>" format
-			const bearerPrefix = "Bearer "
-			if len(authHeader) > len(bearerPrefix) && authHeader[:len(bearerPrefix)] == bearerPrefix {
-				providedToken = authHeader[len(bearerPrefix):]
-			}
-		}
+		if !authorized {
+			locked := rl.recordFailure(key)
 
-		// Fallback: check query parameter (for compatibility)
-		if providedToken == "" {
-			providedToken = r.URL.Query().Get("token")
-		}
-
-		// Validate token
-		if providedToken != expectedToken {
-			s.logger.Warn().
+			log.Warn().
 				Str("client_ip", clientIP).
 				Str("remote_addr", r.RemoteAddr).
 				Str("path", r.URL.Path).
 				Str("method", r.Method).
-				Bool("has_auth_header", authHeader != "").
+				Bool("has_auth_header", r.Header.Get("Authorization") != "").
 				Msg("Unauthorized access attempt")
+
+			if locked {
+				w.Header().Set("Retry-After", "300")
+				http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
+
+				return
+			}
 
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 
 			return
 		}
 
-		// Authentication successful - record it
-		s.rateLimiter.checkAndRecord(clientIP, true)
+		rl.reset(key)
 
-		// Log successful authentication
-		s.logger.Debug().
+		log.Debug().
 			Str("client_ip", clientIP).
 			Str("path", r.URL.Path).
 			Str("method", r.Method).
 			Msg("Authenticated request")
 
-		// Call next handler
 		next.ServeHTTP(w, r)
 	})
 }
@@ -358,33 +426,46 @@ func (s *StreamableHTTPServer) handleHealth(w http.ResponseWriter, _ *http.Reque
 	}
 }
 
+type statusResponse struct {
+	Version   string `json:"version"`
+	Transport string `json:"transport"`
+	Protocol  string `json:"protocol"`
+	Uptime    string `json:"uptime"`
+	Database  string `json:"database"`
+}
+
 // handleStatus handles status requests (requires authentication).
 func (s *StreamableHTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
-	status := map[string]interface{}{
-		"version":   version.Get(),
-		"transport": "streamable-http",
-		"protocol":  "2025-03-26",
-		"uptime":    time.Since(startTime).String(),
-	}
-
-	// Check database connection
+	dbStatus := "not_configured"
 	if s.db != nil {
 		if err := s.db.Health(r.Context()); err != nil {
-			status["database"] = "error"
-			status["database_error"] = err.Error()
+			dbStatus = "error"
+			s.logger.Warn().Err(err).Msg("Database health check failed")
 		} else {
-			status["database"] = "connected"
+			dbStatus = "connected"
 		}
-	} else {
-		status["database"] = "not_configured"
+	}
+
+	resp := statusResponse{
+		Version:   version.Get(),
+		Transport: "streamable-http",
+		Protocol:  "2025-03-26",
+		Uptime:    time.Since(startTime).String(),
+		Database:  dbStatus,
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	// Simple JSON encoding
-	fmt.Fprintf(w, `{"version":"%s","transport":"streamable-http","protocol":"2025-03-26","uptime":"%s","database":"%s"}`,
-		status["version"], status["uptime"], status["database"])
+	if _, err := w.Write(data); err != nil {
+		s.logger.Error().Err(err).Msg("Failed to write status response")
+	}
 }
 
 // logStartupInfo logs startup information.
@@ -394,34 +475,47 @@ func (s *StreamableHTTPServer) logStartupInfo() {
 		protocol = "https"
 	}
 
+	base := protocol + "://" + s.address
+
 	s.logger.Info().
-		Str("url", fmt.Sprintf("%s://%s/mcp", protocol, s.address)).
-		Str("health_check", fmt.Sprintf("%s://%s/health", protocol, s.address)).
-		Str("status", fmt.Sprintf("%s://%s/status", protocol, s.address)).
+		Str("url", base+"/mcp").
+		Str("health_check", base+"/health").
+		Str("status", base+"/status").
 		Str("version", version.Get()).
 		Str("protocol", "2025-03-26").
 		Msg("MCP Server ready")
 
 	s.logger.Info().Msg("Configure Claude Desktop with:")
-	s.logger.Info().Msgf(`  "mcpServers": {`)
-	s.logger.Info().Msgf(`    "prtg": {`)
-	s.logger.Info().Msgf(`      "url": "%s://%s/mcp",`, protocol, s.address)
-	s.logger.Info().Msgf(`      "headers": {`)
-	s.logger.Info().Msgf(`        "Authorization": "Bearer YOUR_API_KEY"`)
-	s.logger.Info().Msgf(`      }`)
-	s.logger.Info().Msgf(`    }`)
-	s.logger.Info().Msgf(`  }`)
+	s.logger.Info().Msg(`  "mcpServers": {`)
+	s.logger.Info().Msg(`    "prtg": {`)
+	s.logger.Info().Msg(`      "url": "` + base + `/mcp",`)
+	s.logger.Info().Msg(`      "headers": {`)
+	s.logger.Info().Msg(`        "Authorization": "Bearer YOUR_API_KEY"`)
+	s.logger.Info().Msg(`      }`)
+	s.logger.Info().Msg(`    }`)
+	s.logger.Info().Msg(`  }`)
 }
 
-// Shutdown gracefully shuts down the server.
+// Shutdown gracefully shuts down the server. It is safe to call when Start was
+// never invoked and is idempotent.
 func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 	s.logger.Info().Msg("Shutting down Streamable HTTP server")
 
-	// Signal background tasks to stop
-	close(s.shutdownCh)
+	s.shutdownOnce.Do(func() {
+		close(s.shutdownCh)
+	})
 
-	// Shutdown HTTP server
+	if s.httpServer == nil {
+		return nil
+	}
+
 	if err := s.httpServer.Shutdown(ctx); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			if closeErr := s.httpServer.Close(); closeErr != nil {
+				s.logger.Warn().Err(closeErr).Msg("Failed to force-close HTTP server")
+			}
+		}
+
 		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
 	}
 

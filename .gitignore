@@ -45,3 +45,7 @@ Thumbs.db
 # Claude Code settings (contains permissions and potentially sensitive data)
 .claude/
 dump-*.sql
+
+# Local artefacts
+coverage.html
+*.go.old

@@ -6,16 +6,17 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/kardianos/service"
 
-	"github.com/matthieu/mcp-server-prtg/internal/agent"
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
-	"github.com/matthieu/mcp-server-prtg/internal/database"
-	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/agent"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/database"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/configuration"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
 )
 
 // program implements the service.Interface.
@@ -464,7 +465,8 @@ func cleanupFiles(args *cliargs.ParsedArgs) {
 		dirsToRemove = append(dirsToRemove, certsDir)
 	}
 
-	// Log directory
+	// Log file: only the default logs directory is removed wholesale; a custom
+	// log path only removes the file itself and its lumberjack backups.
 	logFile := args.LogFile
 	if logFile == "" {
 		logFile = filepath.Join(workingDir, "logs", "mcp-server-prtg.log")
@@ -474,9 +476,29 @@ func cleanupFiles(args *cliargs.ParsedArgs) {
 		logFile = filepath.Join(workingDir, logFile)
 	}
 
-	logDir := filepath.Dir(logFile)
-	if _, err := os.Stat(logDir); err == nil {
-		dirsToRemove = append(dirsToRemove, logDir)
+	defaultLogDir := filepath.Join(workingDir, "logs")
+
+	if filepath.Clean(filepath.Dir(logFile)) == filepath.Clean(defaultLogDir) {
+		if _, err := os.Stat(defaultLogDir); err == nil {
+			dirsToRemove = append(dirsToRemove, defaultLogDir)
+		}
+	} else {
+		if _, err := os.Stat(logFile); err == nil {
+			filesToRemove = append(filesToRemove, logFile)
+		}
+
+		ext := filepath.Ext(logFile)
+		name := strings.TrimSuffix(logFile, ext)
+
+		for _, pattern := range []string{name + "-*" + ext, name + "-*" + ext + ".gz"} {
+			matches, err := filepath.Glob(pattern)
+			if err != nil {
+				fmt.Printf("Warning: Could not list backup files for %s: %v\n", logFile, err)
+				continue
+			}
+
+			filesToRemove = append(filesToRemove, matches...)
+		}
 	}
 
 	// Remove files

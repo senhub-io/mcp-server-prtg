@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
-	"github.com/matthieu/mcp-server-prtg/internal/services/configuration"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
-	"github.com/matthieu/mcp-server-prtg/internal/version"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/clientconfig"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/configuration"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/version"
 )
 
 // Build-time variables injected via ldflags.
@@ -128,13 +131,65 @@ func executeCommand(args *cliargs.ParsedArgs) error {
 
 // handleConfigCommand handles config-related commands.
 func handleConfigCommand(args *cliargs.ParsedArgs) error {
-	fmt.Println("Configuration management")
-	fmt.Printf("  Config file: %s\n", args.ConfigPath)
-	fmt.Println("\nTo generate a new configuration file, run:")
-	fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
-	fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")
+	if args.Subcommand == "show-api-key" || args.Subcommand == "client" {
+		args.ConfigPath = defaultConfigPath(args)
+	}
 
-	return nil
+	switch args.Subcommand {
+	case "init":
+		cfg, err := configuration.InitConfiguration(args, logger.NewSilentLogger())
+		if err != nil {
+			return fmt.Errorf("failed to initialize configuration: %w", err)
+		}
+
+		fmt.Printf("Configuration written to %s\n", cfg.Path())
+
+		if cfg.IsPRTGEnabled() {
+			fmt.Println("PRTG API: enabled")
+		}
+
+		return nil
+
+	case "show-api-key":
+		cfg, err := configuration.LoadConfiguration(args, logger.NewSilentLogger())
+		if err != nil {
+			return fmt.Errorf("failed to load configuration: %w", err)
+		}
+
+		fmt.Println(cfg.GetAPIKey())
+
+		return nil
+
+	case "client":
+		if args.Window && runtime.GOOS == "windows" {
+			return openElevatedConsole(clientArgsWithoutWindow(os.Args[1:]))
+		}
+
+		cfg, err := configuration.LoadConfiguration(args, logger.NewSilentLogger())
+		if err != nil {
+			return fmt.Errorf("failed to load configuration: %w", err)
+		}
+
+		_, port, err := net.SplitHostPort(cfg.GetServerAddress())
+		if err != nil {
+			return fmt.Errorf("failed to parse server address %q: %w", cfg.GetServerAddress(), err)
+		}
+
+		return clientconfig.Render(os.Stdout, clientconfig.Host(args.Host), port, cfg.IsTLSEnabled(), cfg.GetAPIKey(), cfg.GetTLSCertFile())
+
+	default:
+		fmt.Println("Configuration management")
+		fmt.Printf("  Config file: %s\n", args.ConfigPath)
+		fmt.Println("\nSubcommands:")
+		fmt.Printf("  %s config init           Create or update the configuration file\n", os.Args[0])
+		fmt.Printf("  %s config show-api-key   Print the decrypted API key\n", os.Args[0])
+		fmt.Printf("  %s config client         Print MCP client configuration snippets (use --host to override the host name)\n", os.Args[0])
+		fmt.Println("\nTo generate a new configuration file, run:")
+		fmt.Printf("  %s run --config %s\n", os.Args[0], args.ConfigPath)
+		fmt.Println("\nThis will create a new config with auto-generated API key and TLS certificates.")
+
+		return nil
+	}
 }
 
 // getVersionString returns the full version string.
@@ -209,7 +264,7 @@ func showHelp() error {
 	fmt.Printf("  %s install --config /etc/mcp-server-prtg/config.yaml\n", os.Args[0])
 	fmt.Printf("  %s start\n", os.Args[0])
 	fmt.Println()
-	fmt.Println("For more information, see: https://github.com/matthieu/mcp-server-prtg")
+	fmt.Println("For more information, see: https://github.com/senhub-io/mcp-server-prtg")
 
 	return nil
 }

@@ -4,128 +4,92 @@ on:
     tags:
       - '*.*.*'
 
+permissions:
+  contents: read
+
 jobs:
   create_beta_release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.get_version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Check if tag is on dev branch
-        id: check_branch
+      - name: Check that the tag is on dev
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           git fetch --all
-          TAG_COMMIT=$(git rev-list -n 1 ${{ github.ref_name }})
-          echo "Tag commit: $TAG_COMMIT"
-          DEV_BRANCH=$(git branch -r --contains $TAG_COMMIT | grep "origin/dev" || echo "")
-          if [[ -n "$DEV_BRANCH" ]]; then
-            echo "Tag is on dev branch, proceeding with beta release"
+          TAG_COMMIT=$(git rev-list -n 1 "$TAG")
+          if git merge-base --is-ancestor "$TAG_COMMIT" origin/dev; then
+            echo "Tag $TAG is on dev, publishing a beta release"
           else
-            echo "Tag is not on dev branch, skipping"
+            echo "Tag $TAG is not on dev, skipping"
             exit 1
           fi
 
       - name: Get tag version
         id: get_version
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          # Add -beta suffix if not already present
-          if [[ $TAG == *"-beta"* ]]; then
-            BETA_TAG="$TAG"
-          else
-            BETA_TAG="${TAG}-beta"
-          fi
-          echo "Original tag: $TAG"
-          echo "Beta tag: $BETA_TAG"
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "BETA_TAG=$BETA_TAG" >> $GITHUB_ENV
+        env:
+          TAG: ${{ github.ref_name }}
+        run: echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version-file: go.mod
 
-      - name: Build binaries
+      - name: Build Windows and Linux binaries
+        env:
+          VERSION: ${{ steps.get_version.outputs.tag }}
         run: |
-          # Create dist directory
+          COMMIT=$(git rev-parse HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          GO_VERSION=$(go env GOVERSION | sed 's/^go//')
+          LDFLAGS="-s -w -X 'main.Version=${VERSION}' -X 'main.CommitHash=${COMMIT}' -X 'main.BuildTime=${DATE}' -X 'main.GoVersion=${GO_VERSION}'"
           mkdir -p dist
 
-          # Get build information
-          CURRENT_COMMIT=$(git rev-parse HEAD)
-          CURRENT_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.%NZ")
-          GO_VERSION=$(go version | cut -d' ' -f3)
+          # The executable keeps the same name on every platform: the MSI,
+          # the service definitions and the documentation refer to it.
+          for target in windows/amd64 linux/amd64 linux/arm64; do
+            GOOS=${target%/*}
+            GOARCH=${target#*/}
+            STAGE="stage/${GOOS}-${GOARCH}"
+            EXE="mcp-server-prtg"
+            [ "$GOOS" = windows ] && EXE="mcp-server-prtg.exe"
+            mkdir -p "$STAGE"
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -trimpath -ldflags="$LDFLAGS" -o "$STAGE/$EXE" ./cmd/server
+            cp README.md LICENSE config.example.yaml "$STAGE/"
+            if [ "$GOOS" = windows ]; then
+              (cd "$STAGE" && zip -q -9 "../../dist/mcp-server-prtg-${VERSION}-windows-amd64.zip" ./*)
+            else
+              tar -C "$STAGE" -czf "dist/mcp-server-prtg-${VERSION}-${GOOS}-${GOARCH}.tar.gz" .
+            fi
+          done
 
-          # Set ldflags
-          LDFLAGS="-s -w \
-          -X 'main.Version=$BETA_TAG' \
-          -X 'main.CommitHash=$CURRENT_COMMIT' \
-          -X 'main.BuildTime=$CURRENT_DATE' \
-          -X 'main.GoVersion=$GO_VERSION'"
-
-          echo "Building with version: $BETA_TAG"
-          echo "Using ldflags: $LDFLAGS"
-
-          # Build for each platform
-          echo "Building for Linux amd64"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_linux_amd64 ./cmd/server
-
-          echo "Building for Linux arm64"
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_linux_arm64 ./cmd/server
-
-          echo "Building for Windows amd64"
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_windows_amd64.exe ./cmd/server
-
-          echo "Building for macOS amd64"
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_darwin_amd64 ./cmd/server
-
-          echo "Building for macOS arm64"
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/mcp-server-prtg_darwin_arm64 ./cmd/server
-
-          # Create ZIP archives
-          cd dist
-          zip mcp-server-prtg_linux_amd64.zip mcp-server-prtg_linux_amd64
-          zip mcp-server-prtg_linux_arm64.zip mcp-server-prtg_linux_arm64
-          zip mcp-server-prtg_windows_amd64.zip mcp-server-prtg_windows_amd64.exe
-          zip mcp-server-prtg_darwin_amd64.zip mcp-server-prtg_darwin_amd64
-          zip mcp-server-prtg_darwin_arm64.zip mcp-server-prtg_darwin_arm64
-          cd ..
-
-          # List contents
-          echo "Contents of dist directory:"
+          ./stage/linux-amd64/mcp-server-prtg --version
+          (cd dist && sha256sum -- * > SHA256SUMS)
           ls -lh dist
 
-          # Test version info
-          echo "Testing version info in Linux binary:"
-          chmod +x dist/mcp-server-prtg_linux_amd64
-          dist/mcp-server-prtg_linux_amd64 --version || true
-
-      - name: Create and push beta tag
-        run: |
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-
-          # Check if tag already exists
-          if ! git tag -l | grep -q "^${{ env.BETA_TAG }}$"; then
-            git tag ${{ env.BETA_TAG }}
-            git push origin ${{ env.BETA_TAG }}
-          else
-            echo "Tag ${{ env.BETA_TAG }} already exists"
-          fi
-
-      - name: Create Beta Release
-        uses: softprops/action-gh-release@v1
+      - name: Create beta release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.BETA_TAG }}
-          name: Beta Release ${{ env.BETA_TAG }}
-          files: |
-            dist/*.zip
-            dist/mcp-server-prtg_linux_amd64
-            dist/mcp-server-prtg_linux_arm64
-            dist/mcp-server-prtg_windows_amd64.exe
-            dist/mcp-server-prtg_darwin_amd64
-            dist/mcp-server-prtg_darwin_arm64
+          tag_name: ${{ steps.get_version.outputs.tag }}
+          name: Beta ${{ steps.get_version.outputs.tag }}
+          files: dist/*
           generate_release_notes: true
           prerelease: true
+
+  windows_msi:
+    needs: create_beta_release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/windows-msi.yml
+    with:
+      version: ${{ needs.create_beta_release.outputs.tag }}
+      release_tag: ${{ needs.create_beta_release.outputs.tag }}
+    secrets: inherit

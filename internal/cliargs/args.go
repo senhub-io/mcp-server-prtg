@@ -5,9 +5,16 @@ import "github.com/alexflint/go-arg"
 // ParsedArgs contains all command-line arguments for the MCP Server.
 type ParsedArgs struct {
 	// Command to execute
-	Command string `arg:"positional" help:"Command to execute (run, install, start, stop, uninstall, config)"`
+	Command string `arg:"positional" help:"Command to execute (run, stdio, install, start, stop, status, uninstall, config)"`
+
+	// Subcommand for the config command
+	Subcommand string `arg:"positional" help:"Subcommand for config: init, show-api-key, client"`
 
 	// Configuration
+	Window bool `arg:"--window" help:"Windows: open the output in a new elevated console window (config client)"`
+
+	Host string `arg:"--host" help:"Host name MCP clients use to reach this server (config client)"`
+
 	ConfigPath string `arg:"--config,-c" help:"Path to configuration file" default:"./config.yaml"`
 
 	// Server settings
@@ -19,12 +26,19 @@ type ParsedArgs struct {
 	AuthKey     string `arg:"--api-key" help:"API key for authentication"`
 
 	// Database settings
-	DBHost     string `arg:"--db-host" help:"Database host" env:"PRTG_DB_HOST"`
-	DBPort     int    `arg:"--db-port" help:"Database port" env:"PRTG_DB_PORT"`
-	DBName     string `arg:"--db-name" help:"Database name" env:"PRTG_DB_NAME"`
-	DBUser     string `arg:"--db-user" help:"Database user" env:"PRTG_DB_USER"`
-	DBPassword string `arg:"--db-password" help:"Database password" env:"PRTG_DB_PASSWORD"`
-	DBSSLMode  string `arg:"--db-sslmode" help:"Database SSL mode" env:"PRTG_DB_SSLMODE"`
+	DBHost     string `arg:"--db-host,env:PRTG_DB_HOST" help:"Database host"`
+	DBPort     int    `arg:"--db-port,env:PRTG_DB_PORT" help:"Database port"`
+	DBName     string `arg:"--db-name,env:PRTG_DB_NAME" help:"Database name"`
+	DBUser     string `arg:"--db-user,env:PRTG_DB_USER" help:"Database user"`
+	DBPassword string `arg:"--db-password,env:PRTG_DB_PASSWORD" help:"Database password"`
+	DBSSLMode  string `arg:"--db-sslmode,env:PRTG_DB_SSLMODE" help:"Database SSL mode"`
+
+	// PRTG API settings
+	PRTGURL       string `arg:"--prtg-url,env:PRTG_URL" help:"PRTG API v2 base URL, e.g. https://prtg.example.com:1616"`
+	PRTGToken     string `arg:"--prtg-token,env:PRTG_API_TOKEN" help:"PRTG API v2 token"`
+	PRTGVerifySSL *bool  `arg:"--prtg-verify-ssl" help:"Verify the PRTG TLS certificate (true/false)"`
+	PRTGTimeout   int    `arg:"--prtg-timeout" help:"PRTG API timeout in seconds"`
+	PRTGDisable   bool   `arg:"--prtg-disable" help:"Disable PRTG API access"`
 
 	// Logging
 	Verbose      bool     `arg:"--verbose,-v" help:"Enable verbose logging (debug level)"`
@@ -60,7 +74,7 @@ type argsWithVersion struct {
 
 // Description returns the program description.
 func (a *argsWithVersion) Description() string {
-	return "MCP Server for PRTG monitoring data - provides remote access to PRTG PostgreSQL database via MCP protocol over SSE transport"
+	return "MCP Server for PRTG monitoring data - exposes PRTG monitoring data to MCP clients over Streamable HTTP or stdio"
 }
 
 // Version returns the version information.

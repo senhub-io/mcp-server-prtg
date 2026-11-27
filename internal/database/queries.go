@@ -3,11 +3,13 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/types"
+	"github.com/senhub-io/mcp-server-prtg/internal/types"
 )
 
 // GetSensors retrieves sensors matching the given filters.
@@ -47,7 +49,7 @@ func (db *DB) GetSensorsExtended(ctx context.Context, deviceName, sensorName, se
 		INNER JOIN prtg_group g ON d.prtg_group_id = g.id
 			AND d.prtg_server_address_id = g.prtg_server_address_id
 		WHERE 1=1
-	`
+	` + db.notDeleted("s") + db.notDeleted("d") + db.notDeleted("g")
 
 	args := []interface{}{}
 	argPos := 1
@@ -55,25 +57,25 @@ func (db *DB) GetSensorsExtended(ctx context.Context, deviceName, sensorName, se
 	// Add filters
 	if deviceName != "" {
 		query += fmt.Sprintf(" AND d.name ILIKE $%d", argPos)
-		args = append(args, "%"+deviceName+"%")
+		args = append(args, likeContains(deviceName))
 		argPos++
 	}
 
 	if sensorName != "" {
 		query += fmt.Sprintf(" AND s.name ILIKE $%d", argPos)
-		args = append(args, "%"+sensorName+"%")
+		args = append(args, likeContains(sensorName))
 		argPos++
 	}
 
 	if sensorType != "" {
 		query += fmt.Sprintf(" AND s.sensor_type ILIKE $%d", argPos)
-		args = append(args, "%"+sensorType+"%")
+		args = append(args, likeContains(sensorType))
 		argPos++
 	}
 
 	if groupName != "" {
 		query += fmt.Sprintf(" AND g.name ILIKE $%d", argPos)
-		args = append(args, "%"+groupName+"%")
+		args = append(args, likeContains(groupName))
 		argPos++
 	}
 
@@ -185,7 +187,7 @@ func (db *DB) GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, e
 		INNER JOIN prtg_sensor_path sp ON s.id = sp.sensor_id
 			AND s.prtg_server_address_id = sp.prtg_server_address_id
 		WHERE s.id = $1
-	`
+	` + db.notDeleted("s") + db.notDeleted("d")
 
 	var sensor types.Sensor
 
@@ -241,12 +243,17 @@ func (db *DB) GetSensorByID(ctx context.Context, sensorID int) (*types.Sensor, e
 	}
 
 	if message.Valid {
-		sensor.Message = message.String
+		sensor.Message = cleanText(message.String)
 	}
 
 	if tags.Valid {
-		sensor.Tags = tags.String
+		sensor.Tags = cleanText(tags.String)
 	}
+
+	sensor.Name = cleanText(sensor.Name)
+	sensor.DeviceName = cleanText(sensor.DeviceName)
+	sensor.SensorType = cleanText(sensor.SensorType)
+	sensor.FullPath = cleanText(sensor.FullPath)
 
 	sensor.StatusText = types.GetStatusText(sensor.Status)
 
@@ -288,10 +295,14 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
 		INNER JOIN prtg_sensor_path sp ON s.id = sp.sensor_id
 			AND s.prtg_server_address_id = sp.prtg_server_address_id
 		WHERE s.status != $1
-	`
+	` + db.notDeleted("s") + db.notDeleted("d")
 
 	args := []interface{}{types.StatusUp}
 	argPos := 2
+
+	if statusFilter == nil {
+		query += ` AND s.status NOT IN (7, 8, 9, 11, 12)`
+	}
 
 	if hours > 0 {
 		query += fmt.Sprintf(" AND s.last_check_utc >= NOW() - ($%d || ' hours')::interval", argPos)
@@ -310,7 +321,7 @@ func (db *DB) GetAlerts(ctx context.Context, hours int, statusFilter *int, devic
 	if deviceName != "" {
 		query += fmt.Sprintf(" AND d.name ILIKE $%d", argPos)
 
-		args = append(args, "%"+deviceName+"%")
+		args = append(args, likeContains(deviceName))
 	}
 
 	// Order by severity: Down statuses first, then Warning, then others
@@ -354,11 +365,11 @@ func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.
 			d.prtg_group_id,
 			g.name AS group_name,
 			dp.path AS full_path,
-			d.tree_depth,
+			` + db.deviceDepthExpr("d", "g") + `,
 			COALESCE(
 				(SELECT COUNT(*) FROM prtg_sensor s
 				 WHERE s.prtg_device_id = d.id
-				 AND s.prtg_server_address_id = d.prtg_server_address_id),
+				 AND s.prtg_server_address_id = d.prtg_server_address_id` + db.notDeleted("s") + `),
 				0
 			) AS sensor_count
 		FROM prtg_device d
@@ -367,11 +378,12 @@ func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.
 		INNER JOIN prtg_device_path dp ON d.id = dp.device_id
 			AND d.prtg_server_address_id = dp.prtg_server_address_id
 		WHERE d.name ILIKE $1
+	` + db.notDeleted("d") + db.notDeleted("g") + `
 		LIMIT 1
 	`
 
 	var device types.Device
-	err := db.QueryRow(ctx, deviceQuery, "%"+deviceName+"%").Scan(
+	err := db.QueryRow(ctx, deviceQuery, likeContains(deviceName)).Scan(
 		&device.ID,
 		&device.ServerID,
 		&device.Name,
@@ -390,6 +402,10 @@ func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.
 
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
+
+	device.Name = cleanText(device.Name)
+	device.GroupName = cleanText(device.GroupName)
+	device.FullPath = cleanText(device.FullPath)
 
 	// Get all sensors for this device
 	sensorsQuery := `
@@ -423,6 +439,7 @@ func (db *DB) GetDeviceOverview(ctx context.Context, deviceName string) (*types.
 			AND s.prtg_server_address_id = sp.prtg_server_address_id
 		WHERE s.prtg_device_id = $1
 		AND s.prtg_server_address_id = $3
+	` + db.notDeleted("s") + `
 		ORDER BY s.status, s.name
 	`
 
@@ -498,7 +515,7 @@ func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limi
 		INNER JOIN prtg_sensor_path sp ON s.id = sp.sensor_id
 			AND s.prtg_server_address_id = sp.prtg_server_address_id
 		WHERE 1=1
-	`
+	` + db.notDeleted("s") + db.notDeleted("d")
 
 	args := []interface{}{}
 	argPos := 1
@@ -506,7 +523,7 @@ func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limi
 	if sensorType != "" {
 		query += fmt.Sprintf(" AND s.sensor_type ILIKE $%d", argPos)
 
-		args = append(args, "%"+sensorType+"%")
+		args = append(args, likeContains(sensorType))
 		argPos++
 	}
 
@@ -539,51 +556,61 @@ func (db *DB) GetTopSensors(ctx context.Context, metric, sensorType string, limi
 	return scanSensors(rows)
 }
 
-// ExecuteCustomQuery executes a custom SQL SELECT query with security validation.
-// Only SELECT queries are allowed - INSERT/UPDATE/DELETE/DROP are rejected.
-// This function should be disabled in production (set allow_custom_queries: false in config).
+// ErrCustomQueryRejected marks a custom query refused before reaching the database.
+var ErrCustomQueryRejected = errors.New("custom query rejected")
+
+//nolint:gochecknoglobals // compiled once; a single authoritative list of credential/system objects is easier to audit than per-call literals
+var restrictedTablePattern = regexp.MustCompile(`(?i)\b(?:prtg_server_address|target_database|grafana_server|grafana_organization|grafana_data_source|setting|audit_trail|licensing_\w+|grafana_\w+|pg_\w+|dblink\w*|lo_\w+|current_setting|set_config)\b`)
+
+// ExecuteCustomQuery runs an untrusted read-only query in a read-only transaction with a row cap and timeout.
 func (db *DB) ExecuteCustomQuery(ctx context.Context, query string, limit int) ([]map[string]interface{}, error) {
-	// Security: Validate query is SELECT only
-	queryUpper := strings.ToUpper(strings.TrimSpace(query))
-	if !strings.HasPrefix(queryUpper, "SELECT") {
-		return nil, fmt.Errorf("only SELECT queries are allowed")
+	q := strings.TrimSpace(query)
+	q = strings.TrimSuffix(q, ";")
+
+	if q == "" {
+		return nil, fmt.Errorf("%w: empty query", ErrCustomQueryRejected)
+	}
+	if strings.Contains(q, ";") {
+		return nil, fmt.Errorf("%w: multiple statements are not allowed", ErrCustomQueryRejected)
+	}
+	if strings.Contains(q, "--") || strings.Contains(q, "/*") {
+		return nil, fmt.Errorf("%w: comments are not allowed", ErrCustomQueryRejected)
 	}
 
-	// Check for dangerous keywords (including comments to prevent bypass)
-	dangerous := []string{"DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE", "EXEC", "EXECUTE", "/*", "--", ";"}
-	for _, keyword := range dangerous {
-		if strings.Contains(queryUpper, keyword) || strings.Contains(query, keyword) {
-			return nil, fmt.Errorf("query contains forbidden keyword: %s", keyword)
-		}
+	trimmed := strings.TrimLeft(q, " \t\r\n(")
+	if !strings.HasPrefix(strings.ToUpper(trimmed), "SELECT") && !strings.HasPrefix(strings.ToUpper(trimmed), "WITH") {
+		return nil, fmt.Errorf("%w: query must start with SELECT or WITH", ErrCustomQueryRejected)
 	}
 
-	// Enforce maximum limit
-	maxLimit := 1000
+	if restrictedTablePattern.MatchString(q) {
+		return nil, fmt.Errorf("%w: query references a restricted table or function", ErrCustomQueryRejected)
+	}
 
 	if limit <= 0 {
 		limit = 100
 	}
-
-	if limit > maxLimit {
-		limit = maxLimit
+	if limit > 1000 {
+		limit = 1000
 	}
 
-	// Add limit if not present using parameterized query
-	if !strings.Contains(queryUpper, "LIMIT") {
-		query += " LIMIT $1"
-
-		rows, err := db.conn.QueryContext(ctx, query, limit)
-		if err != nil {
-			return nil, fmt.Errorf("query failed: %w", err)
-		}
-		defer rows.Close()
-
-		return scanGenericResults(rows)
-	}
-
-	rows, err := db.conn.QueryContext(ctx, query)
+	tx, err := db.conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, fmt.Errorf("custom query failed: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			db.logger.Warn().Err(err).Msg("rollback of custom query transaction failed")
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = '15s'"); err != nil {
+		return nil, fmt.Errorf("custom query failed: %w", err)
+	}
+
+	wrapped := fmt.Sprintf("SELECT * FROM (%s) AS custom_query LIMIT $1", q)
+	rows, err := tx.QueryContext(ctx, wrapped, limit)
+	if err != nil {
+		return nil, fmt.Errorf("custom query failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -592,7 +619,6 @@ func (db *DB) ExecuteCustomQuery(ctx context.Context, query string, limit int) (
 
 // scanGenericResults scans generic SQL query results into maps.
 func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
-	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get columns: %w", err)
@@ -601,10 +627,8 @@ func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
 	results := []map[string]interface{}{}
 
 	for rows.Next() {
-		// Create a slice of interface{}'s to represent each column
 		values := make([]interface{}, len(columns))
 		valuePtrs := make([]interface{}, len(columns))
-
 		for i := range values {
 			valuePtrs[i] = &values[i]
 		}
@@ -613,16 +637,27 @@ func scanGenericResults(rows *sql.Rows) ([]map[string]interface{}, error) {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
-		// Create map for this row
-		row := make(map[string]interface{})
+		row := make(map[string]interface{}, len(columns))
 		for i, col := range columns {
-			row[col] = values[i]
+			// lib/pq returns []byte for numeric, uuid, json and interval columns,
+			// which would otherwise be JSON-marshalled as base64.
+			if b, ok := values[i].([]byte); ok {
+				row[col] = string(b)
+			} else {
+				row[col] = values[i]
+			}
 		}
 
 		results = append(results, row)
 	}
 
 	return results, rows.Err()
+}
+
+// likeContains builds an ILIKE pattern matching s literally anywhere in the value.
+func likeContains(s string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+	return "%" + escaped + "%"
 }
 
 // GetGroups retrieves all PRTG groups matching the given filters.
@@ -635,19 +670,19 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 			g.is_probe_node,
 			g.self_group_id,
 			gp.path AS full_path,
-			g.tree_depth
+			` + db.groupDepthExpr("g") + `
 		FROM prtg_group g
 		INNER JOIN prtg_group_path gp ON g.id = gp.group_id
 			AND g.prtg_server_address_id = gp.prtg_server_address_id
 		WHERE 1=1
-	`
+	` + db.notDeleted("g")
 
 	args := []interface{}{}
 	argPos := 1
 
 	if groupName != "" {
 		query += fmt.Sprintf(" AND g.name ILIKE $%d", argPos)
-		args = append(args, "%"+groupName+"%")
+		args = append(args, likeContains(groupName))
 		argPos++
 	}
 
@@ -657,7 +692,7 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 		argPos++
 	}
 
-	query += " ORDER BY g.tree_depth, g.name"
+	query += " ORDER BY " + db.groupDepthExpr("g") + ", g.name"
 
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d", argPos)
@@ -693,14 +728,85 @@ func (db *DB) GetGroups(ctx context.Context, groupName string, parentID *int, li
 			group.ParentID = &parentIDInt
 		}
 
+		group.Name = cleanText(group.Name)
+		group.FullPath = cleanText(group.FullPath)
+
 		groups = append(groups, group)
 	}
 
 	return groups, rows.Err()
 }
 
-// GetDevicesByGroupID retrieves all devices in a given group.
-func (db *DB) GetDevicesByGroupID(ctx context.Context, groupID int) ([]types.Device, error) {
+// getChildGroups retrieves the direct children of a group on the same server,
+// excluding the group itself so a self-referencing root cannot recurse forever.
+func (db *DB) getChildGroups(ctx context.Context, parent *types.Group, limit int) ([]types.Group, error) {
+	query := `
+		SELECT
+			g.id,
+			g.prtg_server_address_id,
+			g.name,
+			g.is_probe_node,
+			g.self_group_id,
+			gp.path AS full_path,
+			` + db.groupDepthExpr("g") + `
+		FROM prtg_group g
+		INNER JOIN prtg_group_path gp ON g.id = gp.group_id
+			AND g.prtg_server_address_id = gp.prtg_server_address_id
+		WHERE g.self_group_id = $1
+			AND g.id <> $1
+			AND g.prtg_server_address_id = $2
+			` + db.notDeleted("g") + `
+		ORDER BY ` + db.groupDepthExpr("g") + `, g.name
+	`
+
+	args := []interface{}{parent.ID, parent.ServerID}
+	argPos := 3
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", argPos)
+		args = append(args, limit)
+	}
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	groups := []types.Group{}
+	for rows.Next() {
+		var group types.Group
+		var parentID sql.NullInt32
+
+		err := rows.Scan(
+			&group.ID,
+			&group.ServerID,
+			&group.Name,
+			&group.IsProbeNode,
+			&parentID,
+			&group.FullPath,
+			&group.TreeDepth,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan failed: %w", err)
+		}
+
+		if parentID.Valid {
+			parentIDInt := int(parentID.Int32)
+			group.ParentID = &parentIDInt
+		}
+
+		group.Name = cleanText(group.Name)
+		group.FullPath = cleanText(group.FullPath)
+
+		groups = append(groups, group)
+	}
+
+	return groups, rows.Err()
+}
+
+// GetDevicesByGroupID retrieves all devices in a given group on a given server.
+func (db *DB) GetDevicesByGroupID(ctx context.Context, groupID, serverID int) ([]types.Device, error) {
 	query := `
 		SELECT
 			d.id,
@@ -713,20 +819,22 @@ func (db *DB) GetDevicesByGroupID(ctx context.Context, groupID int) ([]types.Dev
 			COALESCE(
 				(SELECT COUNT(*) FROM prtg_sensor s
 				 WHERE s.prtg_device_id = d.id
-				 AND s.prtg_server_address_id = d.prtg_server_address_id),
+				 AND s.prtg_server_address_id = d.prtg_server_address_id` + db.notDeleted("s") + `),
 				0
 			) AS sensor_count,
-			d.tree_depth
+			` + db.deviceDepthExpr("d", "g") + `
 		FROM prtg_device d
 		INNER JOIN prtg_group g ON d.prtg_group_id = g.id
 			AND d.prtg_server_address_id = g.prtg_server_address_id
 		INNER JOIN prtg_device_path dp ON d.id = dp.device_id
 			AND d.prtg_server_address_id = dp.prtg_server_address_id
 		WHERE d.prtg_group_id = $1
+			AND d.prtg_server_address_id = $2
+	` + db.notDeleted("d") + db.notDeleted("g") + `
 		ORDER BY d.name
 	`
 
-	rows, err := db.Query(ctx, query, groupID)
+	rows, err := db.Query(ctx, query, groupID, serverID)
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
@@ -751,6 +859,10 @@ func (db *DB) GetDevicesByGroupID(ctx context.Context, groupID int) ([]types.Dev
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
+		device.Name = cleanText(device.Name)
+		device.GroupName = cleanText(device.GroupName)
+		device.FullPath = cleanText(device.FullPath)
+
 		devices = append(devices, device)
 	}
 
@@ -773,7 +885,7 @@ func (db *DB) GetHierarchy(ctx context.Context, groupName string, includeSensors
 			return nil, fmt.Errorf("group not found: %s", groupName)
 		}
 	} else {
-		// Get root groups (parentID is NULL)
+		// Get root groups
 		query := `
 			SELECT
 				g.id,
@@ -782,11 +894,11 @@ func (db *DB) GetHierarchy(ctx context.Context, groupName string, includeSensors
 				g.is_probe_node,
 				g.self_group_id,
 				gp.path AS full_path,
-				g.tree_depth
+				` + db.groupDepthExpr("g") + `
 			FROM prtg_group g
 			INNER JOIN prtg_group_path gp ON g.id = gp.group_id
 				AND g.prtg_server_address_id = gp.prtg_server_address_id
-			WHERE g.self_group_id IS NULL
+			WHERE ` + db.rootGroupCondition("g") + db.notDeleted("g") + `
 			ORDER BY g.name
 			LIMIT 10
 		`
@@ -819,6 +931,9 @@ func (db *DB) GetHierarchy(ctx context.Context, groupName string, includeSensors
 				group.ParentID = &parentIDInt
 			}
 
+			group.Name = cleanText(group.Name)
+			group.FullPath = cleanText(group.FullPath)
+
 			groups = append(groups, group)
 		}
 
@@ -849,7 +964,7 @@ func (db *DB) buildHierarchyNode(ctx context.Context, group *types.Group, includ
 	}
 
 	// Get devices in this group
-	devices, err := db.GetDevicesByGroupID(ctx, group.ID)
+	devices, err := db.GetDevicesByGroupID(ctx, group.ID, group.ServerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get devices: %w", err)
 	}
@@ -887,6 +1002,7 @@ func (db *DB) buildHierarchyNode(ctx context.Context, group *types.Group, includ
 					AND s.prtg_server_address_id = sp.prtg_server_address_id
 				WHERE s.prtg_device_id = $1
 				AND s.prtg_server_address_id = $3
+				` + db.notDeleted("s") + `
 				ORDER BY s.name
 				LIMIT 50
 			`
@@ -910,7 +1026,7 @@ func (db *DB) buildHierarchyNode(ctx context.Context, group *types.Group, includ
 	}
 
 	// Get child groups
-	childGroups, err := db.GetGroups(ctx, "", &group.ID, 50)
+	childGroups, err := db.getChildGroups(ctx, group, 50)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get child groups: %w", err)
 	}
@@ -949,16 +1065,17 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 			g.is_probe_node,
 			g.self_group_id,
 			gp.path AS full_path,
-			g.tree_depth
+			` + db.groupDepthExpr("g") + `
 		FROM prtg_group g
 		INNER JOIN prtg_group_path gp ON g.id = gp.group_id
 			AND g.prtg_server_address_id = gp.prtg_server_address_id
 		WHERE g.name ILIKE $1
+	` + db.notDeleted("g") + `
 		ORDER BY g.name
 		LIMIT $2
 	`
 
-	groupRows, err := db.Query(ctx, groupQuery, "%"+searchTerm+"%", limit)
+	groupRows, err := db.Query(ctx, groupQuery, likeContains(searchTerm), limit)
 	if err != nil {
 		return nil, fmt.Errorf("group search failed: %w", err)
 	}
@@ -986,6 +1103,9 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 			group.ParentID = &parentIDInt
 		}
 
+		group.Name = cleanText(group.Name)
+		group.FullPath = cleanText(group.FullPath)
+
 		results.Groups = append(results.Groups, group)
 	}
 
@@ -1006,21 +1126,22 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 			COALESCE(
 				(SELECT COUNT(*) FROM prtg_sensor s
 				 WHERE s.prtg_device_id = d.id
-				 AND s.prtg_server_address_id = d.prtg_server_address_id),
+				 AND s.prtg_server_address_id = d.prtg_server_address_id` + db.notDeleted("s") + `),
 				0
 			) AS sensor_count,
-			d.tree_depth
+			` + db.deviceDepthExpr("d", "g") + `
 		FROM prtg_device d
 		INNER JOIN prtg_group g ON d.prtg_group_id = g.id
 			AND d.prtg_server_address_id = g.prtg_server_address_id
 		INNER JOIN prtg_device_path dp ON d.id = dp.device_id
 			AND d.prtg_server_address_id = dp.prtg_server_address_id
-		WHERE d.name ILIKE $1 OR d.host ILIKE $1
+		WHERE (d.name ILIKE $1 OR d.host ILIKE $1)
+	` + db.notDeleted("d") + db.notDeleted("g") + `
 		ORDER BY d.name
 		LIMIT $2
 	`
 
-	deviceRows, err := db.Query(ctx, deviceQuery, "%"+searchTerm+"%", limit)
+	deviceRows, err := db.Query(ctx, deviceQuery, likeContains(searchTerm), limit)
 	if err != nil {
 		return nil, fmt.Errorf("device search failed: %w", err)
 	}
@@ -1043,6 +1164,10 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 		if err != nil {
 			return nil, fmt.Errorf("device scan failed: %w", err)
 		}
+
+		device.Name = cleanText(device.Name)
+		device.GroupName = cleanText(device.GroupName)
+		device.FullPath = cleanText(device.FullPath)
 
 		results.Devices = append(results.Devices, device)
 	}
@@ -1076,12 +1201,13 @@ func (db *DB) Search(ctx context.Context, searchTerm string, limit int) (*types.
 			AND s.prtg_server_address_id = d.prtg_server_address_id
 		INNER JOIN prtg_sensor_path sp ON s.id = sp.sensor_id
 			AND s.prtg_server_address_id = sp.prtg_server_address_id
-		WHERE s.name ILIKE $1 OR s.sensor_type ILIKE $1
+		WHERE (s.name ILIKE $1 OR s.sensor_type ILIKE $1)
+	` + db.notDeleted("s") + db.notDeleted("d") + `
 		ORDER BY s.name
 		LIMIT $2
 	`
 
-	sensorRows, err := db.Query(ctx, sensorQuery, "%"+searchTerm+"%", limit)
+	sensorRows, err := db.Query(ctx, sensorQuery, likeContains(searchTerm), limit)
 	if err != nil {
 		return nil, fmt.Errorf("sensor search failed: %w", err)
 	}
@@ -1106,12 +1232,12 @@ func (db *DB) GetTags(ctx context.Context, tagName string, limit int) ([]types.T
 	query := `
 		SELECT
 			t.id,
-			t.prtg_server_address_id,
 			t.name,
-			COUNT(DISTINCT st.prtg_sensor_id) as sensor_count
+			COUNT(DISTINCT s.prtg_server_address_id::bigint * 4294967296 + s.id) as sensor_count
 		FROM prtg_tag t
 		LEFT JOIN prtg_sensor_tag st ON t.id = st.prtg_tag_id
-			AND t.prtg_server_address_id = st.prtg_server_address_id
+		LEFT JOIN prtg_sensor s ON st.prtg_sensor_id = s.id
+			AND st.prtg_server_address_id = s.prtg_server_address_id` + db.notDeleted("s") + `
 		WHERE 1=1
 	`
 
@@ -1120,11 +1246,11 @@ func (db *DB) GetTags(ctx context.Context, tagName string, limit int) ([]types.T
 
 	if tagName != "" {
 		query += fmt.Sprintf(" AND t.name ILIKE $%d", argPos)
-		args = append(args, "%"+tagName+"%")
+		args = append(args, likeContains(tagName))
 		argPos++
 	}
 
-	query += ` GROUP BY t.id, t.prtg_server_address_id, t.name
+	query += ` GROUP BY t.id, t.name
 		ORDER BY t.name`
 
 	query += fmt.Sprintf(" LIMIT $%d", argPos)
@@ -1142,13 +1268,14 @@ func (db *DB) GetTags(ctx context.Context, tagName string, limit int) ([]types.T
 
 		err := rows.Scan(
 			&tag.ID,
-			&tag.ServerID,
 			&tag.Name,
 			&tag.SensorCount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
+
+		tag.Name = cleanText(tag.Name)
 
 		tags = append(tags, tag)
 	}
@@ -1195,14 +1322,18 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 		LEFT JOIN prtg_device d ON s.prtg_device_id = d.id
 			AND s.prtg_server_address_id = d.prtg_server_address_id
 		WHERE s.sensor_type ILIKE '%business%process%'
-	`
+	` + db.notDeleted("s")
+
+	if db.schema.softDelete {
+		query += " AND (d.id IS NULL OR NOT d.is_deleted)"
+	}
 
 	args := []interface{}{}
 	argPos := 1
 
 	if processName != "" {
 		query += fmt.Sprintf(" AND s.name ILIKE $%d", argPos)
-		args = append(args, "%"+processName+"%")
+		args = append(args, likeContains(processName))
 		argPos++
 	}
 
@@ -1227,24 +1358,20 @@ func (db *DB) GetBusinessProcesses(ctx context.Context, processName string, stat
 }
 
 // GetStatistics retrieves aggregated PRTG server statistics.
-// Uses PostgreSQL table statistics (pg_class.reltuples) for fast row count estimates
-// instead of exact COUNT(*) to prevent timeouts on large databases (100k+ rows).
-// The estimates are updated by ANALYZE/VACUUM and are accurate enough for dashboard statistics.
 func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 	stats := &types.Statistics{
 		SensorsByStatus: make(map[string]int),
 		TopSensorTypes:  []types.SensorTypeCount{},
 	}
 
-	// Get total counts - optimized query using table statistics
-	// This is much faster than COUNT(*) on large tables
+	// Exact counts; the tables hold a few thousand rows and estimates would include deleted rows
 	countQuery := `
 		SELECT
-			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_sensor'), 0) as total_sensors,
-			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_device'), 0) as total_devices,
-			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_group'), 0) as total_groups,
-			COALESCE((SELECT reltuples::BIGINT FROM pg_class WHERE relname = 'prtg_tag'), 0) as total_tags,
-			COALESCE((SELECT COUNT(*)::BIGINT FROM prtg_group WHERE is_probe_node = true), 0) as total_probes
+			(SELECT COUNT(*) FROM prtg_sensor s WHERE 1=1` + db.notDeleted("s") + `) as total_sensors,
+			(SELECT COUNT(*) FROM prtg_device d WHERE 1=1` + db.notDeleted("d") + `) as total_devices,
+			(SELECT COUNT(*) FROM prtg_group g WHERE 1=1` + db.notDeleted("g") + `) as total_groups,
+			(SELECT COUNT(*) FROM prtg_tag) as total_tags,
+			(SELECT COUNT(*) FROM prtg_group g WHERE g.is_probe_node = true` + db.notDeleted("g") + `) as total_probes
 	`
 
 	err := db.QueryRow(ctx, countQuery).Scan(
@@ -1265,10 +1392,11 @@ func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 
 	// Get status breakdown
 	statusQuery := `
-		SELECT status, COUNT(*) as count
-		FROM prtg_sensor
-		GROUP BY status
-		ORDER BY status
+		SELECT s.status, COUNT(*) as count
+		FROM prtg_sensor s
+		WHERE 1=1` + db.notDeleted("s") + `
+		GROUP BY s.status
+		ORDER BY s.status
 	`
 
 	statusRows, err := db.Query(ctx, statusQuery)
@@ -1288,10 +1416,10 @@ func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 
 	// Get top sensor types
 	typeQuery := `
-		SELECT sensor_type, COUNT(*) as count
-		FROM prtg_sensor
-		WHERE sensor_type IS NOT NULL AND sensor_type != ''
-		GROUP BY sensor_type
+		SELECT s.sensor_type, COUNT(*) as count
+		FROM prtg_sensor s
+		WHERE s.sensor_type IS NOT NULL AND s.sensor_type != ''` + db.notDeleted("s") + `
+		GROUP BY s.sensor_type
 		ORDER BY count DESC
 		LIMIT 15
 	`
@@ -1309,9 +1437,86 @@ func (db *DB) GetStatistics(ctx context.Context) (*types.Statistics, error) {
 			return nil, fmt.Errorf("sensor type scan failed: %w", err)
 		}
 		stats.TopSensorTypes = append(stats.TopSensorTypes, types.SensorTypeCount{
-			Type:  sensorType,
+			Type:  cleanText(sensorType),
 			Count: count,
 		})
+	}
+
+	if db.schema.collectionStatus {
+		profileRows, err := db.Query(ctx, `
+			SELECT profile_alias, profile_type, last_collection_end_date, next_scheduled_collection, has_errors, has_warnings, is_paused
+			FROM data_collection_status
+			ORDER BY profile_type, profile_alias
+		`)
+		if err != nil {
+			db.logger.Warn().Err(err).Msg("failed to query data_collection_status")
+		} else {
+			defer profileRows.Close()
+			stats.Profiles = []types.CollectionProfile{}
+			for profileRows.Next() {
+				var (
+					p           types.CollectionProfile
+					profileType int16
+					lastEnd     time.Time
+					next        sql.NullTime
+				)
+				if err := profileRows.Scan(&p.Alias, &profileType, &lastEnd, &next, &p.HasErrors, &p.HasWarnings, &p.Paused); err != nil {
+					db.logger.Warn().Err(err).Msg("failed to scan data_collection_status row")
+					break
+				}
+				switch profileType {
+				case 0:
+					p.Kind = "metrics"
+				case 1:
+					p.Kind = "status"
+				default:
+					p.Kind = fmt.Sprintf("type %d", profileType)
+				}
+				p.LastEndUTC = lastEnd.UTC()
+				if next.Valid {
+					t := next.Time.UTC()
+					p.NextUTC = &t
+				}
+				if stats.LastCollectionUTC == nil || lastEnd.After(*stats.LastCollectionUTC) {
+					t := lastEnd.UTC()
+					stats.LastCollectionUTC = &t
+				}
+				if p.HasErrors {
+					stats.CollectionErrors = true
+				}
+				stats.Profiles = append(stats.Profiles, p)
+			}
+			if err := profileRows.Err(); err != nil {
+				db.logger.Warn().Err(err).Msg("failed to iterate data_collection_status rows")
+			}
+		}
+	}
+
+	if db.schema.lastFetched {
+		freshCutoff := time.Now().UTC().Add(-ExportFreshWithin)
+		coverage := &types.ExportCoverage{FreshWithinHours: int(ExportFreshWithin.Hours())}
+		err := db.QueryRow(ctx, `
+			SELECT
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NOT NULL AND f.no_monitoring_data = false AND f.last_fetch_date_utc >= $1),
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NOT NULL AND f.no_monitoring_data = false AND f.last_fetch_date_utc < $1),
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NOT NULL AND f.no_monitoring_data = false AND f.last_fetch_date_utc IS NULL),
+				count(*) FILTER (WHERE f.no_monitoring_data = true),
+				count(*) FILTER (WHERE f.prtg_sensor_id IS NULL)
+			FROM prtg_sensor s
+			LEFT JOIN prtg_sensor_last_fetched_day f
+				ON f.prtg_sensor_id = s.id AND f.prtg_server_address_id = s.prtg_server_address_id
+			WHERE 1=1`+db.notDeleted("s"), freshCutoff).Scan(
+			&coverage.UpToDate,
+			&coverage.Stale,
+			&coverage.NeverFetched,
+			&coverage.NoData,
+			&coverage.NotTracked,
+		)
+		if err != nil {
+			db.logger.Warn().Err(err).Msg("failed to query sensor export coverage")
+		} else {
+			stats.ExportCoverage = coverage
+		}
 	}
 
 	return stats, nil
@@ -1372,12 +1577,17 @@ func scanSensors(rows *sql.Rows) ([]types.Sensor, error) {
 		}
 
 		if message.Valid {
-			sensor.Message = message.String
+			sensor.Message = cleanText(message.String)
 		}
 
 		if tags.Valid {
-			sensor.Tags = tags.String
+			sensor.Tags = cleanText(tags.String)
 		}
+
+		sensor.Name = cleanText(sensor.Name)
+		sensor.DeviceName = cleanText(sensor.DeviceName)
+		sensor.SensorType = cleanText(sensor.SensorType)
+		sensor.FullPath = cleanText(sensor.FullPath)
 
 		sensor.StatusText = types.GetStatusText(sensor.Status)
 

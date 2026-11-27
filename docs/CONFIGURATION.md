@@ -8,8 +8,11 @@ This guide covers all configuration options for MCP Server PRTG.
 - [Configuration File Structure](#configuration-file-structure)
 - [Server Configuration](#server-configuration)
 - [Database Configuration](#database-configuration)
+- [PRTG API v2 Configuration](#prtg-api-v2-configuration)
 - [Logging Configuration](#logging-configuration)
+- [Encrypted Secrets](#encrypted-secrets)
 - [Environment Variables](#environment-variables)
+- [config init and show-api-key](#config-init-and-show-api-key)
 - [TLS/HTTPS Setup](#tlshttps-setup)
 - [Hot-Reload](#hot-reload)
 - [Advanced Configuration](#advanced-configuration)
@@ -24,10 +27,7 @@ You can specify a custom location using the `--config` flag:
 ./mcp-server-prtg run --config /path/to/config.yaml
 ```
 
-On first installation, the configuration file is automatically generated with:
-- A unique API key (UUID v4)
-- Self-signed TLS certificates (if TLS is enabled)
-- Default PostgreSQL configuration
+On Windows, the MSI installer places the configuration in `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml`. On Linux, the documented location is `/etc/mcp-server-prtg/config.yaml`.
 
 ## Configuration File Structure
 
@@ -37,7 +37,7 @@ The configuration file uses YAML format with the following structure:
 config_version: 1
 
 server:
-  api_key: "your-generated-api-key"
+  api_key: "enc:dpapi:..."        # or enc:aes:... on Linux; see Encrypted Secrets
   bind_address: "0.0.0.0"
   port: 8443
   enable_tls: true
@@ -45,15 +45,22 @@ server:
   key_file: "./certs/server.key"
   read_timeout: 10
   write_timeout: 10
-  allow_custom_queries: false  # SECURITY: Disable custom SQL queries (default)
+  allow_custom_queries: false
 
 database:
   host: "localhost"
   port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
-  password: ""
+  name: "prtg_data_exporter_collection"
+  user: "mcp_prtg_reader"
+  password: "enc:dpapi:..."        # or enc:aes:... on Linux
   sslmode: "disable"
+
+prtg:
+  enabled: false
+  base_url: "https://prtg.example.com:1616"
+  api_token: "enc:dpapi:..."       # or enc:aes:... on Linux
+  timeout: 30
+  verify_ssl: true
 
 logging:
   level: "info"
@@ -78,7 +85,14 @@ Automatically generated during installation as a UUID v4. This key must be provi
 Authorization: Bearer your-generated-api-key
 ```
 
-**Security Note:** Keep this key secure. File permissions are automatically set to `0600` (owner read/write only).
+Only the `Authorization` header is accepted; the key cannot be passed as a URL query parameter.
+
+**Requirements and protections:**
+- The server refuses to start if `api_key` is empty or shorter than 16 characters (the generated key is a 36-character UUID).
+- The key is compared in constant time.
+- Failed authentication attempts are rate limited per client address (TCP peer address; IPv6 addresses are grouped by /64; `X-Forwarded-For` and `X-Real-IP` are ignored): after 5 failures within one minute, the address receives HTTP 429 for 5 minutes. Behind a reverse proxy, all clients share the proxy address and therefore the same limit.
+
+**Security Note:** Keep this key secure. File permissions are automatically set to `0600` (owner read/write only). The value is stored encrypted (see [Encrypted Secrets](#encrypted-secrets)).
 
 ### bind_address
 
@@ -96,11 +110,6 @@ Authorization: Bearer your-generated-api-key
 **Default:** `8443`
 **Description:** Port number for the HTTPS/HTTP server.
 
-Common ports:
-- `8443` - Standard alternative HTTPS port
-- `443` - Standard HTTPS port (requires root/administrator privileges)
-- `8080` - Standard HTTP port
-
 ### enable_tls
 
 **Type:** `boolean`
@@ -109,19 +118,10 @@ Common ports:
 
 **Recommendation:** Always use `true` in production. TLS encrypts all communication including API keys.
 
-**IMPORTANT - Self-Signed Certificates:**
-- When using self-signed certificates with mcp-remote, you have several options:
-  1. **Use HTTP instead** (set `enable_tls: false`) - Only for development
-  2. **Use trusted CA certificates** (Let's Encrypt, etc.) - Required for production
-  3. **Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env** - Not recommended for production
-  4. **Add self-signed certificate to system trust store** - Advanced option
-
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#certificate-verification-failed) for detailed instructions.
-
 ### cert_file
 
 **Type:** `string`
-**Default:** `"./certs/server.crt"`
+**Default:** `certs/server.crt` in a `certs` folder next to the configuration file
 **Description:** Path to TLS certificate file (PEM format).
 
 Automatically generated on first run if `enable_tls` is true and no certificate exists.
@@ -129,10 +129,8 @@ Automatically generated on first run if `enable_tls` is true and no certificate 
 ### key_file
 
 **Type:** `string`
-**Default:** `"./certs/server.key"`
+**Default:** `certs/server.key` in a `certs` folder next to the configuration file
 **Description:** Path to TLS private key file (PEM format).
-
-Automatically generated on first run if `enable_tls` is true and no key exists.
 
 **Security Note:** File permissions are automatically set to `0600` (owner read/write only).
 
@@ -153,41 +151,28 @@ Automatically generated on first run if `enable_tls` is true and no key exists.
 **Default:** `false`
 **Description:** Enable or disable the `prtg_query_sql` tool for custom SQL queries.
 
-**⚠️ SECURITY WARNING:**
+**SECURITY WARNING:**
 - **Default is `false` (DISABLED)** for security reasons
 - Enabling this feature allows execution of arbitrary SELECT queries on your database
 - **NEVER enable in production environments** unless absolutely necessary
-- Even with protections (SELECT-only, blacklist), SQL injection risks exist
-- Only enable for development/testing in controlled environments
 
 **Protections in place:**
 - Only SELECT queries allowed (INSERT, UPDATE, DELETE, DROP blocked)
-- Query result limit enforced (max 1000 rows)
-- Dangerous keywords blacklisted (`DROP`, `DELETE`, `UPDATE`, etc.)
-- Query timeout (30 seconds)
-
-**Example:**
-```yaml
-server:
-  allow_custom_queries: false  # DISABLE in production (default)
-  # allow_custom_queries: true  # ONLY for dev/test
-```
-
-**Migration Note:**
-If you're upgrading from an older version, this field defaults to `false` automatically. No manual configuration changes are required - existing configurations will work with the tool disabled.
+- Queries run in a read-only transaction (read-only sandbox) with a 15-second statement timeout
+- Results capped at 1 to 1000 rows (default 100), regardless of any `LIMIT` in the query
+- Multiple statements and SQL comments are rejected
+- References to PRTG Data Exporter configuration and credential tables (`prtg_server_address`, `target_database`, `grafana_*`, `licensing_*`, `setting`, `audit_trail`) are rejected
+- Functions `pg_*`, `dblink*`, `lo_*`, `current_setting` and `set_config` are rejected
 
 ## Database Configuration
+
+The server reads the PostgreSQL **target** database of PRTG Data Exporter 2026.x, default name `prtg_data_exporter_collection`. This is NOT the Data Exporter configuration database `prtg_data_exporter`, which also stores PRTG credentials and must stay out of reach. Older Data Exporter layouts still work: the schema is detected at start-up (soft delete, tree depth, channel values, collection status, per-sensor last fetch).
 
 ### host
 
 **Type:** `string`
 **Default:** `"localhost"`
 **Description:** PostgreSQL server hostname or IP address.
-
-Examples:
-- `localhost` - Local PostgreSQL server
-- `192.168.1.100` - Remote server by IP
-- `pgsql.example.com` - Remote server by hostname
 
 ### port
 
@@ -198,33 +183,32 @@ Examples:
 ### name
 
 **Type:** `string`
-**Default:** `"prtg_data_exporter"`
-**Description:** Database name containing PRTG monitoring data.
-
-This database should be created by the [PRTG Data Exporter](https://github.com/senhub-io/prtg-data-exporter).
+**Default:** `"prtg_data_exporter_collection"`
+**Description:** Name of the PRTG Data Exporter 2026.x target database containing the monitoring data.
 
 ### user
 
 **Type:** `string`
-**Default:** `"prtg_reader"`
+**Default:** `"mcp_prtg_reader"`
 **Description:** PostgreSQL username for read-only access.
 
-**Security Best Practice:** Use a read-only user with minimal permissions:
+**Recommended read-only role on the target database:**
 
 ```sql
-CREATE USER prtg_reader WITH PASSWORD 'secure_password';
-GRANT CONNECT ON DATABASE prtg_data_exporter TO prtg_reader;
-GRANT USAGE ON SCHEMA public TO prtg_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO prtg_reader;
+CREATE ROLE mcp_prtg_reader LOGIN;
+\password mcp_prtg_reader
+GRANT CONNECT ON DATABASE prtg_data_exporter_collection TO mcp_prtg_reader;
+-- in the prtg_data_exporter_collection database:
+GRANT USAGE ON SCHEMA public TO mcp_prtg_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_prtg_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE prtg_data_exporter_user_td IN SCHEMA public GRANT SELECT ON TABLES TO mcp_prtg_reader;
 ```
 
 ### password
 
 **Type:** `string`
 **Required:** Yes
-**Description:** PostgreSQL user password.
-
-**Security Note:** File permissions are automatically set to `0600` to protect the password.
+**Description:** PostgreSQL user password. Stored encrypted (see [Encrypted Secrets](#encrypted-secrets)).
 
 **Tip:** You can also use the `PRTG_DB_PASSWORD` environment variable (see [Environment Variables](#environment-variables)).
 
@@ -240,18 +224,20 @@ Options:
 - `verify-ca` - Require SSL and verify CA certificate
 - `verify-full` - Require SSL and verify server certificate
 
-**Production Recommendation:** Use `require` or higher for remote database connections.
-
 ## PRTG API v2 Configuration
 
-PRTG API v2 integration enables querying historical metrics and real-time channel data directly from PRTG Core Server. This is **optional** - if not configured, only PostgreSQL-based tools will be available.
+PRTG API v2 access is **optional**. If not configured, only the database-backed tools are available.
+
+**PRTG API v2 activation:** The PRTG API v2 must be activated on the PRTG core server (PRTG Application Server, ports 1616/1615 and 23580; default on new installs since 25.2.106, automatic on update to 26.4.126 when enough memory is free; otherwise Setup → Activate, then restart the core server).
+
+**Request guard:** Every PRTG API call goes through a request guard: responses are cached, identical concurrent requests are coalesced into a single call, and at most 2 requests are in flight at a time.
 
 **Configuration block:**
 ```yaml
 prtg:
   enabled: true
   base_url: "https://prtg.example.com:1616"
-  api_token: "your-prtg-api-v2-token"
+  api_token: "your-prtg-api-key"
   timeout: 30
   verify_ssl: true
 ```
@@ -260,33 +246,22 @@ prtg:
 
 **Type:** `boolean`
 **Default:** `false`
-**Description:** Enable/disable PRTG API v2 integration.
-
-Set to `true` to enable the 3 PRTG API v2 tools:
-- `prtg_get_channel_current_values`
-- `prtg_get_sensor_timeseries`
-- `prtg_get_sensor_history_custom`
+**Description:** Enable/disable PRTG API v2 access.
 
 ### base_url
 
 **Type:** `string`
 **Required:** Yes (if `enabled: true`)
-**Description:** PRTG Core Server URL with API v2 endpoint.
+**Description:** PRTG Core Server URL including scheme and port.
 
 **Important:**
-- Use PRTG API v2 port (typically **1616**, NOT 443)
-- Include protocol (http:// or https://)
-- Do NOT include path (like /api/v2)
+- Include the protocol (http:// or https://) and the API v2 port (typically **1616**, NOT 443)
+- Do NOT include a path (like /api/v2)
 
 **Examples:**
 ```yaml
-# Cloud/hosted PRTG
 base_url: "https://prtg.example.com:1616"
-
-# On-premise PRTG (self-signed cert)
 base_url: "https://192.168.1.100:1616"
-
-# Development (HTTP without TLS)
 base_url: "http://localhost:1616"
 ```
 
@@ -294,23 +269,16 @@ base_url: "http://localhost:1616"
 
 **Type:** `string`
 **Required:** Yes (if `enabled: true`)
-**Description:** PRTG API v2 Bearer token.
+**Description:** A PRTG API key of type **Scripting** with read access.
 
-**How to get token:**
-1. Log in to PRTG Web Interface
+**How to get the token:**
+1. Log in to the PRTG Web Interface
 2. Go to **Setup** → **Account Settings** → **My Account**
 3. Navigate to **API Keys & Tokens**
-4. Create new API v2 token
+4. Create a new API key of type Scripting with read access
 5. Copy the token value
 
-**Example:**
-```yaml
-api_token: "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
-```
-
-**⚠️ Important:** This is different from the MCP Server `api_key`:
-- `server.api_key` → Used by Claude Desktop to authenticate to **MCP Server PRTG**
-- `prtg.api_token` → Used by **MCP Server PRTG** to authenticate to **PRTG Core Server**
+**Note:** This is different from the MCP Server `server.api_key`. The token is stored encrypted (see [Encrypted Secrets](#encrypted-secrets)).
 
 ### timeout
 
@@ -318,76 +286,30 @@ api_token: "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
 **Default:** `30`
 **Description:** HTTP request timeout in seconds for PRTG API calls.
 
-Increase for slow networks or large time series queries:
-```yaml
-timeout: 60  # For slow networks
-```
-
 ### verify_ssl
 
 **Type:** `boolean`
 **Default:** `true`
-**Description:** Verify SSL/TLS certificates when connecting to PRTG API.
+**Description:** Verify SSL/TLS certificates when connecting to the PRTG API.
 
-**Options:**
 - `true` - Verify certificates (recommended for production)
 - `false` - Skip verification (use for self-signed certificates)
 
-**Example for self-signed certificates:**
-```yaml
-prtg:
-  enabled: true
-  base_url: "https://prtg.local:1616"
-  api_token: "..."
-  verify_ssl: false  # Self-signed cert
-```
-
-### Example: Full PRTG Configuration
-
-```yaml
-prtg:
-  enabled: true
-  base_url: "https://prtg.company.com:1616"
-  api_token: "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
-  timeout: 30
-  verify_ssl: true
-```
-
-### Example: Disabled PRTG API
-
-```yaml
-prtg:
-  enabled: false  # Only PostgreSQL tools available
-```
-
 ## Logging Configuration
 
-MCP Server PRTG uses structured logging with rotation support (via [lumberjack](https://github.com/natefinch/lumberjack)).
+MCP Server PRTG uses structured logging with rotation support (via [lumberjack](https://github.com/natefinch/lumberjack)). Secrets and tokens are masked in log output.
 
 ### level
 
 **Type:** `string`
 **Default:** `"info"`
-**Description:** Minimum log level to record.
-
-Levels (from most to least verbose):
-- `debug` - Detailed diagnostic information (SQL queries, request/response details)
-- `info` - General informational messages (startup, shutdown, connections)
-- `warn` - Warning messages (non-critical issues)
-- `error` - Error messages (failures, exceptions)
-
-**Development:** Use `debug` for troubleshooting
-**Production:** Use `info` or `warn`
+**Description:** Minimum log level to record: `debug`, `info`, `warn`, `error`.
 
 ### file
 
 **Type:** `string`
 **Default:** `"logs/mcp-server-prtg.log"`
-**Description:** Log file path.
-
-- Relative paths are relative to the executable directory
-- Absolute paths are supported
-- Directory is created automatically if it doesn't exist
+**Description:** Log file path. Relative paths are relative to the executable directory; absolute paths are supported.
 
 ### max_size_mb
 
@@ -395,15 +317,11 @@ Levels (from most to least verbose):
 **Default:** `10`
 **Description:** Maximum log file size in megabytes before rotation.
 
-When the log file reaches this size, it's rotated (renamed with a timestamp) and a new file is created.
-
 ### max_backups
 
 **Type:** `integer`
 **Default:** `5`
 **Description:** Maximum number of old log files to retain.
-
-Older files are automatically deleted when this limit is exceeded.
 
 ### max_age_days
 
@@ -411,158 +329,104 @@ Older files are automatically deleted when this limit is exceeded.
 **Default:** `30`
 **Description:** Maximum age of log files in days before deletion.
 
-Log files older than this are automatically deleted.
-
 ### compress
 
 **Type:** `boolean`
 **Default:** `true`
 **Description:** Compress rotated log files with gzip.
 
-Rotated files are renamed from `.log` to `.log.gz`, saving disk space.
+## Encrypted Secrets
+
+The secrets `server.api_key`, `database.password` and `prtg.api_token` are stored encrypted in `config.yaml`:
+
+- **Windows:** `enc:dpapi:...` - DPAPI machine scope; only that machine can decrypt.
+- **Linux:** `enc:aes:...` - AES-256-GCM with the key in `secret.key` next to `config.yaml` (mode 0600). Back up `secret.key` together with `config.yaml`; losing it means re-entering the secrets.
+
+You may type a clear-text value in `config.yaml`: it is encrypted in place at the next service start. A config file copied to another machine cannot be decrypted there: re-enter the secrets on that machine.
 
 ## Environment Variables
 
-Environment variables can be used to override configuration file settings. This is useful for Docker containers or CI/CD pipelines.
+These environment variables feed the same options as the configuration file and are useful to keep secrets off the command line:
 
-### PRTG_DB_PASSWORD
-
-**Description:** Database password (overrides `database.password` in config file)
+| Variable | Maps to |
+|----------|---------|
+| `PRTG_DB_HOST` | `database.host` |
+| `PRTG_DB_PORT` | `database.port` |
+| `PRTG_DB_NAME` | `database.name` |
+| `PRTG_DB_USER` | `database.user` |
+| `PRTG_DB_PASSWORD` | `database.password` |
+| `PRTG_DB_SSLMODE` | `database.sslmode` |
+| `PRTG_URL` | `prtg.base_url` |
+| `PRTG_API_TOKEN` | `prtg.api_token` |
 
 ```bash
 export PRTG_DB_PASSWORD="secure_password"
 ./mcp-server-prtg run
 ```
 
-**Note:** Currently, only the database password supports environment variable override. Other settings must be specified in the configuration file.
+## config init and show-api-key
+
+```bash
+mcp-server-prtg config init --config <path> [--https] [--port N] [--db-host H] [--db-port N] [--db-name N] [--db-user U] [--db-password P] [--db-sslmode M] [--prtg-url URL] [--prtg-token T] [--prtg-verify-ssl=true|false] [--prtg-timeout S] [--prtg-disable] [--api-key K] [--log-file F]
+```
+
+Creates the configuration, or updates only the given settings of an existing one (an existing API key is kept unless `--api-key` is given). Secrets passed on the command line are written encrypted.
+
+```bash
+mcp-server-prtg config show-api-key --config <path>
+```
+
+Prints the decrypted MCP API key.
+
+The service commands are unchanged: `install`, `uninstall`, `start`, `stop`, `status`, `run`.
 
 ## TLS/HTTPS Setup
 
 ### Automatic Self-Signed Certificates
 
-On first installation with `enable_tls: true`, the server automatically generates self-signed certificates:
+On first installation with `enable_tls: true`, the server automatically generates self-signed certificates in a `certs` folder next to the configuration file:
 
-- **Certificate:** `./certs/server.crt`
-- **Private Key:** `./certs/server.key`
+- **Certificate:** `certs/server.crt`
+- **Private Key:** `certs/server.key`
 - **Validity:** 1 year
 - **Subject:** CN=localhost, O=MCP Server PRTG
 - **SANs:** localhost, 127.0.0.1, ::1
 
-Self-signed certificates are suitable for:
-- Development and testing
-- Internal networks where clients can trust the certificate
-- Use with mcp-remote (set NODE_TLS_REJECT_UNAUTHORIZED=0 for self-signed certificates)
-
 ### Using Custom Certificates
 
-For production with public domains, use certificates from a trusted Certificate Authority (Let's Encrypt, etc.):
-
-1. Obtain your certificate and private key files
-2. Update the configuration:
-
-```yaml
-server:
-  enable_tls: true
-  cert_file: "/path/to/your/certificate.crt"
-  key_file: "/path/to/your/private.key"
-```
-
-3. Restart the service
-
-### Certificate Requirements
-
-- **Format:** PEM encoded
-- **Type:** X.509 certificate
-- **Key Type:** RSA 2048-bit or higher (recommended)
+For production with public domains, use certificates from a trusted Certificate Authority and point `cert_file` / `key_file` at them, then restart the service.
 
 ### Disabling TLS (Not Recommended)
 
-For development only:
-
-```yaml
-server:
-  enable_tls: false
-  port: 8080  # Use standard HTTP port
-```
-
-**Warning:** All communication including API keys will be transmitted in plain text.
+For development only: set `enable_tls: false`. All communication including API keys will be transmitted in plain text.
 
 ## Hot-Reload
 
-MCP Server PRTG supports hot-reload of the configuration file using file system watching (via [fsnotify](https://github.com/fsnotify/fsnotify)).
-
-### How It Works
-
-1. The server watches `config.yaml` for changes
-2. When the file is modified and saved, the server automatically reloads the configuration
-3. Changes take effect immediately without restarting the service
-
-### What Can Be Hot-Reloaded
-
-- Logging level (`logging.level`)
-- Database connection settings (new connections use new settings)
-- API key (requires clients to reconnect with new key)
-
-### What Requires a Restart
-
-- Server bind address (`server.bind_address`)
-- Server port (`server.port`)
-- TLS enable/disable (`server.enable_tls`)
-- Certificate files (changes require restart)
-
-### Example
-
-```bash
-# Server is running
-./mcp-server-prtg run
-
-# In another terminal, change log level
-sed -i 's/level: info/level: debug/' config.yaml
-
-# Changes are applied automatically (visible in logs)
-```
+The server watches `config.yaml` and reloads it on change. Hot-reloadable: logging level, database connection settings, API key. A restart is required for bind address, port, TLS settings and certificate files.
 
 ## Advanced Configuration
 
 ### Database Connection Pooling
 
-The server uses [pgx](https://github.com/jackc/pgx) for database connections with automatic connection pooling:
-
-- **Default Pool Size:** 25 connections
-- **Max Idle Time:** 30 minutes
-- **Max Lifetime:** 1 hour
-
-These settings are optimized for typical workloads and cannot currently be configured.
+The server uses pgx with automatic connection pooling (default pool size 25, max idle 30 minutes, max lifetime 1 hour). Not currently configurable.
 
 ### Query Timeouts
 
-Database queries have a 30-second timeout to prevent long-running queries from blocking the server. This is hard-coded and cannot be changed.
+Database queries have a 30-second timeout. Custom queries through `prtg_query_sql` have a stricter 15-second statement timeout.
 
-### Security Headers
+### Streamable HTTP Transport
 
-The server automatically sets security headers for HTTP responses:
-
-- `WWW-Authenticate: Bearer realm="MCP Server PRTG"` (on 401 responses)
-
-### Streamable HTTP Transport Configuration
-
-Streamable HTTP transport (MCP 2025-03-26) is optimized for long-lived streaming connections:
-
-- **Read Timeout:** 0 (no timeout for streaming)
-- **Write Timeout:** 0 (no timeout for streaming)
-- **Idle Timeout:** 60 minutes (close inactive connections)
-- **ReadHeaderTimeout:** 10 seconds (protection against slow-loris attacks)
-- **Heartbeat Interval:** 30 seconds (keeps connections alive)
-- **Architecture:** Single unified server with built-in authentication
+- Read/Write Timeout: 0 (no timeout for streaming)
+- Idle Timeout: 60 minutes
+- ReadHeaderTimeout: 10 seconds
+- Heartbeat Interval: 30 seconds
 
 ### File Permissions
 
-The server automatically sets secure file permissions:
-
-- `config.yaml`: 0600 (owner read/write only)
-- `server.key`: 0600 (owner read/write only)
-- `server.crt`: 0600 (owner read/write only)
-- Log files: 0640 (owner read/write, group read)
+- `config.yaml`: 0600
+- `secret.key`: 0600
+- `server.key` / `server.crt`: 0600
+- Log files: 0640
 
 ## Configuration Examples
 
@@ -571,24 +435,26 @@ The server automatically sets secure file permissions:
 ```yaml
 config_version: 1
 server:
-  api_key: "dev-key-123"
+  api_key: "dev-key-0123456789abcdef"  # At least 16 characters; encrypted in place at next start
   bind_address: "127.0.0.1"
   port: 8443
   enable_tls: false
-  allow_custom_queries: false  # SECURITY: Keep disabled even in dev
+  allow_custom_queries: false
 database:
   host: "localhost"
   port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
+  name: "prtg_data_exporter_collection"
+  user: "mcp_prtg_reader"
   password: "password"
   sslmode: "disable"
+prtg:
+  enabled: false
 logging:
   level: "debug"
   file: "logs/mcp-server-prtg.log"
 ```
 
-### Production Configuration (Remote Access)
+### Production Configuration
 
 ```yaml
 config_version: 1
@@ -601,14 +467,20 @@ server:
   key_file: "/etc/ssl/private/server.key"
   read_timeout: 10
   write_timeout: 10
-  allow_custom_queries: false  # SECURITY: NEVER enable in production
+  allow_custom_queries: false
 database:
   host: "pgsql.internal.example.com"
   port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
+  name: "prtg_data_exporter_collection"
+  user: "mcp_prtg_reader"
   password: "strong_random_password_here"
   sslmode: "require"
+prtg:
+  enabled: true
+  base_url: "https://prtg.internal.example.com:1616"
+  api_token: "your-prtg-scripting-api-key"
+  timeout: 30
+  verify_ssl: true
 logging:
   level: "info"
   file: "/var/log/mcp-server-prtg/server.log"
@@ -617,67 +489,6 @@ logging:
   max_age_days: 90
   compress: true
 ```
-
-### Docker Configuration
-
-```yaml
-config_version: 1
-server:
-  api_key: "docker-api-key"
-  bind_address: "0.0.0.0"
-  port: 8443
-  enable_tls: true
-  cert_file: "/certs/server.crt"
-  key_file: "/certs/server.key"
-  allow_custom_queries: false  # SECURITY: Keep disabled
-database:
-  host: "postgres"  # Docker service name
-  port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
-  password: ""  # Use PRTG_DB_PASSWORD env var
-  sslmode: "disable"
-logging:
-  level: "info"
-  file: "/logs/mcp-server-prtg.log"
-  max_size_mb: 10
-  max_backups: 3
-  max_age_days: 7
-  compress: true
-```
-
-## Troubleshooting
-
-### Configuration File Not Found
-
-**Error:** `failed to load configuration: failed to read config file`
-
-**Solution:** Ensure `config.yaml` exists in the executable directory or specify path with `--config`.
-
-### Invalid YAML Syntax
-
-**Error:** `failed to parse config file: yaml: unmarshal errors`
-
-**Solution:** Validate YAML syntax. Common issues:
-- Incorrect indentation (use spaces, not tabs)
-- Missing quotes around special characters
-- Incorrect data types (string vs integer)
-
-### Permission Denied
-
-**Error:** `failed to write config file: permission denied`
-
-**Solution:** Ensure the user running the service has write permissions to the config directory.
-
-### Hot-Reload Not Working
-
-**Issue:** Changes to config file don't take effect
-
-**Solutions:**
-- Check logs for file watcher errors
-- Ensure file system supports inotify/FSEvents/ReadDirectoryChangesW
-- Try restarting the service
-- Verify file permissions allow reading the config file
 
 ## See Also
 

@@ -18,8 +18,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
 
-	"github.com/matthieu/mcp-server-prtg/internal/cliargs"
-	"github.com/matthieu/mcp-server-prtg/internal/services/logger"
+	"github.com/senhub-io/mcp-server-prtg/internal/cliargs"
+	"github.com/senhub-io/mcp-server-prtg/internal/secrets"
+	"github.com/senhub-io/mcp-server-prtg/internal/services/logger"
 )
 
 const (
@@ -33,6 +34,15 @@ type Configuration struct {
 	logger     *logger.ModuleLogger
 	watcher    *fsnotify.Watcher
 	args       *cliargs.ParsedArgs
+	secrets    secrets.Protector
+
+	// plain holds the decrypted in-memory copies of the secrets; data always
+	// holds the encrypted values once loaded.
+	plain struct {
+		apiKey     string
+		dbPassword string
+		prtgToken  string
+	}
 
 	// Configuration data
 	data ConfigData
@@ -95,15 +105,34 @@ type LoggingConfig struct {
 	Compress   bool   `yaml:"compress"`
 }
 
+// newConfigurationBase builds a Configuration with its secret protector, without loading or watching any file.
+func newConfigurationBase(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
+	moduleLogger := logger.NewModuleLogger(baseLogger, logger.ModuleConfiguration)
+
+	absPath, err := filepath.Abs(args.ConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolving configuration path %s: %w", args.ConfigPath, err)
+	}
+
+	protector, err := secrets.NewProtector(filepath.Dir(absPath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize secret protector: %w", err)
+	}
+
+	return &Configuration{
+		configPath:        args.ConfigPath,
+		logger:            moduleLogger,
+		args:              args,
+		secrets:           protector,
+		onChangeCallbacks: make([]func(), 0),
+	}, nil
+}
+
 // NewConfiguration creates a new configuration manager.
 func NewConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
-	logger := logger.NewModuleLogger(baseLogger, logger.ModuleConfiguration)
-
-	config := &Configuration{
-		configPath:        args.ConfigPath,
-		logger:            logger,
-		args:              args,
-		onChangeCallbacks: make([]func(), 0),
+	config, err := newConfigurationBase(args, baseLogger)
+	if err != nil {
+		return nil, err
 	}
 
 	// Load or create configuration
@@ -113,10 +142,120 @@ func NewConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Con
 
 	// Initialize file watcher
 	if err := config.initWatcher(); err != nil {
-		logger.Warn().Err(err).Msg("Failed to initialize config file watcher")
+		config.logger.Warn().Err(err).Msg("Failed to initialize config file watcher")
 	}
 
 	return config, nil
+}
+
+// LoadConfiguration loads and decrypts an existing configuration file without creating it or starting the watcher.
+func LoadConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
+	config, err := newConfigurationBase(args, baseLogger)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := config.loadConfiguration(); err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	return config, nil
+}
+
+// InitConfiguration creates or updates the configuration file from command-line arguments without starting the watcher.
+func InitConfiguration(args *cliargs.ParsedArgs, baseLogger *logger.Logger) (*Configuration, error) {
+	config, err := newConfigurationBase(args, baseLogger)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := os.Stat(config.configPath); os.IsNotExist(err) {
+		if err := config.createDefaultConfiguration(); err != nil {
+			return nil, fmt.Errorf("failed to create default configuration: %w", err)
+		}
+	} else if err := config.loadConfiguration(); err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	if err := config.applyArgs(args); err != nil {
+		return nil, fmt.Errorf("failed to apply command-line settings: %w", err)
+	}
+
+	if err := config.saveConfiguration(); err != nil {
+		return nil, fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	return config, nil
+}
+
+// applyArgs overrides only the settings explicitly provided on the command line.
+func (c *Configuration) applyArgs(args *cliargs.ParsedArgs) error {
+	if args.BindAddress != "" {
+		c.data.Server.BindAddress = args.BindAddress
+	}
+
+	if args.Port != 0 {
+		c.data.Server.Port = args.Port
+	}
+
+	if args.AuthKey != "" {
+		c.plain.apiKey = args.AuthKey
+	}
+
+	if args.DBHost != "" {
+		c.data.Database.Host = args.DBHost
+	}
+
+	if args.DBPort != 0 {
+		c.data.Database.Port = args.DBPort
+	}
+
+	if args.DBName != "" {
+		c.data.Database.Name = args.DBName
+	}
+
+	if args.DBUser != "" {
+		c.data.Database.User = args.DBUser
+	}
+
+	if args.DBPassword != "" {
+		c.plain.dbPassword = args.DBPassword
+	}
+
+	if args.DBSSLMode != "" {
+		c.data.Database.SSLMode = args.DBSSLMode
+	}
+
+	if args.PRTGURL != "" {
+		c.data.PRTG.BaseURL = args.PRTGURL
+		c.data.PRTG.Enabled = true
+	}
+
+	if args.PRTGDisable {
+		c.data.PRTG.Enabled = false
+	}
+
+	if args.PRTGToken != "" {
+		c.plain.prtgToken = args.PRTGToken
+	}
+
+	if args.PRTGVerifySSL != nil {
+		c.data.PRTG.VerifySSL = *args.PRTGVerifySSL
+	}
+
+	if args.PRTGTimeout != 0 {
+		c.data.PRTG.Timeout = args.PRTGTimeout
+	}
+
+	if args.LogLevel != "" {
+		c.data.Logging.Level = args.LogLevel
+	}
+
+	if args.LogFile != "" {
+		c.data.Logging.File = args.LogFile
+	}
+
+	return c.encryptSecrets()
 }
 
 // loadOrCreate loads existing config or creates a new one.
@@ -126,7 +265,19 @@ func (c *Configuration) loadOrCreate() error {
 		return c.createDefaultConfiguration()
 	}
 
-	return c.loadConfiguration()
+	if err := c.loadConfiguration(); err != nil {
+		return err
+	}
+
+	// A deleted certificate pair is regenerated so the service can start
+	// again; an existing pair, generated or provided, is never replaced.
+	if c.data.Server.EnableTLS {
+		if err := c.generateTLSCertificates(); err != nil {
+			return fmt.Errorf("failed to generate missing TLS certificates: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // loadConfiguration loads configuration from YAML file.
@@ -136,14 +287,105 @@ func (c *Configuration) loadConfiguration() error {
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	if err := yaml.Unmarshal(data, &c.data); err != nil {
+	// Parse and resolve secrets into a copy so a bad file keeps the current
+	// configuration, including the credentials in use, untouched.
+	var parsed ConfigData
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
 		return fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	encrypted, err := c.processSecrets(&parsed)
+	if err != nil {
+		return err
+	}
+
+	// Configurations written by earlier versions carry doubled backslashes.
+	if parsed.Server.CertFile != "" {
+		parsed.Server.CertFile = filepath.Clean(parsed.Server.CertFile)
+	}
+
+	if parsed.Server.KeyFile != "" {
+		parsed.Server.KeyFile = filepath.Clean(parsed.Server.KeyFile)
+	}
+
+	c.data = parsed
+
+	if encrypted > 0 {
+		if err := c.saveConfiguration(); err != nil {
+			return fmt.Errorf("failed to rewrite configuration with encrypted secrets: %w", err)
+		}
+
+		c.logger.Info().Int("count", encrypted).Msg("encrypted clear-text secrets in configuration file")
 	}
 
 	c.logger.Info().
 		Str("path", c.configPath).
 		Int("version", c.data.ConfigVersion).
 		Msg("Configuration loaded successfully")
+
+	return nil
+}
+
+// processSecrets decrypts encrypted secrets into memory and encrypts clear-text ones in c.data.
+// It returns the number of values that were clear text and therefore must be persisted encrypted.
+func (c *Configuration) processSecrets(data *ConfigData) (int, error) {
+	fields := []struct {
+		name   string
+		stored *string
+		plain  *string
+	}{
+		{"server.api_key", &data.Server.APIKey, new(string)},
+		{"database.password", &data.Database.Password, new(string)},
+		{"prtg.api_token", &data.PRTG.APIToken, new(string)},
+	}
+
+	encrypted := 0
+
+	for _, f := range fields {
+		value := *f.stored
+
+		switch {
+		case secrets.IsEncrypted(value):
+			plain, err := c.secrets.Decrypt(value)
+			if err != nil {
+				return 0, fmt.Errorf("%s: %w", f.name, err)
+			}
+
+			*f.plain = plain
+		case value != "":
+			enc, err := c.secrets.Encrypt(value)
+			if err != nil {
+				return 0, fmt.Errorf("%s: %w", f.name, err)
+			}
+
+			*f.stored = enc
+			*f.plain = value
+			encrypted++
+		}
+	}
+
+	c.plain.apiKey = *fields[0].plain
+	c.plain.dbPassword = *fields[1].plain
+	c.plain.prtgToken = *fields[2].plain
+
+	return encrypted, nil
+}
+
+// encryptSecrets writes the encrypted form of the plain in-memory secrets into c.data.
+func (c *Configuration) encryptSecrets() error {
+	var err error
+
+	if c.data.Server.APIKey, err = c.secrets.Encrypt(c.plain.apiKey); err != nil {
+		return fmt.Errorf("server.api_key: %w", err)
+	}
+
+	if c.data.Database.Password, err = c.secrets.Encrypt(c.plain.dbPassword); err != nil {
+		return fmt.Errorf("database.password: %w", err)
+	}
+
+	if c.data.PRTG.APIToken, err = c.secrets.Encrypt(c.plain.prtgToken); err != nil {
+		return fmt.Errorf("prtg.api_token: %w", err)
+	}
 
 	return nil
 }
@@ -164,30 +406,23 @@ func (c *Configuration) createDefaultConfiguration() error {
 		c.logger.Info().Msg("Generated new API key (Bearer token)")
 	}
 
-	// Get absolute paths for certificates (relative to executable directory)
-	// This ensures paths work correctly when running as a Windows service
-	exePath, err := os.Executable()
+	// Certificates live next to the configuration file, so an installer that
+	// owns the program directory never finds generated files in it.
+	configPath, err := filepath.Abs(c.args.ConfigPath)
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return fmt.Errorf("resolving configuration path %s: %w", c.args.ConfigPath, err)
 	}
 
-	exeDir := filepath.Dir(exePath)
+	configDir := filepath.Dir(configPath)
 
-	defaultCertFile := filepath.Join(exeDir, "certs", "server.crt")
-	defaultKeyFile := filepath.Join(exeDir, "certs", "server.key")
-
-	// On Windows, double backslashes for YAML compatibility
-	// Windows accepts both C:\\path and C:/path but YAML needs escaped backslashes
-	if filepath.Separator == '\\' {
-		defaultCertFile = strings.ReplaceAll(defaultCertFile, "\\", "\\\\")
-		defaultKeyFile = strings.ReplaceAll(defaultKeyFile, "\\", "\\\\")
-	}
+	defaultCertFile := filepath.Join(configDir, "certs", "server.crt")
+	defaultKeyFile := filepath.Join(configDir, "certs", "server.key")
 
 	c.logger.Debug().
-		Str("exe_dir", exeDir).
+		Str("config_dir", configDir).
 		Str("cert_file", defaultCertFile).
 		Str("key_file", defaultKeyFile).
-		Msg("Using executable directory for certificate paths")
+		Msg("Using configuration directory for certificate paths")
 
 	// Create default config
 	c.data = ConfigData{
@@ -206,8 +441,8 @@ func (c *Configuration) createDefaultConfiguration() error {
 		Database: DatabaseConfig{
 			Host:     getOrDefault(c.args.DBHost, "localhost"),
 			Port:     getOrDefaultInt(c.args.DBPort, 5432),
-			Name:     getOrDefault(c.args.DBName, "prtg_data_exporter"),
-			User:     getOrDefault(c.args.DBUser, "prtg_reader"),
+			Name:     getOrDefault(c.args.DBName, "prtg_data_exporter_collection"),
+			User:     getOrDefault(c.args.DBUser, "mcp_prtg_reader"),
 			Password: c.args.DBPassword,
 			SSLMode:  getOrDefault(c.args.DBSSLMode, "disable"),
 		},
@@ -226,6 +461,14 @@ func (c *Configuration) createDefaultConfiguration() error {
 			MaxAgeDays: 30,
 			Compress:   true,
 		},
+	}
+
+	c.plain.apiKey = c.data.Server.APIKey
+	c.plain.dbPassword = c.data.Database.Password
+	c.plain.prtgToken = c.data.PRTG.APIToken
+
+	if err := c.encryptSecrets(); err != nil {
+		return err
 	}
 
 	// Generate TLS certificates if enabled and not provided
@@ -360,8 +603,9 @@ func (c *Configuration) generateTLSCertificates() error {
 	}
 
 	// Add SANs (Subject Alternative Names)
-	template.DNSNames = []string{"localhost"}
-	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+	// MCP clients reach the server by its machine name or address, not only
+	// through localhost: the certificate must cover them or TLS fails.
+	template.DNSNames, template.IPAddresses = certificateNames()
 
 	// Generate certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
@@ -416,9 +660,14 @@ func generateUUIDKey() (string, error) {
 
 // Get methods for accessing configuration.
 
+// Path returns the configuration file path.
+func (c *Configuration) Path() string {
+	return c.configPath
+}
+
 // GetAPIKey returns the API key (Bearer token).
 func (c *Configuration) GetAPIKey() string {
-	return c.data.Server.APIKey
+	return c.plain.apiKey
 }
 
 // GetServerAddress returns the full server address.
@@ -428,14 +677,30 @@ func (c *Configuration) GetServerAddress() string {
 
 // GetDatabaseConnectionString returns the PostgreSQL connection string.
 func (c *Configuration) GetDatabaseConnectionString() string {
+	return ConnectionString(c.data.Database.Host, c.data.Database.Port, c.data.Database.Name,
+		c.data.Database.User, c.plain.dbPassword, c.data.Database.SSLMode)
+}
+
+// ConnectionString builds a quoted libpq keyword/value connection string.
+func ConnectionString(host string, port int, name, user, password, sslmode string) string {
 	return fmt.Sprintf("host=%s port=%d dbname=%s user=%s password=%s sslmode=%s",
-		c.data.Database.Host,
-		c.data.Database.Port,
-		c.data.Database.Name,
-		c.data.Database.User,
-		c.data.Database.Password,
-		c.data.Database.SSLMode,
-	)
+		quoteConnValue(host), port, quoteConnValue(name), quoteConnValue(user), quoteConnValue(password), quoteConnValue(sslmode))
+}
+
+// StoredDatabasePassword returns the decrypted database password, for connection tests.
+func (c *Configuration) StoredDatabasePassword() string {
+	return c.plain.dbPassword
+}
+
+// StoredPRTGToken returns the decrypted PRTG API token, for connection tests.
+func (c *Configuration) StoredPRTGToken() string {
+	return c.plain.prtgToken
+}
+
+// quoteConnValue quotes a libpq keyword/value: unquoted, an empty or
+// space-containing value shifts the following keywords into it.
+func quoteConnValue(v string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }
 
 // GetDatabaseHost returns the database host.
@@ -506,7 +771,7 @@ func (c *Configuration) GetPRTGBaseURL() string {
 
 // GetPRTGAPIToken returns the PRTG API token.
 func (c *Configuration) GetPRTGAPIToken() string {
-	return c.data.PRTG.APIToken
+	return c.plain.prtgToken
 }
 
 // GetPRTGTimeout returns the PRTG API timeout duration.
@@ -624,4 +889,35 @@ func (c *Configuration) Shutdown(_ context.Context) error {
 	}
 
 	return nil
+}
+
+// certificateNames returns the host names and addresses the self-signed
+// certificate is issued for: localhost, the machine name and its addresses.
+func certificateNames() ([]string, []net.IP) {
+	names := []string{"localhost"}
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+
+	if host, err := os.Hostname(); err == nil && host != "" {
+		names = append(names, host)
+
+		if short, _, found := strings.Cut(host, "."); found && short != "" {
+			names = append(names, short)
+		}
+	}
+
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return names, ips
+	}
+
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() {
+			continue
+		}
+
+		ips = append(ips, ipNet.IP)
+	}
+
+	return names, ips
 }

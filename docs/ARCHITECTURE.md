@@ -26,7 +26,8 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 
 - **Streamable HTTP Transport**: Modern MCP protocol with HTTP SSE streaming
 - **MCP Protocol**: Full implementation of Model Context Protocol
-- **15 MCP Tools**: 12 PostgreSQL-based + 3 PRTG API v2 tools
+- **14 MCP Tools (HTTP mode)**: 12 PostgreSQL-based + 2 PRTG API v2 tools (the latter when `prtg.enabled: true`)
+- **stdio mode**: 13 tools backed by PRTG API v2 only, without PostgreSQL (npm package or `mcp-server-prtg stdio`)
 - **PostgreSQL Database**: Read-only access to PRTG monitoring data
 - **PRTG API v2 Integration**: Direct access to historical metrics and channel data
 - **Multi-platform Service**: Windows, Linux, and macOS support via kardianos/service
@@ -100,10 +101,9 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 │    • prtg_get_statistics                                       │
 │    • prtg_query_sql                                            │
 │                                                                 │
-│  PRTG API v2 Tools (3):                                        │
+│  PRTG API v2 Tools (2):                                        │
 │    • prtg_get_channel_current_values                           │
 │    • prtg_get_sensor_timeseries                                │
-│    • prtg_get_sensor_history_custom                            │
 └───────────┬──────────────────────────┬──────────────────────────┘
             │                          │
             │ SQL queries              │ HTTPS API calls
@@ -209,7 +209,7 @@ func HealthBar(percentage float64, width int) string
 
 #### Integration in Time Series Responses
 
-Time series tools (`prtg_get_sensor_timeseries`, `prtg_get_sensor_history_custom`) automatically include visualizations:
+The time series tool (`prtg_get_sensor_timeseries`) automatically includes visualizations:
 
 ```
 ## Quick Trend
@@ -598,14 +598,16 @@ GET /api/v2/object/{sensorID}/channels
 
 // Get time series data (predefined periods)
 GET /api/v2/object/{sensorID}/timeseries?timeType={live|short|medium|long}
-
-// Get time series data (custom range)
-POST /api/v2/object/{sensorID}/timeseries
-Body: {
-  "start": "2025-10-30T00:00:00Z",
-  "end": "2025-10-31T23:59:59Z"
-}
 ```
+
+The PRTG API v2 time series endpoint does not accept custom ranges; only the predefined periods are supported.
+
+**Request guard:**
+
+All PRTG API v2 calls go through a request guard that protects the PRTG Core Server:
+- Responses are cached: 30 seconds for sensor lists and statuses, 60 seconds for channels and devices, 5 minutes for groups, objects and non-live time series
+- Identical concurrent requests are coalesced into a single upstream call
+- At most 2 requests are in flight at a time by default
 
 **Error Handling:**
 ```go
@@ -650,11 +652,6 @@ func (h *MetricsToolHandler) RegisterMetricsTools(s *server.MCPServer) {
         Name: "prtg_get_sensor_timeseries",
         Description: "Get historical time series...",
     }, h.handleGetSensorTimeSeries)
-
-    s.AddTool(mcp.Tool{
-        Name: "prtg_get_sensor_history_custom",
-        Description: "Get custom time range data...",
-    }, h.handleGetSensorHistoryCustom)
 }
 ```
 
@@ -726,57 +723,49 @@ run       # Run in console mode (interactive)
 **Implementation**: Custom HTTP middleware
 
 ```go
-func (s *StreamableHTTPServer) createAuthMiddleware(next http.Handler) http.Handler {
-    expectedToken := s.config.GetAPIKey()
-
+func createAuthMiddleware(next http.Handler, keyFn func() string, rl *authRateLimiter, log *logger.ModuleLogger) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Extract client IP for rate limiting
-        clientIP := getClientIP(r)
+        // TCP peer address; X-Forwarded-For / X-Real-IP are ignored.
+        // IPv6 addresses are grouped by /64.
+        key := limiterKey(getClientIP(r))
 
-        // Check rate limit BEFORE validating token (prevent brute-force)
-        if !s.rateLimiter.checkAndRecord(clientIP, false) {
-            s.logger.Warn().
-                Str("client_ip", clientIP).
-                Msg("Rate limit exceeded - IP temporarily blocked")
-
+        if rl.isLocked(key) {
             w.Header().Set("Retry-After", "300") // 5 minutes
-            http.Error(w, "Too many authentication attempts", http.StatusTooManyRequests)
+            http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
             return
         }
 
-        // Extract Bearer token from Authorization header
-        authHeader := r.Header.Get("Authorization")
-        const bearerPrefix = "Bearer "
-        var providedToken string
+        // Only the Authorization: Bearer <api_key> header is accepted
+        providedToken := extractBearerToken(r)
+        expectedToken := keyFn()
 
-        if strings.HasPrefix(authHeader, bearerPrefix) {
-            providedToken = authHeader[len(bearerPrefix):]
-        }
+        authorized := expectedToken != "" &&
+            len(expectedToken) >= minAPIKeyLength && // 16
+            subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) == 1
 
-        // Fallback: query parameter (for compatibility)
-        if providedToken == "" {
-            providedToken = r.URL.Query().Get("token")
-        }
-
-        // Validate token
-        if providedToken != expectedToken {
-            w.Header().Set("WWW-Authenticate", "Bearer realm=\"MCP Server PRTG\"")
+        if !authorized {
+            if rl.recordFailure(key) {
+                w.Header().Set("Retry-After", "300")
+                http.Error(w, "Too many authentication attempts. Please try again later.", http.StatusTooManyRequests)
+                return
+            }
             http.Error(w, "Unauthorized", http.StatusUnauthorized)
             return
         }
 
-        // Reset rate limiter on successful auth
-        s.rateLimiter.checkAndRecord(clientIP, true)
+        rl.reset(key)
         next.ServeHTTP(w, r)
     })
 }
 ```
 
+The server also refuses to start if `server.api_key` is empty or shorter than 16 characters.
+
 **Rate Limiting Configuration:**
 - **Max attempts**: 5 failed attempts
 - **Time window**: 1 minute
 - **Lockout duration**: 5 minutes
-- **Scope**: Per client IP address
+- **Scope**: Per client address (TCP peer address; IPv6 addresses grouped by /64; `X-Forwarded-For` and `X-Real-IP` ignored). Behind a reverse proxy, all clients share the proxy address.
 
 #### TLS Configuration
 
@@ -801,30 +790,29 @@ err := server.ListenAndServeTLS(certFile, keyFile)
 
 #### SQL Injection Prevention
 
-Custom query validation in `prtg_query_sql`:
+Custom query validation and sandboxing in `prtg_query_sql` (available only when `allow_custom_queries: true`):
 
 ```go
-// 1. Check query starts with SELECT
-queryUpper := strings.ToUpper(strings.TrimSpace(query))
-if !strings.HasPrefix(queryUpper, "SELECT") {
-    return nil, fmt.Errorf("only SELECT queries are allowed")
+// 1. Reject multiple statements, SQL comments, and anything not starting with SELECT or WITH
+// 2. Reject references to PRTG Data Exporter configuration/credential tables
+//    (prtg_server_address, target_database, grafana_*, licensing_*, setting, audit_trail)
+//    and to functions pg_*, dblink*, lo_*, current_setting, set_config
+if restrictedTablePattern.MatchString(q) {
+    return nil, fmt.Errorf("%w: query references a restricted table or function", ErrCustomQueryRejected)
 }
 
-// 2. Block dangerous keywords
-dangerous := []string{"DROP", "DELETE", "UPDATE", "INSERT",
-                      "ALTER", "CREATE", "TRUNCATE", "EXEC",
-                      "EXECUTE", "/*", "--", ";"}
-for _, keyword := range dangerous {
-    if strings.Contains(queryUpper, keyword) {
-        return nil, fmt.Errorf("query contains forbidden keyword: %s", keyword)
-    }
-}
+// 3. Clamp the row cap to 1..1000 (default 100)
 
-// 3. Enforce maximum limit
-if limit > 1000 {
-    limit = 1000
-}
+// 4. Run in a read-only transaction with a 15-second statement timeout
+tx, err := db.conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+_, err = tx.ExecContext(ctx, "SET LOCAL statement_timeout = '15s'")
+
+// 5. Apply the row cap regardless of any LIMIT in the query
+wrapped := fmt.Sprintf("SELECT * FROM (%s) AS custom_query LIMIT $1", q)
+rows, err := tx.QueryContext(ctx, wrapped, limit)
 ```
+
+For defense in depth, connect with a dedicated PostgreSQL role that only has SELECT on the `prtg_*` data tables.
 
 #### File Permissions
 
@@ -953,7 +941,7 @@ Automatic secure file permissions:
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Language | Go 1.25+ | High-performance, concurrent server |
+| Language | Go 1.26 | High-performance, concurrent server |
 | MCP Protocol | [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) | Model Context Protocol implementation |
 | Database Driver | [jackc/pgx/v5](https://github.com/jackc/pgx) | PostgreSQL driver with connection pooling |
 | Service Management | [kardianos/service](https://github.com/kardianos/service) | Cross-platform service framework |
@@ -1102,7 +1090,7 @@ This sends periodic heartbeats to keep connections alive, addressing the timeout
 
 ### Caching Strategy
 
-Currently, no caching is implemented. Considerations for future:
+PostgreSQL queries are not cached. PRTG API v2 calls are cached by the request guard (see [PRTG API Layer](#prtg-api-layer)), which also coalesces identical concurrent requests and limits requests in flight to protect the PRTG Core Server. Considerations for the PostgreSQL side:
 
 **Pros of caching:**
 - Reduced database load
@@ -1130,13 +1118,13 @@ Currently, no caching is implemented. Considerations for future:
 
 | Threat | Mitigation |
 |--------|-----------|
-| Unauthorized access | Bearer token authentication |
+| Unauthorized access | Bearer token authentication (header only, constant-time comparison, minimum key length 16) |
 | Brute-force attacks | IP-based rate limiting (5 attempts/min, 5 min lockout) |
 | Man-in-the-middle | TLS encryption |
-| SQL injection | Parameterized queries, keyword filtering |
+| SQL injection | Parameterized queries; custom queries run in a read-only transaction with restricted tables and functions rejected |
 | Data modification | Read-only database user |
 | Credential exposure | File permissions (0600), password masking in logs |
-| DoS attacks | Query timeouts, result limits, rate limiting |
+| DoS attacks | Query timeouts, result limits, rate limiting, PRTG API v2 request guard |
 | Certificate theft | Secure file permissions |
 | Slow-loris attacks | ReadHeaderTimeout protection |
 

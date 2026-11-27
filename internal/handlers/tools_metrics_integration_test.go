@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/matthieu/mcp-server-prtg/internal/prtg"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/senhub-io/mcp-server-prtg/internal/prtg"
 )
 
 func TestFormatTimeSeriesForLLM_WithSparklines(t *testing.T) {

@@ -1,0 +1,253 @@
+name: windows-msi
+
+on:
+  pull_request:
+    paths:
+      - "packaging/windows/**"
+      - ".github/workflows/windows-msi.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.2.3 or 1.2.3-rc1)"
+        required: true
+        type: string
+      release_tag:
+        description: "Existing release tag to build from and upload to (optional)"
+        required: false
+        default: ""
+        type: string
+      exe_from_release:
+        description: "Use the already-signed exe from the release instead of building (requires release_tag)"
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      release_tag:
+        required: false
+        default: ""
+        type: string
+      exe_from_release:
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-exe:
+    # Draft releases are only visible with write access, hence contents: write here.
+    if: inputs.exe_from_release == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed exe from the release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download "$INPUT_RELEASE_TAG" \
+            --pattern "mcp-server-prtg-${INPUT_RELEASE_TAG}-windows-amd64.zip" \
+            --dir exe-zip
+          mkdir -p exe
+          unzip -q exe-zip/*.zip -d exe
+          test -f exe/mcp-server-prtg.exe
+          mkdir -p dist
+          cp exe/mcp-server-prtg.exe dist/
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-exe
+          path: dist/mcp-server-prtg.exe
+          if-no-files-found: error
+
+  build-msi:
+    needs: fetch-exe
+    if: ${{ !cancelled() && (needs.fetch-exe.result == 'success' || needs.fetch-exe.result == 'skipped') }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Set up Go
+        if: inputs.exe_from_release != true
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Use signed exe from the release
+        if: inputs.exe_from_release == true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-exe
+          path: dist/windows-amd64
+
+      - name: Build service binary
+        if: inputs.exe_from_release != true
+        env:
+          INPUT_VERSION: ${{ inputs.version || '0.0.0-ci' }}
+        run: |
+          VERSION="${INPUT_VERSION}"
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          COMMIT=$(git rev-parse HEAD)
+          GO_VERSION=$(go env GOVERSION | sed 's/^go//')
+          mkdir -p dist/windows-amd64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+            -trimpath \
+            -ldflags "-s -w -X 'main.Version=${VERSION}' -X 'main.CommitHash=${COMMIT}' -X 'main.BuildTime=${DATE}' -X 'main.GoVersion=${GO_VERSION}'" \
+            -o dist/windows-amd64/mcp-server-prtg.exe ./cmd/server
+
+      - name: Detect code signing
+        env:
+          CODESIGN_STORETYPE: ${{ github.event_name != 'pull_request' && secrets.CODESIGN_STORETYPE || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "Pull request build: not signed, signing secrets stay out of unreviewed code"
+            echo "SIGNING_ENABLED=false" >> "$GITHUB_ENV"
+          elif [ -z "$CODESIGN_STORETYPE" ]; then
+            echo "::warning::CODESIGN_STORETYPE secret is not set; the MSI will not be signed"
+            echo "SIGNING_ENABLED=false" >> "$GITHUB_ENV"
+          else
+            echo "SIGNING_ENABLED=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Java
+        if: env.SIGNING_ENABLED == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Download jsign
+        if: env.SIGNING_ENABLED == 'true'
+        env:
+          JSIGN_SHA256: ${{ vars.JSIGN_SHA256 }}
+        run: |
+          curl -fsSL -o jsign.jar "https://github.com/ebourg/jsign/releases/download/7.4/jsign-7.4.jar"
+          if [ -n "$JSIGN_SHA256" ]; then
+            echo "$JSIGN_SHA256 jsign.jar" | sha256sum -c -
+          else
+            echo "::warning::JSIGN_SHA256 var not set; skipping jsign.jar checksum verification"
+          fi
+
+      - name: Sign exe
+        # Skipped when the exe comes from the release: it is already signed on the maintainer's Mac.
+        if: env.SIGNING_ENABLED == 'true' && inputs.exe_from_release != true
+        env:
+          CODESIGN_STORETYPE: ${{ secrets.CODESIGN_STORETYPE }}
+          CODESIGN_KEYSTORE: ${{ secrets.CODESIGN_KEYSTORE }}
+          CODESIGN_STOREPASS: ${{ secrets.CODESIGN_STOREPASS }}
+          CODESIGN_ALIAS: ${{ secrets.CODESIGN_ALIAS }}
+          CODESIGN_KEYPASS: ${{ secrets.CODESIGN_KEYPASS }}
+          CODESIGN_TSA: ${{ vars.CODESIGN_TSA || 'http://time.certum.pl' }}
+        run: |
+          CODESIGN_TSA="${CODESIGN_TSA:-http://time.certum.pl}"
+          java -jar jsign.jar \
+            --storetype "$CODESIGN_STORETYPE" \
+            ${CODESIGN_KEYSTORE:+--keystore "$CODESIGN_KEYSTORE"} \
+            ${CODESIGN_STOREPASS:+--storepass "$CODESIGN_STOREPASS"} \
+            ${CODESIGN_ALIAS:+--alias "$CODESIGN_ALIAS"} \
+            ${CODESIGN_KEYPASS:+--keypass "$CODESIGN_KEYPASS"} \
+            --tsaurl "$CODESIGN_TSA" \
+            --tsmode rfc3161 \
+            --name "MCP Server PRTG" \
+            --url "https://github.com/senhub-io/mcp-server-prtg" \
+            dist/windows-amd64/mcp-server-prtg.exe
+
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          # The extension version is pinned: a later extension cannot load in wix 5.
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+
+      - name: Build MSI
+        env:
+          INPUT_VERSION: ${{ inputs.version || '0.0.0-ci' }}
+        run: |
+          VERSION="${INPUT_VERSION}"
+          wix build packaging/windows/mcp-server-prtg.wxs \
+            -d Version="${VERSION%%-*}" \
+            -d BinDir="dist/windows-amd64" \
+            -arch x64 \
+            -ext WixToolset.Util.wixext \
+            -ext WixToolset.UI.wixext \
+            -out "dist/mcp-server-prtg-${VERSION}-amd64.msi"
+
+      - name: Sign MSI
+        if: env.SIGNING_ENABLED == 'true'
+        env:
+          INPUT_VERSION: ${{ inputs.version || '0.0.0-ci' }}
+          CODESIGN_STORETYPE: ${{ secrets.CODESIGN_STORETYPE }}
+          CODESIGN_KEYSTORE: ${{ secrets.CODESIGN_KEYSTORE }}
+          CODESIGN_STOREPASS: ${{ secrets.CODESIGN_STOREPASS }}
+          CODESIGN_ALIAS: ${{ secrets.CODESIGN_ALIAS }}
+          CODESIGN_KEYPASS: ${{ secrets.CODESIGN_KEYPASS }}
+          CODESIGN_TSA: ${{ vars.CODESIGN_TSA || 'http://time.certum.pl' }}
+        run: |
+          VERSION="${INPUT_VERSION}"
+          CODESIGN_TSA="${CODESIGN_TSA:-http://time.certum.pl}"
+          java -jar jsign.jar \
+            --storetype "$CODESIGN_STORETYPE" \
+            ${CODESIGN_KEYSTORE:+--keystore "$CODESIGN_KEYSTORE"} \
+            ${CODESIGN_STOREPASS:+--storepass "$CODESIGN_STOREPASS"} \
+            ${CODESIGN_ALIAS:+--alias "$CODESIGN_ALIAS"} \
+            ${CODESIGN_KEYPASS:+--keypass "$CODESIGN_KEYPASS"} \
+            --tsaurl "$CODESIGN_TSA" \
+            --tsmode rfc3161 \
+            --name "MCP Server PRTG" \
+            --url "https://github.com/senhub-io/mcp-server-prtg" \
+            "dist/mcp-server-prtg-${VERSION}-amd64.msi"
+
+      - name: Compute SHA256
+        env:
+          INPUT_VERSION: ${{ inputs.version || '0.0.0-ci' }}
+        run: |
+          VERSION="${INPUT_VERSION}"
+          cd dist
+          sha256sum "mcp-server-prtg-${VERSION}-amd64.msi" > "mcp-server-prtg-${VERSION}-amd64.msi.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-server-prtg-msi
+          path: |
+            dist/*.msi
+            dist/*.sha256
+          if-no-files-found: error
+
+  upload-release:
+    needs: build-msi
+    if: inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download MSI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcp-server-prtg-msi
+          path: dist
+
+      - name: Attach MSI to the release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "$INPUT_RELEASE_TAG" dist/*.msi dist/*.sha256 --clobber
