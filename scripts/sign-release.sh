@@ -60,24 +60,41 @@ if [ "$IS_DRAFT" != "true" ]; then
   exit 1
 fi
 
-# b. Sign the exe inside the Windows zip and re-upload it.
-echo ">> downloading Windows zip"
-gh release download "$TAG" --repo "$REPO" \
-  --pattern "mcp-server-prtg-${TAG}-windows-amd64.zip" --dir "$WORK"
-mkdir "$WORK/unzipped"
-unzip -q "$WORK/mcp-server-prtg-${TAG}-windows-amd64.zip" -d "$WORK/unzipped"
-[ -f "$WORK/unzipped/mcp-server-prtg.exe" ] || {
-  echo "error: mcp-server-prtg.exe not found in the zip" >&2
+# b. Check the CI checksums, then sign the exe inside the Windows zip.
+ZIP_NAME="mcp-server-prtg-${TAG}-windows-amd64.zip"
+MSI_NAME="mcp-server-prtg-${TAG}-amd64.msi"
+EXPECTED_ASSETS="SHA256SUMS
+${ZIP_NAME}
+mcp-server-prtg-${TAG}-linux-amd64.tar.gz
+mcp-server-prtg-${TAG}-linux-arm64.tar.gz"
+
+echo ">> checking the draft release against the CI checksums"
+mkdir "$WORK/ci"
+gh release download "$TAG" --repo "$REPO" --dir "$WORK/ci"
+ACTUAL_ASSETS="$(cd "$WORK/ci" && find . -maxdepth 1 -type f | sed "s|^\./||" | LC_ALL=C sort)"
+if [ "$ACTUAL_ASSETS" != "$(printf '%s\n' "$EXPECTED_ASSETS" | LC_ALL=C sort)" ]; then
+  echo "error: unexpected assets on release $TAG (run this script once, on the release main-release.yml created):" >&2
+  printf '%s\n' "$ACTUAL_ASSETS" >&2
+  exit 1
+fi
+(cd "$WORK/ci" && shasum -a 256 -c SHA256SUMS) || {
+  echo "error: an asset does not match the SHA256SUMS produced by CI" >&2
   exit 1
 }
-echo ">> signing exe(s) in place"
-while IFS= read -r -d '' exe; do
-  "$SIGNER" "$exe" --in-place
-done < <(find "$WORK/unzipped" -name '*.exe' -print0)
-echo ">> re-zipping whole directory and uploading"
-(cd "$WORK/unzipped" && zip -q -9 -r "$WORK/mcp-server-prtg-${TAG}-windows-amd64.zip" .)
-gh release upload "$TAG" --repo "$REPO" \
-  "$WORK/mcp-server-prtg-${TAG}-windows-amd64.zip" --clobber
+
+mkdir "$WORK/unzipped"
+unzip -q "$WORK/ci/$ZIP_NAME" -d "$WORK/unzipped"
+EXES="$(cd "$WORK/unzipped" && find . -name '*.exe' | LC_ALL=C sort)"
+if [ "$EXES" != "./mcp-server-prtg.exe" ]; then
+  echo "error: the Windows zip must contain exactly mcp-server-prtg.exe, found:" >&2
+  printf '%s\n' "$EXES" >&2
+  exit 1
+fi
+echo ">> signing mcp-server-prtg.exe"
+"$SIGNER" "$WORK/unzipped/mcp-server-prtg.exe" --in-place
+echo ">> re-zipping and uploading"
+(cd "$WORK/unzipped" && zip -q -9 -r "$WORK/$ZIP_NAME" .)
+gh release upload "$TAG" --repo "$REPO" "$WORK/$ZIP_NAME" --clobber
 
 # c. Dispatch the MSI build from the signed exe and wait for it.
 echo ">> dispatching windows-msi.yml"
@@ -103,28 +120,21 @@ gh run watch "$RUN_ID" --repo "$REPO" --exit-status
 
 # d. Download, sign and re-upload the MSI with its checksum.
 echo ">> downloading MSI"
-gh release download "$TAG" --repo "$REPO" \
-  --pattern "mcp-server-prtg-${TAG}-amd64.msi" --dir "$WORK"
-MSI="$WORK/mcp-server-prtg-${TAG}-amd64.msi"
+gh release download "$TAG" --repo "$REPO" --pattern "$MSI_NAME" --dir "$WORK"
+MSI="$WORK/$MSI_NAME"
 [ -f "$MSI" ] || { echo "error: MSI not found on release $TAG" >&2; exit 1; }
 "$SIGNER" "$MSI" --in-place
-(cd "$WORK" && shasum -a 256 "mcp-server-prtg-${TAG}-amd64.msi" \
-  > "mcp-server-prtg-${TAG}-amd64.msi.sha256")
-gh release upload "$TAG" --repo "$REPO" \
-  "$MSI" "$WORK/mcp-server-prtg-${TAG}-amd64.msi.sha256" --clobber
+(cd "$WORK" && shasum -a 256 "$MSI_NAME" > "$MSI_NAME.sha256")
+gh release upload "$TAG" --repo "$REPO" "$MSI" "$WORK/$MSI_NAME.sha256" --clobber
 
-# e. Regenerate SHA256SUMS over all assets.
-echo ">> regenerating SHA256SUMS"
-mkdir "$WORK/sums"
-gh release download "$TAG" --repo "$REPO" --dir "$WORK/sums"
-rm -f "$WORK/sums/SHA256SUMS" "$WORK"/sums/*.sha256
-(
-  cd "$WORK/sums"
-  find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | while IFS= read -r f; do
-    shasum -a 256 "$f"
-  done > SHA256SUMS
-)
-gh release upload "$TAG" --repo "$REPO" "$WORK/sums/SHA256SUMS" --clobber
+# e. SHA256SUMS: keep the CI entries of the Linux archives (verified above)
+# and replace only the files this script signed.
+echo ">> updating SHA256SUMS"
+{
+  grep -v -e "  ${ZIP_NAME}\$" -e "  ${MSI_NAME}\$" "$WORK/ci/SHA256SUMS" | sed 's/  \*/  /'
+  (cd "$WORK" && shasum -a 256 "$ZIP_NAME" "$MSI_NAME")
+} | LC_ALL=C sort -k2 > "$WORK/SHA256SUMS"
+gh release upload "$TAG" --repo "$REPO" "$WORK/SHA256SUMS" --clobber
 
 # f. Summary; publishing is a deliberate manual step.
 echo ">> release $TAG is signed and ready (still a draft)"
