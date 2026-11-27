@@ -34,13 +34,18 @@ jobs:
             echo "error: cannot derive a production version from tag '$LATEST'" >&2
             exit 1
           fi
+          # A merge without a new beta tag (documentation, release tooling)
+          # derives an already released version: nothing to release.
           if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-            echo "error: tag $VERSION already exists; refusing to re-release" >&2
-            exit 1
+            echo "::notice::$VERSION is already released; no release for this merge"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create and push tag
+        if: steps.get_version.outputs.skip != 'true'
         env:
           TAG: ${{ steps.get_version.outputs.tag }}
         run: |
@@ -50,6 +55,7 @@ jobs:
           git push origin "$TAG"
 
       - name: Build Windows and Linux binaries
+        if: steps.get_version.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.get_version.outputs.tag }}
         run: |
@@ -77,6 +83,7 @@ jobs:
           (cd dist && sha256sum -- * > SHA256SUMS)
 
       - name: Create draft release
+        if: steps.get_version.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_version.outputs.tag }}
@@ -87,6 +94,7 @@ jobs:
           draft: true
 
       - name: Write summary
+        if: steps.get_version.outputs.skip != 'true'
         env:
           TAG: ${{ steps.get_version.outputs.tag }}
         run: |

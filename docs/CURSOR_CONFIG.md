@@ -1,20 +1,19 @@
 # Cursor IDE Configuration
 
-> ⚠️ **UNTESTED CONFIGURATION**
->
-> This configuration is based on official Cursor MCP documentation but has **not been tested** with MCP Server PRTG.
->
-> **Status**: Community contribution - feedback needed!
->
-> If you test this configuration successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues). Your experience will help improve this guide!
-
 Configure [Cursor IDE](https://cursor.com/) to connect to your MCP Server PRTG instance.
 
 ## Prerequisites
 
-- MCP Server PRTG installed and running
+- MCP Server PRTG installed and running (version 2.0.0 or later)
 - Cursor IDE installed
-- Server API key from `config.yaml`
+- The MCP API key of the server
+
+## Getting the Ready-to-Paste Configuration
+
+The fastest way to configure Cursor is to copy a ready-made block:
+
+- On the server, open the administration page at `https://localhost:<port>/admin/` (8443 by default), sign in with the MCP API key, and open the **AI clients** tab. It shows the Cursor configuration with a Copy button.
+- Or run on the server: `mcp-server-prtg config client` (add `--host <name>` to use a different host name than the one detected). It prints the configurations for Claude Desktop, Claude Code, Cursor and VS Code.
 
 ## Configuration File Location
 
@@ -31,13 +30,10 @@ Create or edit `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://your-server:8443/mcp",
-        "--header",
-        "Authorization:Bearer YOUR_API_KEY"
-      ]
+      "url": "https://your-server:8443/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
     }
   }
 }
@@ -51,63 +47,29 @@ Create or edit `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://localhost:8443/mcp",
-        "--header",
-        "Authorization:Bearer a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-      ]
-    }
-  }
-}
-```
-
-### Remote Server with Environment Variable
-
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://prtg-mcp.company.com:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
-      ],
-      "env": {
-        "PRTG_API_KEY": "your-api-key-here"
+      "url": "https://localhost:8443/mcp",
+      "headers": {
+        "Authorization": "Bearer a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
       }
     }
   }
 }
 ```
 
-### Self-Signed Certificates
-
-For development with self-signed certificates:
+### Remote Server
 
 ```json
 {
   "mcpServers": {
     "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://your-server:8443/mcp",
-        "--header",
-        "Authorization:Bearer YOUR_API_KEY"
-      ],
-      "env": {
-        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      "url": "https://prtg-mcp.company.com:8443/mcp",
+      "headers": {
+        "Authorization": "Bearer a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
       }
     }
   }
 }
 ```
-
-⚠️ **Security Warning**: Only disable certificate validation in development environments.
 
 ### Multiple Environments
 
@@ -118,15 +80,9 @@ Configure different servers for different projects:
 {
   "mcpServers": {
     "prtg-prod": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://prtg.company.com:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${PRTG_PROD_KEY}"
-      ],
-      "env": {
-        "PRTG_PROD_KEY": "production-key"
+      "url": "https://prtg.company.com:8443/mcp",
+      "headers": {
+        "Authorization": "Bearer production-key"
       }
     }
   }
@@ -138,38 +94,38 @@ Configure different servers for different projects:
 {
   "mcpServers": {
     "prtg-dev": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://dev-prtg.local:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${PRTG_DEV_KEY}"
-      ],
-      "env": {
-        "PRTG_DEV_KEY": "dev-key"
+      "url": "https://dev-prtg.local:8443/mcp",
+      "headers": {
+        "Authorization": "Bearer dev-key"
       }
     }
   }
 }
 ```
 
+## Server Certificate (TLS)
+
+MCP Server PRTG uses HTTPS with a self-signed certificate by default (`certs/server.crt` next to `config.yaml`). Cursor must trust this certificate; do not disable certificate verification.
+
+Copy `server.crt` from the server to each client computer and import it into the computer's trusted root certificates:
+
+- **Windows:** `certlm.msc` → Trusted Root Certification Authorities, or `Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root`
+- **macOS:** Keychain Access, then set the certificate to "Always Trust"
+
+A certificate from your company PKI can be used instead (server settings `cert_file` / `key_file`).
+
 ## Setup Steps
 
 ### 1. Get Your API Key
 
-Your API key is auto-generated during installation:
+The API key is generated during installation and stored encrypted in `config.yaml`. Print it on the server with:
 
 ```bash
-# Linux/macOS
-cat config.yaml | grep api_key
+# Windows
+"C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config show-api-key --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml"
 
-# Windows (PowerShell)
-Select-String -Path config.yaml -Pattern "api_key"
-```
-
-Output:
-```yaml
-api_key: "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+# Linux
+sudo mcp-server-prtg config show-api-key --config /etc/mcp-server-prtg/config.yaml
 ```
 
 ### 2. Create Configuration File
@@ -186,7 +142,7 @@ nano .cursor/mcp.json
 
 ### 3. Add Configuration
 
-Paste your MCP server configuration (see examples above).
+Paste the Cursor block from the administration page **AI clients** tab or from `config client`, or write it manually (see examples above).
 
 ### 4. Restart Cursor
 
@@ -198,8 +154,8 @@ Close and reopen Cursor IDE to load the new configuration.
 
 1. Open Cursor
 2. Open Cursor Settings
-3. Look for MCP section (may be in AI/Extensions settings)
-4. Verify "prtg" server appears
+3. Look for the MCP section
+4. Verify the "prtg" server appears and is connected
 
 ### Test Connection
 
@@ -213,17 +169,16 @@ Cursor should use the MCP tools to query your PRTG data.
 
 ## Available Tools
 
-Once connected, Cursor will have access to all MCP Server PRTG tools:
+Once connected, Cursor has access to the MCP Server PRTG tools:
 
-**PostgreSQL-based (12 tools):**
+**Database tools (PostgreSQL target database of PRTG Data Exporter):**
 - Sensors, sensor status, alerts, device overview, top sensors
 - Hierarchy, search, groups, tags
 - Business processes, statistics
 - Custom SQL queries (only if `allow_custom_queries: true`)
 
-**PRTG API v2 (2 tools, when `prtg.enabled: true`):**
-- Current channel values
-- Time series data for a predefined period (`live`, `short`, `medium`, `long`)
+**Metrics tools (database first):**
+- `prtg_get_channel_current_values` and `prtg_get_sensor_timeseries` read the channel history in the database first; each answer starts with a `Source:` line. The optional `source` parameter selects `auto` (default), `database` or `prtg` (real time from the PRTG API v2 when configured).
 
 See [TOOLS.md](TOOLS.md) for complete documentation.
 
@@ -232,7 +187,7 @@ See [TOOLS.md](TOOLS.md) for complete documentation.
 ### Configuration Not Loaded
 
 **Solutions:**
-1. Check JSON syntax (use JSONLint.com)
+1. Check JSON syntax
 2. Verify file location: `~/.cursor/mcp.json` or `.cursor/mcp.json`
 3. Restart Cursor completely
 4. Check Cursor logs (Help → Show Logs)
@@ -242,71 +197,41 @@ See [TOOLS.md](TOOLS.md) for complete documentation.
 **Error:** "Cannot connect to MCP server"
 
 **Check:**
-1. Server is running: `curl https://your-server:8443/health`
-2. API key is correct
-3. Firewall allows port 8443
-4. URL format is correct
+1. Server is running: `mcp-server-prtg status`
+2. API key is correct (`config show-api-key`)
+3. Firewall allows the MCP port (8443 by default)
+4. URL format is correct (`https://host:port/mcp`)
 
 **View server logs:**
 ```bash
 # Linux
-tail -f /opt/mcp-server-prtg/logs/mcp-server-prtg.log
+tail -f /var/log/mcp-server-prtg/mcp-server-prtg.log
 
 # Windows
-type logs\mcp-server-prtg.log
+type "C:\ProgramData\Sensor Factory\MCP Server PRTG\logs\mcp-server-prtg.log"
 ```
+
+### Certificate Errors
+
+**Error:** TLS or certificate verification failure
+
+**Solution:** Import the server certificate (`server.crt`) into the trusted root certificates of the client computer (see "Server Certificate (TLS)" above). Do not disable certificate verification.
 
 ### Authentication Errors
 
 **Error:** "Unauthorized" or "403 Forbidden"
 
 **Solutions:**
-1. Verify API key from `config.yaml`
-2. Check Bearer token format in configuration
-3. Ensure no typos in header name: `Authorization:Bearer`
+1. Verify the API key with `config show-api-key`
+2. Check the header format: `"Authorization": "Bearer <key>"`
+3. Ensure there are no typos in the header name
 
 ### Tools Not Appearing
 
 **Check:**
-1. MCP server connection is active
-2. Database connection works (check server status)
-3. PRTG API v2 configured (for API tools)
-
-```bash
-# Check server status
-./mcp-server-prtg status
-```
-
-### mcp-remote Issues
-
-**Error:** "npx: command not found"
-
-**Solution:** Install Node.js and npm:
-```bash
-# macOS
-brew install node
-
-# Ubuntu/Debian
-sudo apt install nodejs npm
-
-# Windows
-# Download from nodejs.org
-```
-
-**Error:** "mcp-remote not found"
-
-**Solution:** Install explicitly:
-```bash
-npm install -g mcp-remote
-```
-
-Then update configuration:
-```json
-{
-  "command": "mcp-remote",
-  "args": ["https://your-server:8443/mcp", ...]
-}
-```
+1. MCP server connection is active in Cursor settings
+2. Database connection works (check the administration page Overview tab)
+3. The metrics tools appear when the database holds channel history or the PRTG API v2 is configured
 
 ## Example Usage in Cursor
 
@@ -316,7 +241,7 @@ Then update configuration:
 Cursor Chat: Show me all down sensors in PRTG
 ```
 
-Cursor uses `prtg_get_sensors` with status filter.
+Cursor uses `prtg_get_sensors` with a status filter.
 
 ### Analyze Trends
 
@@ -324,7 +249,7 @@ Cursor uses `prtg_get_sensors` with status filter.
 Cursor Chat: Analyze the bandwidth usage trend for sensor 12345 over the last week
 ```
 
-Cursor uses `prtg_get_sensor_timeseries` with `time_type=medium`.
+Cursor uses `prtg_get_sensor_timeseries` with period `medium`.
 
 ### Generate Reports
 
@@ -338,8 +263,8 @@ Cursor combines multiple tools (`prtg_get_alerts`, `prtg_device_overview`, `prtg
 
 ### Security
 
-1. **Use environment variables** for API keys
-2. **Use proper TLS certificates** in production
+1. **Keep the API key out of shared files** — use the value from `config show-api-key` only on the client machine that needs it
+2. **Trust the server certificate** instead of disabling verification
 3. **Don't commit** `mcp.json` with secrets to git
 
 Add to `.gitignore`:
@@ -357,66 +282,9 @@ Add to `.gitignore`:
 - Development/staging servers
 - Project-specific configurations
 
-## Advanced Configuration
-
-### With HTTP Proxy
-
-If behind a corporate proxy:
-
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://your-server:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
-      ],
-      "env": {
-        "PRTG_API_KEY": "your-key",
-        "HTTP_PROXY": "http://proxy.company.com:8080",
-        "HTTPS_PROXY": "http://proxy.company.com:8080"
-      }
-    }
-  }
-}
-```
-
-### With Custom Timeout
-
-For slow networks:
-
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://your-server:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}",
-        "--timeout",
-        "60000"
-      ],
-      "env": {
-        "PRTG_API_KEY": "your-key"
-      }
-    }
-  }
-}
-```
-
 ## Transport Details
 
-Cursor supports multiple MCP transport types:
-- **STDIO**: Local processes
-- **SSE**: Server-Sent Events
-- **Streamable HTTP**: Our recommended approach (via mcp-remote)
-
-MCP Server PRTG uses **Streamable HTTP** when it runs as a service, which `mcp-remote` handles automatically. It can also run locally in **stdio** mode (`npx -y @senhub-io/mcp-server-prtg`, PRTG API v2 only, no PostgreSQL); see [CLAUDE_DESKTOP_CONFIG.md](CLAUDE_DESKTOP_CONFIG.md#stdio-mode-without-a-server).
+MCP Server PRTG uses **Streamable HTTP** when it runs as a service; Cursor connects to it directly with the `url` and `headers` fields shown above.
 
 ## Next Steps
 
@@ -424,7 +292,3 @@ MCP Server PRTG uses **Streamable HTTP** when it runs as a service, which `mcp-r
 - [Tools Reference](TOOLS.md) - Available MCP tools
 - [Usage Guide](USAGE.md) - Examples and best practices
 - [Troubleshooting](TROUBLESHOOTING.md) - Common issues
-
-## Feedback
-
-This configuration is based on Cursor's official MCP documentation. If you test it successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues).

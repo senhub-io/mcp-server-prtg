@@ -26,11 +26,12 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 
 - **Streamable HTTP Transport**: Modern MCP protocol with HTTP SSE streaming
 - **MCP Protocol**: Full implementation of Model Context Protocol
-- **14 MCP Tools (HTTP mode)**: 12 PostgreSQL-based + 2 PRTG API v2 tools (the latter when `prtg.enabled: true`)
+- **14 MCP Tools (HTTP mode)**: 12 PostgreSQL-based + 2 metrics tools (`prtg_get_channel_current_values`, `prtg_get_sensor_timeseries`) that read the database first and fall back to the PRTG API v2 when needed (registered when the database holds channel history or the PRTG API is configured)
 - **stdio mode**: 13 tools backed by PRTG API v2 only, without PostgreSQL (npm package or `mcp-server-prtg stdio`)
-- **PostgreSQL Database**: Read-only access to PRTG monitoring data
-- **PRTG API v2 Integration**: Direct access to historical metrics and channel data
-- **Multi-platform Service**: Windows, Linux, and macOS support via kardianos/service
+- **PostgreSQL Database**: Read-only access to the PRTG Data Exporter 2026.x target database (`prtg_data_exporter_collection` by default)
+- **PRTG API v2 Integration**: Optional direct access to real-time metrics and channel data
+- **Multi-platform Service**: Windows and Linux support via kardianos/service (macOS is not shipped as a service binary; the npm stdio package is unchanged)
+- **Administration page**: Web interface at `https://localhost:<port>/admin/` (loopback only) for overview, settings and ready-to-paste AI client configuration
 - **TLS/HTTPS**: Built-in TLS with automatic certificate generation
 - **Hot-reload**: Dynamic configuration reloading without restarts
 - **Structured Logging**: JSON-based logging with rotation support
@@ -62,6 +63,7 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 │    • POST/GET /mcp     → Streamable HTTP (auth required)      │
 │    • GET     /health   → Health check (public)                │
 │    • GET     /status   → Server status (auth required)        │
+│    • GET/POST /admin/  → Administration page (loopback only)  │
 │                                                                 │
 │  Features:                                                      │
 │    • Single endpoint for all MCP operations                    │
@@ -101,12 +103,12 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 │    • prtg_get_statistics                                       │
 │    • prtg_query_sql                                            │
 │                                                                 │
-│  PRTG API v2 Tools (2):                                        │
+│  Metrics Tools (2, database first):                            │
 │    • prtg_get_channel_current_values                           │
 │    • prtg_get_sensor_timeseries                                │
 └───────────┬──────────────────────────┬──────────────────────────┘
             │                          │
-            │ SQL queries              │ HTTPS API calls
+            │ SQL queries              │ HTTPS API calls (fallback)
             ▼                          ▼
 ┌─────────────────────────┐  ┌─────────────────────────────────┐
 │    Database Layer       │  │      PRTG API Client            │
@@ -115,23 +117,27 @@ MCP Server PRTG is a Go-based server that bridges PRTG monitoring data with Larg
 │  • Connection pooling   │  │  • Bearer token auth            │
 │  • Query timeout (30s)  │  │  • Request timeout (30s)        │
 │  • Result scanning      │  │  • SSL verification             │
-└────────┬────────────────┘  │  • JSON parsing                 │
-         │                   └────────┬────────────────────────┘
-         │ PostgreSQL                 │ HTTPS (API v2)
-         │ protocol                   │ port 1616
-         ▼                            ▼
+└────────┬────────────────┘  │  • Request guard (cache,       │
+         │                   │    coalescing, max 2 in flight) │
+         │ PostgreSQL        └────────┬────────────────────────┘
+         │ protocol                   │ HTTPS (API v2)
+         ▼                            │ port 1616
 ┌──────────────────────┐     ┌────────────────────────────────┐
 │  PostgreSQL Database │     │      PRTG Core Server          │
-│  (PRTG Data Exporter)│     │      (API v2 Endpoint)         │
-│                      │     │                                │
-│  Tables:             │     │  Endpoints:                    │
-│    • prtg_sensor     │     │    • GET /api/v2/object/{id}/  │
-│    • prtg_device     │     │          channels              │
-│    • prtg_sensor_path│     │    • GET /api/v2/object/{id}/  │
-│    • prtg_device_path│     │          timeseries            │
-│    • prtg_tag        │     │    • POST /api/v2/session      │
+│  (PRTG Data Exporter │     │      (API v2 Endpoint)         │
+│   target database:   │     │                                │
+│   prtg_data_exporter │     │  Endpoints:                    │
+│   _collection)       │     │    • GET /api/v2/object/{id}/  │
+│                      │     │          channels              │
+│  Tables:             │     │    • GET /api/v2/object/{id}/  │
+│    • prtg_sensor     │     │          timeseries            │
+│    • prtg_device     │     │    • POST /api/v2/session      │
+│    • prtg_sensor_path│     │                                │
+│    • prtg_device_path│     │                                │
+│    • prtg_tag        │     │                                │
 │    • prtg_sensor_tag │     │                                │
 │    • prtg_group      │     │                                │
+│    • prtg_channel_value (channel history)                     │
 └──────────────────────┘     └────────────────────────────────┘
 ```
 
@@ -427,6 +433,7 @@ s.httpServer = &http.Server{
 mux.Handle("/mcp", s.createAuthMiddleware(s.streamableHTTP))      // MCP endpoint (authenticated)
 mux.HandleFunc("/health", s.handleHealth)                          // Health check (public)
 mux.Handle("/status", s.createAuthMiddleware(...))                 // Status (authenticated)
+mux.Handle("/admin/", s.createAdminHandler())                      // Administration page (loopback only)
 ```
 
 #### Connection Flow
@@ -443,6 +450,19 @@ mux.Handle("/status", s.createAuthMiddleware(...))                 // Status (au
 - Built-in heartbeat mechanism
 - Better connection stability
 - Easier to deploy and configure
+
+### Administration Page
+
+**URL**: `https://localhost:<port>/admin/` (8443 by default)
+
+The administration page is reachable from the server itself only (loopback; requests carrying proxy forwarding headers are refused). Sign in with the MCP API key; sessions are kept in memory (8 h, 30 min idle), so a restart asks to sign in again.
+
+**Tabs:**
+- **Overview**: service version/uptime/tools, database status and detected schema features, PRTG API configured or not (the page never calls PRTG by itself), channel history coverage, Data Exporter collection profiles
+- **Settings**: database, PRTG API v2, MCP port, log level; Test connection buttons for the database and PRTG test the values typed before saving; secrets are never shown (leave a secret field empty to keep it; a stored secret is only reused for the same database host/port/user without weakening the SSL mode, or the same PRTG URL without turning off certificate verification); Save, Save and restart
+- **AI clients**: ready-to-paste configuration with Copy button (also available from the command line with `mcp-server-prtg config client`)
+
+Security: strict Content-Security-Policy, anti-CSRF header, login failures rate limited.
 
 ### MCP Protocol Handler
 
@@ -490,6 +510,8 @@ type TextContent struct {
 
 **File**: `internal/database/db.go`, `internal/database/queries.go`
 **Driver**: [jackc/pgx/v5](https://github.com/jackc/pgx)
+
+The server reads the PostgreSQL **target** database of PRTG Data Exporter 2026.x, default name `prtg_data_exporter_collection` (not the Data Exporter configuration database `prtg_data_exporter`, which also stores PRTG credentials). Older Data Exporter layouts still work: the schema is detected at start-up (soft delete, tree depth, channel values, collection status, per-sensor last fetch).
 
 #### Connection Management
 
@@ -559,11 +581,24 @@ func scanSensors(rows *sql.Rows) ([]types.Sensor, error) {
 }
 ```
 
+#### Recommended Read-Only Role
+
+```sql
+CREATE ROLE mcp_prtg_reader LOGIN;
+\password mcp_prtg_reader
+GRANT CONNECT ON DATABASE prtg_data_exporter_collection TO mcp_prtg_reader;
+-- in that database:
+GRANT USAGE ON SCHEMA public TO mcp_prtg_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_prtg_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE prtg_data_exporter_user_td IN SCHEMA public
+  GRANT SELECT ON TABLES TO mcp_prtg_reader;
+```
+
 ### PRTG API Layer
 
 **File**: `internal/prtg/client.go`, `internal/handlers/tools_metrics.go`
 
-The PRTG API layer provides direct access to PRTG Core Server's API v2 for historical metrics and real-time channel data.
+The PRTG API layer provides optional direct access to PRTG Core Server's API v2 for real-time metrics and channel data. The PRTG API v2 must be activated on the PRTG core server (PRTG Application Server, ports 1616/1615 and 23580; default on new installs since 25.2.106, automatic on update to 26.4.126 when enough memory is free; otherwise Setup → Activate, then restart the core server).
 
 #### Client Configuration
 
@@ -587,7 +622,7 @@ config := &ClientConfig{
 #### API Client Features
 
 **Authentication:**
-- Bearer token authentication (PRTG API v2 token)
+- Bearer token authentication (PRTG API v2 token of type Scripting with read access)
 - Separate from MCP Server API key
 - Configured in `prtg.api_token` section
 
@@ -607,7 +642,7 @@ The PRTG API v2 time series endpoint does not accept custom ranges; only the pre
 All PRTG API v2 calls go through a request guard that protects the PRTG Core Server:
 - Responses are cached: 30 seconds for sensor lists and statuses, 60 seconds for channels and devices, 5 minutes for groups, objects and non-live time series
 - Identical concurrent requests are coalesced into a single upstream call
-- At most 2 requests are in flight at a time by default
+- At most 2 requests are in flight at a time
 
 **Error Handling:**
 ```go
@@ -631,9 +666,19 @@ func (c *Client) GetChannelsBySensor(ctx context.Context, sensorID int) ([]Chann
 - Context-based cancellation
 - Proper cleanup on errors
 
+#### Database-First Metrics
+
+The metrics tools `prtg_get_channel_current_values` and `prtg_get_sensor_timeseries` read `prtg_channel_value` first. Each answer starts with a `Source:` line. An optional parameter `source` controls the behavior:
+
+- `auto` (default): database first, PRTG API only when needed
+- `database`: never call PRTG
+- `prtg`: real time from the PRTG API
+
+In `auto` mode: a `live` period uses the PRTG API when configured; a sensor whose Data Exporter export is older than 24 h (from `prtg_sensor_last_fetched_day`) uses the PRTG API when configured, otherwise the answer states when the export stopped; if the PRTG API fails, the database answer is returned with a note. Windows/buckets from the database: live 2 h/5 min, short 24 h/15 min, medium 7 d/1 h, long 30 d/6 h. Byte-size units (Ko…To, KB…TB) are converted from raw bytes (base 1024). Missing channel names are fetched once from the PRTG API when configured, otherwise flagged.
+
 #### Integration with Tool Handlers
 
-The metrics tool handler uses the PRTG API client:
+The metrics tool handler uses the PRTG API client as a fallback:
 
 ```go
 type MetricsToolHandler struct {
@@ -660,7 +705,7 @@ func (h *MetricsToolHandler) RegisterMetricsTools(s *server.MCPServer) {
 **File**: `cmd/server/service.go`
 **Library**: [kardianos/service](https://github.com/kardianos/service)
 
-Cross-platform service management for Windows, Linux, and macOS.
+Cross-platform service management for Windows and Linux. Supported service platforms for releases: Windows amd64 (MSI or zip) and Linux amd64/arm64 (tar.gz). macOS is not shipped as a service binary (the npm stdio package is unchanged).
 
 #### Service Interface
 
@@ -690,7 +735,8 @@ func (p *program) Stop(service.Service) error {
 
 **Windows:**
 - Service name: `mcp-server-prtg`
-- Runs as Windows Service
+- Runs as Windows Service (LocalSystem, automatic start, restart on failure)
+- MSI installs `C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe`; data in `C:\ProgramData\Sensor Factory\MCP Server PRTG\` (config.yaml, certs, logs; ACL SYSTEM + Administrators only; kept on uninstall)
 - Logs to file
 
 **Linux:**
@@ -698,10 +744,7 @@ func (p *program) Stop(service.Service) error {
 - Systemd unit file
 - Restart policy: always
 - User: root (configurable)
-
-**macOS:**
-- LaunchAgent/LaunchDaemon
-- Automatic restart on failure
+- Install: extract the tar.gz, `sudo install -m 0755 mcp-server-prtg /usr/local/bin/`, `sudo mkdir -p /etc/mcp-server-prtg`, then `sudo mcp-server-prtg config init --config /etc/mcp-server-prtg/config.yaml ...`, `sudo mcp-server-prtg install --config /etc/mcp-server-prtg/config.yaml` and `sudo mcp-server-prtg start`
 
 #### Service Operations
 
@@ -785,8 +828,14 @@ err := server.ListenAndServeTLS(certFile, keyFile)
 **Self-Signed Certificate Generation:**
 - RSA 2048-bit key
 - 1-year validity
-- Subject Alternative Names (SANs): localhost, 127.0.0.1, ::1
-- Automatic generation on first run
+- Subject Alternative Names (SANs): localhost, the machine name and its IP addresses
+- Automatic generation on first run (regenerated at start when missing; delete the certs folder and restart to regenerate, e.g. after renaming the server)
+
+**Trusting the certificate:** Clients must trust the server certificate instead of disabling verification. Copy `server.crt` (next to config.yaml) to each client computer and import it into the trusted root certificates (Windows: `Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root`; macOS: Keychain Access, "Always Trust"). For Claude Desktop/mcp-remote, set `NODE_EXTRA_CA_CERTS` to the path of a copy of the certificate. Do not use `NODE_TLS_REJECT_UNAUTHORIZED=0`: it exposes the API key. A certificate from the company PKI can be used instead (`server.cert_file` / `server.key_file`).
+
+#### Encrypted Secrets
+
+`server.api_key`, `database.password` and `prtg.api_token` are stored encrypted in config.yaml as `enc:dpapi:...` (Windows, DPAPI machine scope: only that machine can decrypt) or `enc:aes:...` (Linux, AES-256-GCM with the key in `secret.key` next to config.yaml, mode 0600; back it up with the config, losing it means re-entering the secrets). A clear-text value typed in config.yaml is encrypted in place at the next service start. A config file copied to another machine cannot be decrypted there: re-enter the secrets.
 
 #### SQL Injection Prevention
 
@@ -818,6 +867,7 @@ For defense in depth, connect with a dedicated PostgreSQL role that only has SEL
 
 Automatic secure file permissions:
 - `config.yaml`: 0600 (owner read/write only)
+- `secret.key`: 0600 (owner read/write only)
 - `server.key`: 0600 (owner read/write only)
 - `server.crt`: 0600 (owner read/write only)
 - Log files: 0640 (owner read/write, group read)
@@ -1025,6 +1075,10 @@ The server was migrated from SSE v2 (dual-server architecture) to Streamable HTT
 - Excellent error handling
 - Active development
 
+### Why Database-First Metrics?
+
+The metrics tools read `prtg_channel_value` first because the Data Exporter already collects channel history, which avoids hammering the PRTG Core Server. The PRTG API v2 is used only when needed (live data, stale exports, explicit `source=prtg`), and every API call goes through the request guard.
+
 ### Why Go?
 
 **Alternatives Considered:**
@@ -1090,7 +1144,7 @@ This sends periodic heartbeats to keep connections alive, addressing the timeout
 
 ### Caching Strategy
 
-PostgreSQL queries are not cached. PRTG API v2 calls are cached by the request guard (see [PRTG API Layer](#prtg-api-layer)), which also coalesces identical concurrent requests and limits requests in flight to protect the PRTG Core Server. Considerations for the PostgreSQL side:
+PostgreSQL queries are not cached. PRTG API v2 calls are cached by the request guard (see [PRTG API Layer](#prtg-api-layer)), which also coalesces identical concurrent requests and limits requests in flight to 2 to protect the PRTG Core Server. Considerations for the PostgreSQL side:
 
 **Pros of caching:**
 - Reduced database load
@@ -1111,7 +1165,7 @@ PostgreSQL queries are not cached. PRTG API v2 calls are cached by the request g
 1. **Network Layer**: TLS encryption, firewall rules
 2. **Application Layer**: Bearer token authentication, rate limiting
 3. **Database Layer**: Read-only user, parameterized queries
-4. **File System**: Restricted file permissions
+4. **File System**: Restricted file permissions, encrypted secrets
 5. **Query Layer**: SQL injection prevention
 
 ### Threat Model
@@ -1120,10 +1174,10 @@ PostgreSQL queries are not cached. PRTG API v2 calls are cached by the request g
 |--------|-----------|
 | Unauthorized access | Bearer token authentication (header only, constant-time comparison, minimum key length 16) |
 | Brute-force attacks | IP-based rate limiting (5 attempts/min, 5 min lockout) |
-| Man-in-the-middle | TLS encryption |
+| Man-in-the-middle | TLS encryption; clients trust the server certificate |
 | SQL injection | Parameterized queries; custom queries run in a read-only transaction with restricted tables and functions rejected |
 | Data modification | Read-only database user |
-| Credential exposure | File permissions (0600), password masking in logs |
+| Credential exposure | Encrypted secrets in config.yaml, file permissions (0600), password masking in logs |
 | DoS attacks | Query timeouts, result limits, rate limiting, PRTG API v2 request guard |
 | Certificate theft | Secure file permissions |
 | Slow-loris attacks | ReadHeaderTimeout protection |
@@ -1145,3 +1199,4 @@ PostgreSQL queries are not cached. PRTG API v2 calls are cached by the request g
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [GitHub Repository](https://github.com/senhub-io/mcp-server-prtg)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
+```

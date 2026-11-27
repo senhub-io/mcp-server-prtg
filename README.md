@@ -5,7 +5,7 @@
 [![Go](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A [Model Context Protocol](https://modelcontextprotocol.io) server that gives MCP clients (Claude Desktop, Cursor, Continue, Cline, ...) read access to Paessler PRTG Network Monitor data: sensor status, alerts, device overviews, hierarchy, search, tags, business processes, statistics and channel time series.
+A [Model Context Protocol](https://modelcontextprotocol.io) server that gives MCP clients (Claude Desktop, Claude Code, Cursor, VS Code, ...) read access to Paessler PRTG Network Monitor data: sensor status, alerts, device overviews, hierarchy, search, tags, business processes, statistics and channel time series.
 
 ## Data sources
 
@@ -44,7 +44,7 @@ See [docs/TOOLS.md](docs/TOOLS.md) for details.
 
 ### 1. HTTP service on Windows
 
-Download `mcp-server-prtg-<version>-amd64.msi` from [Releases](https://github.com/senhub-io/mcp-server-prtg/releases) and run it as administrator. The wizard asks for the database (host, port, name `prtg_data_exporter_collection`, user `mcp_prtg_reader`, password, SSL mode, HTTPS port) and optionally the PRTG API v2 settings, writes `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml` with secrets encrypted, and starts the service `mcp-server-prtg`.
+Download `mcp-server-prtg-2.0.0-amd64.msi` from [Releases](https://github.com/senhub-io/mcp-server-prtg/releases) and run it as administrator. The wizard asks for the database (host, port, name `prtg_data_exporter_collection`, user `mcp_prtg_reader`, password, SSL mode, HTTPS port) and optionally the PRTG API v2 settings, writes `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml` with secrets encrypted, and starts the service `mcp-server-prtg`.
 
 Setup ends by showing the ready-to-paste configuration for Claude Desktop, Claude Code, Cursor and VS Code (also available from the Start Menu shortcut **MCP Server PRTG - AI client configuration**, or with `mcp-server-prtg.exe config client` in an elevated prompt).
 
@@ -54,7 +54,7 @@ Settings, connection tests and the AI client configuration are also available on
 
 ### 2. HTTP service on Linux
 
-Download `mcp-server-prtg-<version>-linux-amd64.tar.gz` (or `-linux-arm64.tar.gz`), extract, then:
+Download `mcp-server-prtg-2.0.0-linux-amd64.tar.gz` (or `-linux-arm64.tar.gz`), extract, then:
 
 ```sh
 sudo install -m 0755 mcp-server-prtg /usr/local/bin/
@@ -73,14 +73,17 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
   "mcpServers": {
     "prtg": {
       "command": "npx",
-      "args": ["mcp-remote", "https://<MCP_SERVER_HOST>:8443/mcp", "--header", "Authorization:Bearer ${MCP_SERVER_API_KEY}"],
-      "env": { "MCP_SERVER_API_KEY": "<api_key from config show-api-key>" }
+      "args": ["mcp-remote", "https://<MCP_SERVER_HOST>:8443/mcp", "--header", "Authorization:Bearer ${MCP_PRTG_API_KEY}"],
+      "env": {
+        "MCP_PRTG_API_KEY": "<api_key from config show-api-key>",
+        "NODE_EXTRA_CA_CERTS": "<path to a copy of server.crt>"
+      }
     }
   }
 }
 ```
 
-With the generated self-signed certificate, add `"NODE_TLS_REJECT_UNAUTHORIZED": "0"` to `env`, or install a certificate trusted by the clients.
+The server uses a self-signed certificate by default. Copy `server.crt` from the server's certs folder to each client computer and trust it (Claude Desktop/mcp-remote: `NODE_EXTRA_CA_CERTS`; Claude Code, Cursor, VS Code: import into the computer's trusted root certificates). Do not disable certificate verification.
 
 ### 4. stdio mode (Claude Desktop example)
 
@@ -143,7 +146,7 @@ Report vulnerabilities privately via [GitHub Security Advisories](https://github
 - Client guides: [docs/CLAUDE_DESKTOP_CONFIG.md](docs/CLAUDE_DESKTOP_CONFIG.md), [docs/CURSOR_CONFIG.md](docs/CURSOR_CONFIG.md), [docs/CONTINUE_CONFIG.md](docs/CONTINUE_CONFIG.md), [docs/CLINE_CONFIG.md](docs/CLINE_CONFIG.md)
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture
-- [docs/RELEASING.md](docs/RELEASING.md) — betas and signed production releases
+- [docs/RELEASING.md](docs/RELEASING.md) — release procedure for maintainers
 - [CHANGELOG.md](CHANGELOG.md) — changelog
 
 ## Build from source
@@ -159,6 +162,10 @@ make test
 ## Contributing
 
 Issues and pull requests are welcome. Run `make test` before opening a PR; one logical change per commit.
+
+## Releases
+
+Production releases (2.0.0 and later) are code-signed: the Windows executable and MSI carry an Authenticode signature (certificate "SENSOR FACTORY SAS" issued by Certum, RFC 3161 timestamp). Verify with `Get-AuthenticodeSignature <file>` on Windows; the status must be `Valid`. Beta pre-releases are not signed.
 
 ## License
 

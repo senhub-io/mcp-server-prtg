@@ -5,6 +5,7 @@ This guide covers all configuration options for MCP Server PRTG.
 ## Table of Contents
 
 - [Configuration File Location](#configuration-file-location)
+- [Editing the Configuration](#editing-the-configuration)
 - [Configuration File Structure](#configuration-file-structure)
 - [Server Configuration](#server-configuration)
 - [Database Configuration](#database-configuration)
@@ -12,22 +13,34 @@ This guide covers all configuration options for MCP Server PRTG.
 - [Logging Configuration](#logging-configuration)
 - [Encrypted Secrets](#encrypted-secrets)
 - [Environment Variables](#environment-variables)
-- [config init and show-api-key](#config-init-and-show-api-key)
+- [config Commands](#config-commands)
 - [TLS/HTTPS Setup](#tlshttps-setup)
-- [Hot-Reload](#hot-reload)
-- [Advanced Configuration](#advanced-configuration)
+- [Configuration Examples](#configuration-examples)
 
 ## Configuration File Location
 
-The configuration file is named `config.yaml` and is located by default in the same directory as the executable.
+The configuration file is named `config.yaml`.
+
+- **Windows (MSI):** `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml`
+- **Linux:** `/etc/mcp-server-prtg/config.yaml`
 
 You can specify a custom location using the `--config` flag:
 
 ```bash
-./mcp-server-prtg run --config /path/to/config.yaml
+mcp-server-prtg run --config /path/to/config.yaml
 ```
 
-On Windows, the MSI installer places the configuration in `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml`. On Linux, the documented location is `/etc/mcp-server-prtg/config.yaml`.
+## Editing the Configuration
+
+The recommended way to edit the configuration is the administration page:
+
+```
+https://localhost:<port>/admin/
+```
+
+Sign in with the MCP API key. The **Settings** tab lets you change the database settings, the PRTG API v2 settings, the MCP port and the log level. Use **Test connection** to check the database or PRTG values before saving. Secrets are never shown: leave a secret field empty to keep the stored value. A stored secret is only reused for the same database host/port/user without weakening the SSL mode, or for the same PRTG URL without turning off certificate verification; otherwise it must be typed again. Use **Save** or **Save and restart** (the service exits and the service manager starts it again).
+
+Alternatively, use `config init` (see [config Commands](#config-commands)) and then restart the service.
 
 ## Configuration File Structure
 
@@ -124,7 +137,7 @@ Only the `Authorization` header is accepted; the key cannot be passed as a URL q
 **Default:** `certs/server.crt` in a `certs` folder next to the configuration file
 **Description:** Path to TLS certificate file (PEM format).
 
-Automatically generated on first run if `enable_tls` is true and no certificate exists.
+Automatically generated at start when missing if `enable_tls` is true.
 
 ### key_file
 
@@ -361,10 +374,10 @@ These environment variables feed the same options as the configuration file and 
 
 ```bash
 export PRTG_DB_PASSWORD="secure_password"
-./mcp-server-prtg run
+mcp-server-prtg run
 ```
 
-## config init and show-api-key
+## config Commands
 
 ```bash
 mcp-server-prtg config init --config <path> [--https] [--port N] [--db-host H] [--db-port N] [--db-name N] [--db-user U] [--db-password P] [--db-sslmode M] [--prtg-url URL] [--prtg-token T] [--prtg-verify-ssl=true|false] [--prtg-timeout S] [--prtg-disable] [--api-key K] [--log-file F]
@@ -378,55 +391,41 @@ mcp-server-prtg config show-api-key --config <path>
 
 Prints the decrypted MCP API key.
 
+```bash
+mcp-server-prtg config client [--host <name>] [--config <path>]
+```
+
+Prints the ready-to-paste configurations for Claude Desktop, Claude Code, Cursor and VS Code. `config show-api-key` and `config client` find the installed configuration without `--config` (ProgramData on Windows, `/etc/mcp-server-prtg` on Linux).
+
 The service commands are unchanged: `install`, `uninstall`, `start`, `stop`, `status`, `run`.
 
 ## TLS/HTTPS Setup
 
 ### Automatic Self-Signed Certificates
 
-On first installation with `enable_tls: true`, the server automatically generates self-signed certificates in a `certs` folder next to the configuration file:
+When `enable_tls: true` and no certificate exists, the server generates a self-signed certificate at start in a `certs` folder next to the configuration file:
 
 - **Certificate:** `certs/server.crt`
 - **Private Key:** `certs/server.key`
-- **Validity:** 1 year
-- **Subject:** CN=localhost, O=MCP Server PRTG
-- **SANs:** localhost, 127.0.0.1, ::1
+
+The certificate covers `localhost`, the machine name and its IP addresses. It is regenerated automatically at start when missing (delete the `certs` folder and restart to regenerate, for example after renaming the server).
+
+### Trusting the Certificate
+
+Clients must trust `server.crt` instead of disabling verification. Copy `server.crt` to each client computer:
+
+- **Claude Desktop / mcp-remote:** set `NODE_EXTRA_CA_CERTS` to the path of a copy of the certificate.
+- **Claude Code, Cursor, VS Code:** import into the computer's trusted root certificates (Windows: `certlm.msc` → Trusted Root Certification Authorities, or `Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root`; macOS: Keychain Access, "Always Trust").
+
+Do NOT set `NODE_TLS_REJECT_UNAUTHORIZED=0`: it exposes the API key.
 
 ### Using Custom Certificates
 
-For production with public domains, use certificates from a trusted Certificate Authority and point `cert_file` / `key_file` at them, then restart the service.
+A certificate from the company PKI can be used instead: set `server.cert_file` and `server.key_file` and restart the service.
 
 ### Disabling TLS (Not Recommended)
 
 For development only: set `enable_tls: false`. All communication including API keys will be transmitted in plain text.
-
-## Hot-Reload
-
-The server watches `config.yaml` and reloads it on change. Hot-reloadable: logging level, database connection settings, API key. A restart is required for bind address, port, TLS settings and certificate files.
-
-## Advanced Configuration
-
-### Database Connection Pooling
-
-The server uses pgx with automatic connection pooling (default pool size 25, max idle 30 minutes, max lifetime 1 hour). Not currently configurable.
-
-### Query Timeouts
-
-Database queries have a 30-second timeout. Custom queries through `prtg_query_sql` have a stricter 15-second statement timeout.
-
-### Streamable HTTP Transport
-
-- Read/Write Timeout: 0 (no timeout for streaming)
-- Idle Timeout: 60 minutes
-- ReadHeaderTimeout: 10 seconds
-- Heartbeat Interval: 30 seconds
-
-### File Permissions
-
-- `config.yaml`: 0600
-- `secret.key`: 0600
-- `server.key` / `server.crt`: 0600
-- Log files: 0640
 
 ## Configuration Examples
 

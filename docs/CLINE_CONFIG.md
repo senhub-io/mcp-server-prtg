@@ -1,15 +1,5 @@
 # Cline Configuration
 
-> ⚠️ **UNTESTED CONFIGURATION**
->
-> This configuration is based on official Cline MCP documentation but has **not been tested** with MCP Server PRTG.
->
-> **Status**: Community contribution - feedback needed!
->
-> **Known Issue**: Cline v3.17.5+ has reported HTTP transport regressions. Configuration may require workarounds.
->
-> If you test this configuration successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues). Your experience will help improve this guide!
-
 Configure [Cline](https://github.com/cline/cline) (VS Code extension) to connect to your MCP Server PRTG instance.
 
 ## Prerequisites
@@ -17,7 +7,19 @@ Configure [Cline](https://github.com/cline/cline) (VS Code extension) to connect
 - MCP Server PRTG installed and running
 - VS Code installed
 - Cline extension installed from VS Code Marketplace
-- Server API key from `config.yaml`
+- Server API key and client configuration from the administration page or `config client` command
+
+## Getting the Ready-to-Paste Configuration
+
+On the server, open the administration page at `https://localhost:<port>/admin/` (8443 by default), sign in with the MCP API key, and open the **AI clients** tab. Copy the Cline/VS Code block with the Copy button.
+
+Alternatively, run on the server:
+
+```bash
+mcp-server-prtg config client
+```
+
+This prints the configurations for Claude Desktop, Claude Code, Cursor and VS Code.
 
 ## Configuration Location
 
@@ -39,11 +41,16 @@ Cline uses `cline_mcp_settings.json` for MCP server configuration:
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://your-server:8443/mcp",
         "--header",
-        "Authorization:Bearer YOUR_API_KEY"
-      ]
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
+      ],
+      "env": {
+        "MCP_PRTG_API_KEY": "your-api-key",
+        "NODE_EXTRA_CA_CERTS": "/path/to/server.crt"
+      }
     }
   }
 }
@@ -59,11 +66,16 @@ Cline uses `cline_mcp_settings.json` for MCP server configuration:
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-      ]
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
+      ],
+      "env": {
+        "MCP_PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7",
+        "NODE_EXTRA_CA_CERTS": "C:\\path\\to\\server.crt"
+      }
     }
   }
 }
@@ -77,13 +89,15 @@ Cline uses `cline_mcp_settings.json` for MCP server configuration:
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://prtg-mcp.company.com:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "your-api-key-here"
+        "MCP_PRTG_API_KEY": "your-api-key-here",
+        "NODE_EXTRA_CA_CERTS": "/home/user/certs/server.crt"
       }
     }
   }
@@ -92,28 +106,12 @@ Cline uses `cline_mcp_settings.json` for MCP server configuration:
 
 ### Self-Signed Certificates
 
-For development with self-signed certificates:
+The server uses a self-signed certificate (`server.crt` next to `config.yaml`). Do not disable certificate verification. Instead, trust the certificate:
 
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://your-server:8443/mcp",
-        "--header",
-        "Authorization:Bearer YOUR_API_KEY"
-      ],
-      "env": {
-        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
-      }
-    }
-  }
-}
-```
+1. Copy `server.crt` from the server to the client computer
+2. Set `NODE_EXTRA_CA_CERTS` to the path of that file (as shown above)
 
-⚠️ **Security Warning**: Only disable certificate validation in development environments.
+Alternatively, import `server.crt` into the computer's trusted root certificates (Windows: `Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root`; macOS: Keychain Access, "Always Trust").
 
 ## Setup Steps
 
@@ -126,18 +124,17 @@ In VS Code:
 
 ### 2. Get Your API Key
 
+On the server:
+
 ```bash
-# Linux/macOS
-cat config.yaml | grep api_key
+# Windows
+"C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config show-api-key --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml"
 
-# Windows (PowerShell)
-Select-String -Path config.yaml -Pattern "api_key"
+# Linux
+sudo mcp-server-prtg config show-api-key --config /etc/mcp-server-prtg/config.yaml
 ```
 
-Output:
-```yaml
-api_key: "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-```
+Or copy the key from the **AI clients** tab of the administration page.
 
 ### 3. Configure via UI
 
@@ -193,8 +190,8 @@ Once connected, Cline will have access to all MCP Server PRTG tools:
 - `prtg_get_statistics` - System statistics
 - `prtg_query_sql` - Custom SQL queries (only if `allow_custom_queries: true`)
 
-**PRTG API v2 (2 tools, when `prtg.enabled: true`):**
-- `prtg_get_channel_current_values` - Current channel values
+**PRTG API v2 / database metrics (2 tools, when the database holds channel history or the PRTG API is configured):**
+- `prtg_get_channel_current_values` - Current channel values (Source line indicates database or PRTG API; optional `source` parameter: `auto`, `database`, `prtg`)
 - `prtg_get_sensor_timeseries` - Time series data for a predefined period (`live`, `short`, `medium`, `long`)
 
 See [TOOLS.md](TOOLS.md) for complete documentation.
@@ -220,9 +217,9 @@ See [TOOLS.md](TOOLS.md) for complete documentation.
 
 **Solutions:**
 1. Verify server URL is correct
-2. Check API key matches `config.yaml`
+2. Check API key matches the one from `config show-api-key`
 3. Ensure firewall allows port 8443
-4. For self-signed certs, add `NODE_TLS_REJECT_UNAUTHORIZED=0`
+4. Verify `NODE_EXTRA_CA_CERTS` points to a valid copy of `server.crt`
 
 **Check server:**
 ```bash
@@ -230,45 +227,16 @@ See [TOOLS.md](TOOLS.md) for complete documentation.
 curl https://localhost:8443/health
 
 # Check server status
-./mcp-server-prtg status
+mcp-server-prtg status
 ```
-
-### Known Issue: HTTP Transport Regression (v3.17.5+)
-
-**Symptom:** Authorization headers not sent, StreamableHttpTransport errors
-
-**Workaround 1** - Downgrade Cline:
-1. VS Code → Extensions
-2. Right-click Cline → "Install Another Version"
-3. Select v3.17.4 or earlier
-
-**Workaround 2** - Use mcp-remote@next:
-
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote@next",
-        "https://your-server:8443/mcp",
-        "--header",
-        "Authorization:Bearer YOUR_API_KEY"
-      ]
-    }
-  }
-}
-```
-
-**Monitor issue:** [Cline Issue #4391](https://github.com/cline/cline/issues/4391)
 
 ### Authentication Errors
 
 **Error:** "Unauthorized" or "401"
 
 **Check:**
-1. API key is correct (copy-paste from `config.yaml`)
-2. Bearer token format: `Authorization:Bearer API_KEY` (no space after colon)
+1. API key is correct (from `config show-api-key`)
+2. Bearer token format: `Authorization:Bearer ${MCP_PRTG_API_KEY}` (no space after colon)
 3. No extra quotes or whitespace
 
 ### Tools Not Available
@@ -276,15 +244,15 @@ curl https://localhost:8443/health
 **Check:**
 1. Server connected (green indicator in Cline)
 2. Database connection works (server logs)
-3. PRTG API v2 configured (for API tools)
+3. PRTG API v2 configured or channel history present (for metrics tools)
 
 **View server logs:**
 ```bash
-# Linux/macOS
-tail -f /opt/mcp-server-prtg/logs/mcp-server-prtg.log
+# Linux
+tail -f /var/log/mcp-server-prtg/mcp-server-prtg.log
 
 # Windows
-type logs\mcp-server-prtg.log
+type "C:\ProgramData\Sensor Factory\MCP Server PRTG\logs\mcp-server-prtg.log"
 ```
 
 ## Example Usage in Cline
@@ -338,7 +306,7 @@ Cline allows sharing MCP server configurations:
 To share your PRTG configuration:
 1. Save `prtg-server.json` in `~/Documents/Cline/MCP/`
 2. Other team members can copy it to their Cline directory
-3. Each user updates with their API key
+3. Each user updates with their API key and certificate path
 
 **Example shareable config:**
 ```json
@@ -347,13 +315,15 @@ To share your PRTG configuration:
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://prtg-mcp.company.com:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "REPLACE_WITH_YOUR_KEY"
+        "MCP_PRTG_API_KEY": "REPLACE_WITH_YOUR_KEY",
+        "NODE_EXTRA_CA_CERTS": "REPLACE_WITH_CERT_PATH"
       }
     }
   }
@@ -370,25 +340,29 @@ To share your PRTG configuration:
     "prtg-prod": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://prtg-prod.company.com:8443/mcp",
         "--header",
         "Authorization:Bearer ${PRTG_PROD_KEY}"
       ],
       "env": {
-        "PRTG_PROD_KEY": "prod-key"
+        "PRTG_PROD_KEY": "prod-key",
+        "NODE_EXTRA_CA_CERTS": "/certs/prod-server.crt"
       }
     },
     "prtg-dev": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://prtg-dev.local:8443/mcp",
         "--header",
         "Authorization:Bearer ${PRTG_DEV_KEY}"
       ],
       "env": {
-        "PRTG_DEV_KEY": "dev-key"
+        "PRTG_DEV_KEY": "dev-key",
+        "NODE_EXTRA_CA_CERTS": "/certs/dev-server.crt"
       }
     }
   }
@@ -403,13 +377,15 @@ To share your PRTG configuration:
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://your-server:8443/mcp",
         "--header",
-        "Authorization:Bearer ${PRTG_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "PRTG_API_KEY": "your-key",
+        "MCP_PRTG_API_KEY": "your-key",
+        "NODE_EXTRA_CA_CERTS": "/path/to/server.crt",
         "HTTP_PROXY": "http://proxy.company.com:8080",
         "HTTPS_PROXY": "http://proxy.company.com:8080"
       }
@@ -424,7 +400,7 @@ To share your PRTG configuration:
 
 1. **Use environment variables** for API keys
 2. **Don't commit** configurations with secrets
-3. **Use proper TLS** in production
+3. **Trust the server certificate** via `NODE_EXTRA_CA_CERTS` or the system trust store; never disable certificate verification
 4. **Rotate API keys** periodically
 
 ### Organization
@@ -474,9 +450,4 @@ curl -X POST https://your-server:8443/mcp \
 - [Tools Reference](TOOLS.md) - Available MCP tools
 - [Usage Guide](USAGE.md) - Examples and best practices
 - [Troubleshooting](TROUBLESHOOTING.md) - Common issues
-
-## Feedback
-
-This configuration is based on Cline's official MCP documentation. If you test it successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues).
-
-**Note:** Cline v3.17.5+ has known HTTP transport issues. If you encounter problems, try the workarounds listed above or provide feedback to help improve this guide.
+```
