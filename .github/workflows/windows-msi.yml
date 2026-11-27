@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
         type: string
+      exe_from_release:
+        description: "Use the already-signed exe from the release instead of building (requires release_tag)"
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       version:
@@ -25,12 +30,47 @@ on:
         required: false
         default: ""
         type: string
+      exe_from_release:
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
+  fetch-exe:
+    # Draft releases are only visible with write access, hence contents: write here.
+    if: inputs.exe_from_release == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed exe from the release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download "$INPUT_RELEASE_TAG" \
+            --pattern "mcp-server-prtg-${INPUT_RELEASE_TAG}-windows-amd64.zip" \
+            --dir exe-zip
+          mkdir -p exe
+          unzip -q exe-zip/*.zip -d exe
+          test -f exe/mcp-server-prtg.exe
+          mkdir -p dist
+          cp exe/mcp-server-prtg.exe dist/
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-exe
+          path: dist/mcp-server-prtg.exe
+          if-no-files-found: error
+
   build-msi:
+    needs: fetch-exe
+    if: ${{ !cancelled() && (needs.fetch-exe.result == 'success' || needs.fetch-exe.result == 'skipped') }}
     runs-on: windows-latest
     defaults:
       run:
@@ -44,11 +84,20 @@ jobs:
           ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Set up Go
+        if: inputs.exe_from_release != true
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
+      - name: Use signed exe from the release
+        if: inputs.exe_from_release == true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-exe
+          path: dist/windows-amd64
+
       - name: Build service binary
+        if: inputs.exe_from_release != true
         env:
           INPUT_VERSION: ${{ inputs.version || '0.0.0-ci' }}
         run: |
@@ -71,7 +120,7 @@ jobs:
             echo "Pull request build: not signed, signing secrets stay out of unreviewed code"
             echo "SIGNING_ENABLED=false" >> "$GITHUB_ENV"
           elif [ -z "$CODESIGN_STORETYPE" ]; then
-            echo "::warning::CODESIGN_STORETYPE secret is not set; the exe and MSI will not be signed"
+            echo "::warning::CODESIGN_STORETYPE secret is not set; the MSI will not be signed"
             echo "SIGNING_ENABLED=false" >> "$GITHUB_ENV"
           else
             echo "SIGNING_ENABLED=true" >> "$GITHUB_ENV"
@@ -97,7 +146,8 @@ jobs:
           fi
 
       - name: Sign exe
-        if: env.SIGNING_ENABLED == 'true'
+        # Skipped when the exe comes from the release: it is already signed on the maintainer's Mac.
+        if: env.SIGNING_ENABLED == 'true' && inputs.exe_from_release != true
         env:
           CODESIGN_STORETYPE: ${{ secrets.CODESIGN_STORETYPE }}
           CODESIGN_KEYSTORE: ${{ secrets.CODESIGN_KEYSTORE }}
