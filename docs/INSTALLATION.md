@@ -1,510 +1,75 @@
 # Installation Guide
 
-Complete installation guide for MCP Server PRTG on different platforms.
+End-user installation guide for MCP Server PRTG on Windows and Linux. For operational details (silent install, updates, rollback, service management), see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Prerequisites
 
-- **PRTG Data Exporter** - Required for PostgreSQL database access. [PRTG Data Exporter](https://www.paessler.com/manuals/prtg_data_exporter) exports PRTG monitoring data to PostgreSQL (`prtg_data_exporter` database).
-- **PRTG Core Server** - Required for PRTG API v2 access (optional, for historical metrics).
-- **MCP Server PRTG Binary** - Downloaded from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases)
-- **Node.js** and **npm** - For mcp-remote (MCP Clients like Claude Desktop)
+- **PRTG Data Exporter 2026.x** — provides the PostgreSQL target database (default name `prtg_data_exporter_collection`) that the server reads in HTTP mode.
+- **PRTG Core Server** — required for PRTG API v2 access (optional, for real-time metrics).
+- **MCP Server PRTG release** — download from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases). Supported service platforms: Windows amd64 (MSI or zip) and Linux amd64/arm64 (tar.gz).
+- **Node.js** and **npm** — for mcp-remote when connecting MCP clients such as Claude Desktop.
 
-> **Note:** PRTG Data Exporter includes PostgreSQL 17 and creates the `prtg_data_exporter` database automatically.
+## Windows
 
-### Deployment Scenarios
+### MSI installer (recommended)
 
-**Scenario A: Co-located (Recommended)**
-- Install MCP Server PRTG on the same Windows server as PRTG Data Exporter
-- Best performance with local PostgreSQL access (`localhost`)
-- No network configuration needed
+Download `mcp-server-prtg-<version>-amd64.msi` from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases) and run it as administrator.
 
-**Scenario B: Remote Deployment**
-- Install MCP Server PRTG on a separate server (Linux, macOS, Windows)
-- Configure network access to:
-  - PostgreSQL server (port 5432) - PRTG Data Exporter host
-  - PRTG API v2 (port 1616) - PRTG Core Server host
-- Update `config.yaml` with remote hostnames/IPs
+On a fresh install the wizard asks for:
 
-## Windows Installation
+- **Data Exporter database**: host (default `localhost`), port (5432), database name (`prtg_data_exporter_collection`), user (`mcp_prtg_reader`), password, SSL mode (`disable`/`require`/`verify-ca`/`verify-full`), MCP HTTPS port (8443).
+- **PRTG API v2 (optional)**: enable, URL (must start with `http://` or `https://`), token, verify certificate.
 
-### Windows (MSI, recommended)
+The installer writes `C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml` with secrets encrypted, installs `C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe`, registers the Windows service `mcp-server-prtg` and starts it. Upgrades and repairs skip the wizard and keep the existing configuration.
 
-The recommended way to install MCP Server PRTG on Windows is the MSI package published with each [GitHub release](https://github.com/senhub-io/mcp-server-prtg/releases). It installs the binary, registers the Windows service and supports in-place updates and rollbacks. See [DEPLOYMENT.md](DEPLOYMENT.md#windows-msi) for installation, configuration, updates and rollbacks.
+After installation, open `https://localhost:8443/admin/` from the server itself and sign in with the API key (shown by `config show-api-key`), or use the Start Menu shortcuts **MCP Server PRTG - Administration** and **MCP Server PRTG - AI client configuration**.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md#windows-msi) for silent installation, updates, rollback and migration.
 
 ### Manual installation
 
-Manual installation with `mcp-server-prtg.exe install` remains possible, for example on hosts where the MSI cannot be used.
+Manual installation with `mcp-server-prtg.exe install` remains possible on hosts where the MSI cannot be used.
 
-#### 1. Download Binary
+1. Download `mcp-server-prtg-<version>-windows-amd64.zip` from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases) and extract `mcp-server-prtg.exe`.
+2. Copy the executable to a program folder, for example `C:\Program Files\Sensor Factory\MCP Server PRTG\`.
+3. Run `mcp-server-prtg.exe install` to register the service and generate a configuration.
+4. Edit `config.yaml` (or use `config init`) to set the database host, name `prtg_data_exporter_collection`, user `mcp_prtg_reader` and password (or the `PRTG_DB_PASSWORD` environment variable).
+5. Run `mcp-server-prtg.exe start` and check `mcp-server-prtg.exe status`.
 
-Download `mcp-server-prtg_windows_amd64.exe` from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases).
+## Linux
 
-#### 2. Create Installation Directory
+1. Download `mcp-server-prtg-<version>-linux-amd64.tar.gz` (or `-linux-arm64.tar.gz`) from [GitHub releases](https://github.com/senhub-io/mcp-server-prtg/releases) and extract.
+2. Install the binary and create the configuration directory:
 
-```powershell
-# Create application directory
-mkdir "C:\Program Files\mcp-server-prtg"
-cd "C:\Program Files\mcp-server-prtg"
+   ```bash
+   sudo install -m 0755 mcp-server-prtg /usr/local/bin/
+   sudo mkdir -p /etc/mcp-server-prtg
+   ```
 
-# Copy binary
-copy "C:\Users\<user>\Downloads\mcp-server-prtg_windows_amd64.exe" .\mcp-server-prtg.exe
-```
+3. Create the configuration (secrets may come from environment variables such as `PRTG_DB_PASSWORD`):
 
-#### 3. Install as Windows Service
+   ```bash
+   sudo PRTG_DB_PASSWORD=... mcp-server-prtg config init --config /etc/mcp-server-prtg/config.yaml --https --db-host <host> --db-name prtg_data_exporter_collection --db-user mcp_prtg_reader
+   ```
 
-```powershell
-# Install service (automatically generates config.yaml)
-.\mcp-server-prtg.exe install
+4. Install and start the systemd service:
 
-# Service is now installed but not started
-```
+   ```bash
+   sudo mcp-server-prtg install --config /etc/mcp-server-prtg/config.yaml
+   sudo mcp-server-prtg start
+   ```
 
-#### 4. Configure Service
+Back up `/etc/mcp-server-prtg/secret.key` together with `config.yaml`.
 
-The `install` command automatically generates a `config.yaml` file with a **unique API key** (UUID). This API key is used by MCP clients (like Claude Desktop) to authenticate with the `Authorization: Bearer <api_key>` header. The server refuses to start if `server.api_key` is empty or shorter than 16 characters.
+See [DEPLOYMENT.md](DEPLOYMENT.md#linux-systemd) for updates, rollback and uninstall.
 
-**📋 Check your API key:**
-```powershell
-type config.yaml
-# Look for: server.api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-```
+## Connect an MCP client
 
-**Minimal configuration (PostgreSQL only):**
+Run `mcp-server-prtg config client` (elevated on Windows) to print ready-to-paste configurations for Claude Desktop, Claude Code, Cursor and VS Code, or see [DEPLOYMENT.md](DEPLOYMENT.md#connect-an-mcp-client).
 
-```yaml
-config_version: 1
-server:
-  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
-  bind_address: "0.0.0.0"
-  port: 8443
-  enable_tls: true
-database:
-  host: "localhost"
-  port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
-  password: ""  # Provide via PRTG_DB_PASSWORD env var (next step)
-  sslmode: "disable"
-logging:
-  level: "info"
-```
+## Next steps
 
-**With PRTG API v2 (optional - for historical metrics):**
-
-```yaml
-config_version: 1
-server:
-  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
-  bind_address: "0.0.0.0"
-  port: 8443
-  enable_tls: true
-database:
-  host: "localhost"
-  port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
-  password: ""
-  sslmode: "disable"
-prtg:
-  enabled: true
-  base_url: "https://your-prtg-server:1616"  # PRTG Core Server URL (port 1616)
-  api_token: "YOUR_PRTG_API_V2_TOKEN"        # Get from PRTG Web Interface
-  timeout: 30
-  verify_ssl: true
-logging:
-  level: "info"
-```
-
-> **Note:** For PRTG API v2 token, go to PRTG → **Setup** → **Account Settings** → **API Keys & Tokens**. See [CONFIGURATION.md](CONFIGURATION.md#prtg-api-v2-configuration) for details.
-
-#### 5. Configure Database Password
-
-```powershell
-# Option 1: System environment variable
-setx PRTG_DB_PASSWORD "your-password" /M
-
-# Option 2: Session variable
-$env:PRTG_DB_PASSWORD = "your-password"
-
-# Option 3: Directly in config.yaml (less secure)
-# Edit config.yaml and set database.password
-```
-
-#### 6. Start Service
-
-```powershell
-# Start service
-.\mcp-server-prtg.exe start
-
-# Check status
-.\mcp-server-prtg.exe status
-```
-
-#### 7. Verify Logs
-
-```powershell
-# Logs are in
-type .\logs\mcp-server-prtg.log
-
-# For troubleshooting, enable debug in config.yaml
-# logging.level: debug
-```
-
-#### Windows Service Management
-
-```powershell
-# Start
-.\mcp-server-prtg.exe start
-
-# Stop
-.\mcp-server-prtg.exe stop
-
-# Detailed status
-.\mcp-server-prtg.exe status
-
-# Uninstall (also removes config + logs + certs)
-.\mcp-server-prtg.exe uninstall
-```
-
-## Linux Installation
-
-### 1. Download Binary
-
-```bash
-# Download for your architecture
-wget https://github.com/senhub-io/mcp-server-prtg/releases/latest/download/mcp-server-prtg_linux_amd64
-
-# Make executable
-chmod +x mcp-server-prtg_linux_amd64
-mv mcp-server-prtg_linux_amd64 mcp-server-prtg
-```
-
-### 2. Create Installation Directory
-
-```bash
-# Install in /opt
-sudo mkdir -p /opt/mcp-server-prtg
-sudo mv mcp-server-prtg /opt/mcp-server-prtg/
-cd /opt/mcp-server-prtg
-```
-
-### 3. Install as systemd Service
-
-```bash
-# Install (generates config.yaml + certificates + systemd unit)
-sudo ./mcp-server-prtg install
-
-# Service is installed and enabled at boot
-```
-
-### 4. Configure Service
-
-The `install` command automatically generates a `config.yaml` file with a **unique API key**.
-
-**📋 Check your API key:**
-```bash
-sudo cat /opt/mcp-server-prtg/config.yaml | grep api_key
-```
-
-**Edit configuration:**
-```bash
-sudo nano /opt/mcp-server-prtg/config.yaml
-```
-
-**Minimal configuration (PostgreSQL only):**
-
-```yaml
-config_version: 1
-server:
-  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # Auto-generated
-  bind_address: "0.0.0.0"
-  port: 8443
-  enable_tls: true
-database:
-  host: "localhost"
-  port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
-  password: ""  # Provide via PRTG_DB_PASSWORD env var (next step)
-  sslmode: "require"  # Recommended for production
-logging:
-  level: "info"
-```
-
-**With PRTG API v2 (optional):**
-
-```yaml
-config_version: 1
-server:
-  api_key: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-  bind_address: "0.0.0.0"
-  port: 8443
-  enable_tls: true
-database:
-  host: "localhost"
-  port: 5432
-  name: "prtg_data_exporter"
-  user: "prtg_reader"
-  password: ""
-  sslmode: "require"
-prtg:
-  enabled: true
-  base_url: "https://your-prtg-server:1616"
-  api_token: "YOUR_PRTG_API_V2_TOKEN"
-  timeout: 30
-  verify_ssl: true
-logging:
-  level: "info"
-```
-
-### 5. Configure Database Password
-
-```bash
-# Create environment file for service
-sudo mkdir -p /etc/systemd/system/mcp-server-prtg.service.d
-sudo nano /etc/systemd/system/mcp-server-prtg.service.d/environment.conf
-```
-
-Content:
-
-```ini
-[Service]
-Environment="PRTG_DB_PASSWORD=your-password"
-```
-
-Reload systemd:
-
-```bash
-sudo systemctl daemon-reload
-```
-
-### 6. Start Service
-
-```bash
-# Start
-sudo ./mcp-server-prtg start
-
-# Check status
-sudo ./mcp-server-prtg status
-
-# Or via systemctl
-sudo systemctl status mcp-server-prtg
-```
-
-### 7. Verify Logs
-
-```bash
-# Service logs
-sudo journalctl -u mcp-server-prtg -f
-
-# Application logs
-sudo tail -f /opt/mcp-server-prtg/logs/mcp-server-prtg.log
-```
-
-### Linux Service Management
-
-```bash
-# Via binary
-sudo ./mcp-server-prtg start
-sudo ./mcp-server-prtg stop
-sudo ./mcp-server-prtg status
-
-# Via systemctl
-sudo systemctl start mcp-server-prtg
-sudo systemctl stop mcp-server-prtg
-sudo systemctl status mcp-server-prtg
-sudo systemctl restart mcp-server-prtg
-
-# Uninstall
-sudo ./mcp-server-prtg uninstall
-```
-
-## macOS Installation
-
-### 1. Download Binary
-
-```bash
-# For Apple Silicon (M1/M2/M3)
-curl -LO https://github.com/senhub-io/mcp-server-prtg/releases/latest/download/mcp-server-prtg_darwin_arm64
-
-# For Intel
-curl -LO https://github.com/senhub-io/mcp-server-prtg/releases/latest/download/mcp-server-prtg_darwin_amd64
-
-# Make executable
-chmod +x mcp-server-prtg_darwin_arm64
-mv mcp-server-prtg_darwin_arm64 mcp-server-prtg
-```
-
-### 2. Create Installation Directory
-
-```bash
-# Install in /usr/local
-sudo mkdir -p /usr/local/mcp-server-prtg
-sudo mv mcp-server-prtg /usr/local/mcp-server-prtg/
-cd /usr/local/mcp-server-prtg
-```
-
-### 3. Install as launchd Service
-
-```bash
-# Install (generates config.yaml + certificates + launchd plist)
-sudo ./mcp-server-prtg install
-```
-
-### 4. Configuration
-
-The `install` command automatically generates `config.yaml` with a unique API key.
-
-**📋 Check your API key:**
-```bash
-sudo cat /usr/local/mcp-server-prtg/config.yaml | grep api_key
-```
-
-**Edit configuration:**
-```bash
-sudo nano /usr/local/mcp-server-prtg/config.yaml
-```
-
-Configuration is the same as Linux - see Linux section above for examples.
-
-### 5. Environment Variable for Password
-
-```bash
-# Edit plist file
-sudo nano /Library/LaunchDaemons/io.senhub.mcp-server-prtg.plist
-```
-
-Add in `<dict>` section:
-
-```xml
-<key>EnvironmentVariables</key>
-<dict>
-    <key>PRTG_DB_PASSWORD</key>
-    <string>your-password</string>
-</dict>
-```
-
-### 6. Start Service
-
-```bash
-# Via binary
-sudo ./mcp-server-prtg start
-
-# Via launchctl
-sudo launchctl load /Library/LaunchDaemons/io.senhub.mcp-server-prtg.plist
-```
-
-## Console Mode (No Service)
-
-For testing or debugging without installing as service:
-
-```bash
-# Windows
-.\mcp-server-prtg.exe run
-
-# Linux / macOS
-./mcp-server-prtg run
-
-# With options
-./mcp-server-prtg run --config /path/to/config.yaml
-
-# Stop with Ctrl+C
-```
-
-## Install mcp-remote (Client)
-
-For use with MCP Clients (like Claude Desktop), install mcp-remote:
-
-```bash
-# Via npm
-npx mcp-remote --version
-
-# mcp-remote will be automatically installed when needed
-# No separate installation required
-```
-
-## Installation Verification
-
-### Test Streamable HTTP Connection
-
-**Important:** Use the `server.api_key` from your `config.yaml` file (the auto-generated UUID).
-
-```bash
-# Test with curl (replace YOUR_API_KEY with the value from config.yaml)
-curl -k -N \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  https://your-server:8443/mcp
-
-# Expected: MCP protocol initialization messages
-```
-
-**Example:**
-```bash
-# If your config.yaml has: api_key: "a1b2c3d4-1234-5678-9abc-def012345678"
-curl -k -N \
-  -H "Authorization: Bearer a1b2c3d4-1234-5678-9abc-def012345678" \
-  https://localhost:8443/mcp
-```
-
-### Test with mcp-remote
-
-```bash
-# Command line test (replace YOUR_API_KEY)
-npx mcp-remote https://your-server:8443/mcp \
-  --header "Authorization:Bearer YOUR_API_KEY"
-
-# Should display MCP connection messages
-```
-
-### Verify Database
-
-The detailed status automatically tests the connection:
-
-```bash
-# Windows
-.\mcp-server-prtg.exe status
-
-# Linux / macOS
-sudo ./mcp-server-prtg status
-```
-
-Expected output:
-
-```
-═══════════════════════════════════════════════════════════════
-  MCP Server PRTG - Service Status
-═══════════════════════════════════════════════════════════════
-
-✅ Service Status:  Running
-📋 Service Name:    mcp-server-prtg
-
-Configuration:
-  Config File:  /opt/mcp-server-prtg/config.yaml
-  Log File:     /opt/mcp-server-prtg/logs/mcp-server-prtg.log
-  Log Level:    info
-
-Server:
-  Address:      0.0.0.0:8443
-  Public URL:   https://your-server:8443
-  TLS Enabled:  true
-  Certificate:  /opt/mcp-server-prtg/certs/server.crt
-
-Database:
-  Host:     localhost:5432
-  Database: prtg_data_exporter
-  User:     prtg_reader
-  SSL Mode: require
-  Status:   ✅ Connected
-
-═══════════════════════════════════════════════════════════════
-```
-
-## Next Steps
-
-1. **Configure MCP Client** - See [USAGE.md](USAGE.md)
-2. **Customize configuration** - See [CONFIGURATION.md](CONFIGURATION.md)
-3. **Test MCP tools** - See [TOOLS.md](TOOLS.md)
-
-## Troubleshooting
-
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for installation issues.
+- [DEPLOYMENT.md](DEPLOYMENT.md) — operations: silent install, certificates, updates, rollback
+- [CONFIGURATION.md](CONFIGURATION.md) — all configuration options
+- [TOOLS.md](TOOLS.md) — tool reference
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — troubleshooting
