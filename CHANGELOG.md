@@ -5,7 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-27
+
 ### Added
+- Local administration page at `https://localhost:<port>/admin/` (loopback only, API-key login): service, database and PRTG status, channel history coverage, Data Exporter collection profiles; editing of the database, PRTG API v2, port and log level settings with connection tests; AI client configuration; save and restart through the service manager.
+- `config client` prints ready-to-paste configurations for Claude Desktop, Claude Code, Cursor and VS Code; on Windows a Start Menu shortcut opens it in an elevated console, and setup offers it at the end.
+- Installer restyled on the SenHub agent model: branded art, licence page, install folder, validated option pages, Start Menu shortcuts to the administration page and the AI client configuration.
+- Production releases are code-signed (Authenticode, Certum): the executable and the MSI.
 - Database-first metrics on the PRTG Data Exporter 2026.x target database (`prtg_data_exporter_collection`): `prtg_get_channel_current_values` and `prtg_get_sensor_timeseries` read `prtg_channel_value` first, with an optional `source` parameter (`auto` default, `database`, `prtg`); each answer starts with a `Source:` line.
 - Schema detection at start-up for older Data Exporter layouts (soft delete, tree depth, channel values, collection status, per-sensor last fetch).
 - Per-sensor freshness from `prtg_sensor_last_fetched_day`: in `auto` mode a sensor whose export is older than 24 h falls back to the PRTG API when configured, otherwise the answer states when the export stopped.
@@ -17,7 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `config init` (create or update individual settings) and `config show-api-key` commands.
 - `PRTG_DB_HOST`, `PRTG_DB_PORT`, `PRTG_DB_NAME`, `PRTG_DB_USER`, `PRTG_DB_PASSWORD`, `PRTG_DB_SSLMODE`, `PRTG_URL`, `PRTG_API_TOKEN` environment variables.
 - Windows MSI installer with setup wizard on fresh installs (silent-install properties DBHOST, DBPORT, DBNAME, DBUSER, DBPASSWORD, DBSSLMODE, MCPPORT, PRTGENABLE, PRTGURL, PRTGTOKEN, PRTGVERIFYSSL, ADOPT); upgrades and repairs keep config.yaml.
-- Beta release assets for Windows amd64 (zip and MSI) and Linux amd64/arm64 (tar.gz) plus SHA256SUMS.
+- Release assets for Windows amd64 (zip and MSI) and Linux amd64/arm64 (tar.gz) plus SHA256SUMS.
 
 ### Changed
 - Module path renamed to `github.com/senhub-io/mcp-server-prtg`; executable name `mcp-server-prtg.exe` (Windows) / `mcp-server-prtg` (Linux).
@@ -26,12 +32,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Deleted objects no longer appear in results; tags are matched correctly.
+- The self-signed certificate covers the machine name and addresses, not only `localhost`, and is regenerated at start when missing.
+- Windows certificate paths are no longer written with doubled backslashes.
 
 ### Security
 - Constant-time Bearer authentication; authentication rate limiting per TCP peer address.
 - `prtg_query_sql` runs in a read-only sandbox (read-only transaction, 15 s statement timeout, enforced row limit).
 - PRTG API v2 filter values are escaped (quotes, backslashes, control characters dropped).
 - Secrets and tokens are masked in log output.
+- Client snippets trust the server certificate (`NODE_EXTRA_CA_CERTS`) instead of disabling TLS verification.
+- The administration page never sends a stored secret to a new target or over a weaker TLS setting, and refuses proxied requests.
 
 ### Removed
 - `prtg_get_sensor_history_custom`: the PRTG API v2 endpoint does not support custom ranges.
