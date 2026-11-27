@@ -143,6 +143,7 @@ Report vulnerabilities privately via [GitHub Security Advisories](https://github
 - Client guides: [docs/CLAUDE_DESKTOP_CONFIG.md](docs/CLAUDE_DESKTOP_CONFIG.md), [docs/CURSOR_CONFIG.md](docs/CURSOR_CONFIG.md), [docs/CONTINUE_CONFIG.md](docs/CONTINUE_CONFIG.md), [docs/CLINE_CONFIG.md](docs/CLINE_CONFIG.md)
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — troubleshooting
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture
+- [docs/RELEASING.md](docs/RELEASING.md) — betas and signed production releases
 - [CHANGELOG.md](CHANGELOG.md) — changelog
 
 ## Build from source
