@@ -5,14 +5,22 @@ This guide explains how to configure Claude Desktop to connect to your MCP Serve
 ## Architecture Overview
 
 ```
-Claude Desktop → mcp-remote → MCP Server PRTG → PostgreSQL (PRTG Data Exporter)
-                                                → PRTG API v2 (PRTG Core Server)
+Claude Desktop → mcp-remote → MCP Server PRTG → PostgreSQL (PRTG Data Exporter target database)
+                                                → PRTG API v2 (PRTG Core Server, when needed)
 ```
 
 **Important:**
 - MCP Server PRTG must be running as a service or daemon
 - Claude Desktop connects via HTTP/HTTPS using `mcp-remote`
 - Alternatively, Claude Desktop can start MCP Server PRTG locally in stdio mode (see [stdio Mode](#stdio-mode-without-a-server)). stdio mode uses PRTG API v2 only, without PostgreSQL
+- Metrics tools read the database first and return a `Source:` line indicating whether the answer comes from the database or the PRTG API
+
+## Getting the Ready-to-Paste Configuration
+
+The easiest way to get the correct configuration block is to use the administration page or the command line:
+
+- **Administration page**: open `https://localhost:<port>/admin/` (8443 by default), sign in with the MCP API key, go to the **AI clients** tab and copy the Claude Desktop block.
+- **Command line**: run `mcp-server-prtg config client --config <path>` (or without `--config` to use the installed location). It prints the configurations for Claude Desktop, Claude Code, Cursor and VS Code.
 
 ## Configuration File Location
 
@@ -42,13 +50,15 @@ Full path: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.j
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://<MCP_SERVER_HOST>:8443/mcp",
         "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "MCP_SERVER_API_KEY": "your-mcp-server-api-key-from-config-yaml"
+        "MCP_PRTG_API_KEY": "your-mcp-server-api-key",
+        "NODE_EXTRA_CA_CERTS": "C:\\path\\to\\server.crt"
       }
     }
   }
@@ -57,7 +67,10 @@ Full path: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.j
 
 **Replace:**
 - `<MCP_SERVER_HOST>`: IP or hostname where MCP Server PRTG is running
-- `your-mcp-server-api-key-from-config-yaml`: API key from MCP Server PRTG `config.yaml` (NOT PRTG API v2 token!)
+- `your-mcp-server-api-key`: API key from MCP Server PRTG (see [Finding Your MCP Server API Key](#finding-your-mcp-server-api-key))
+- `C:\path\to\server.crt`: path to a copy of the server certificate (`server.crt` from the `certs` folder next to `config.yaml` on the server)
+
+**Trusting the server certificate:** MCP Server PRTG uses a self-signed certificate that covers `localhost`, the machine name and its IP addresses. Copy `server.crt` to the client computer and point `NODE_EXTRA_CA_CERTS` to it. Do not disable certificate verification.
 
 ### HTTP without TLS (Development/Testing Only)
 
@@ -67,20 +80,21 @@ Full path: `C:\Users\YourUsername\AppData\Roaming\Claude\claude_desktop_config.j
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "http://<MCP_SERVER_HOST>:8443/mcp",
         "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "MCP_SERVER_API_KEY": "your-mcp-server-api-key-from-config-yaml"
+        "MCP_PRTG_API_KEY": "your-mcp-server-api-key"
       }
     }
   }
 }
 ```
 
-⚠️ **Warning:** HTTP without TLS should only be used for local development/testing.
+**Warning:** HTTP without TLS should only be used for local development/testing.
 
 ## stdio Mode (Without a Server)
 
@@ -123,21 +137,20 @@ See [npm-package/README.md](../npm-package/README.md) for details.
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "MCP_SERVER_API_KEY": "abc123def456ghi789",
-        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+        "MCP_PRTG_API_KEY": "abc123def456ghi789",
+        "NODE_EXTRA_CA_CERTS": "C:\\ProgramData\\Sensor Factory\\MCP Server PRTG\\certs\\server.crt"
       }
     }
   }
 }
 ```
-
-**Note:** `NODE_TLS_REJECT_UNAUTHORIZED=0` is needed for self-signed certificates (development only).
 
 ### Example 2: Remote Server with Custom Port
 
@@ -147,13 +160,15 @@ See [npm-package/README.md](../npm-package/README.md) for details.
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://prtg-mcp.company.com:9443/mcp",
         "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "MCP_SERVER_API_KEY": "prod-api-key-xyz"
+        "MCP_PRTG_API_KEY": "prod-api-key-xyz",
+        "NODE_EXTRA_CA_CERTS": "/home/user/certs/server.crt"
       }
     }
   }
@@ -168,18 +183,21 @@ See [npm-package/README.md](../npm-package/README.md) for details.
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://prtg-server.local:8443/mcp",
         "--header",
         "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "MCP_PRTG_API_KEY": "prtg-server-key"
+        "MCP_PRTG_API_KEY": "prtg-server-key",
+        "NODE_EXTRA_CA_CERTS": "C:\\certs\\server.crt"
       }
     },
     "other-mcp": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://other-server.local:8080/mcp",
         "--header",
@@ -195,12 +213,17 @@ See [npm-package/README.md](../npm-package/README.md) for details.
 
 ## Finding Your MCP Server API Key
 
-The API key is located in your **MCP Server PRTG** `config.yaml` file:
+The API key is stored encrypted in the MCP Server PRTG `config.yaml` file. To print the decrypted key:
 
-```yaml
-server:
-  api_key: "your-mcp-server-api-key-here"
+```bash
+# Windows
+"C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config show-api-key --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml"
+
+# Linux
+sudo mcp-server-prtg config show-api-key --config /etc/mcp-server-prtg/config.yaml
 ```
+
+Without `--config`, the command uses the installed configuration location (ProgramData on Windows, `/etc/mcp-server-prtg` on Linux).
 
 **Important:** This is the MCP Server authentication key, NOT the PRTG API v2 token!
 
@@ -208,10 +231,10 @@ server:
 
 ```yaml
 server:
-  api_key: "abc123..."        # ← THIS is for Claude Desktop (MCP_SERVER_API_KEY)
+  api_key: "enc:dpapi:..."    # ← THIS is for Claude Desktop (MCP_PRTG_API_KEY), stored encrypted
 
 prtg:
-  api_token: "xyz789..."      # ← This is for PRTG Core Server (internal use only)
+  api_token: "enc:aes:..."    # ← This is for PRTG Core Server (internal use only)
 ```
 
 ## Verifying Configuration
@@ -235,7 +258,7 @@ curl -H "Authorization: Bearer YOUR_MCP_SERVER_API_KEY" \
 
 # Expected response:
 {
-  "version": "1.2.2",
+  "version": "2.0.0",
   "transport": "streamable-http",
   "protocol": "2025-03-26",
   "uptime": "1m30s",
@@ -281,7 +304,7 @@ netstat -an | grep 8443
 - Missing Authorization header
 
 **Solution:**
-- Verify you're using the `server.api_key` from `config.yaml`
+- Verify you're using the key printed by `config show-api-key`
 - NOT the `prtg.api_token`
 - Check for extra spaces in the key
 
@@ -294,16 +317,10 @@ netstat -an | grep 8443
 
 **Solutions:**
 
-**For Development (Self-Signed Cert):**
-```json
-"env": {
-  "MCP_SERVER_API_KEY": "your-key",
-  "NODE_TLS_REJECT_UNAUTHORIZED": "0"
-}
-```
+Copy `server.crt` from the server's `certs` folder to the client computer and set `NODE_EXTRA_CA_CERTS` to its path. Alternatively, import the certificate into the computer's trusted root certificates (Windows: `Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root`; macOS: Keychain Access, "Always Trust"). Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
 
 **For Production:**
-- Use a proper TLS certificate from a trusted CA
+- Use a certificate from your company PKI (configure `server.cert_file` / `server.key_file` on the server)
 - Or use HTTP (local network only)
 
 ### "Cannot find module 'mcp-remote'"
@@ -335,8 +352,8 @@ npm install -g mcp-remote
    - Add `claude_desktop_config.json` to `.gitignore`
 
 2. **Use HTTPS in production**
-   - Generate proper TLS certificates
-   - Or use reverse proxy (nginx, Caddy)
+   - Trust the server certificate via `NODE_EXTRA_CA_CERTS` or the system trust store
+   - Or use a certificate from your company PKI
 
 3. **Rotate API keys regularly**
    - Regenerate keys periodically
@@ -362,7 +379,7 @@ npm install -g mcp-remote
 # Windows (as service)
 mcp-server-prtg.exe start
 
-# Linux/macOS (as daemon)
+# Linux (as daemon)
 sudo systemctl start mcp-server-prtg
 
 # Or run in foreground for testing
@@ -373,18 +390,25 @@ sudo systemctl start mcp-server-prtg
 
 ```bash
 # Windows (PowerShell)
-type config.yaml | Select-String "api_key"
+& "C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config show-api-key --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml"
 
-# Linux/macOS
-grep "api_key" config.yaml
+# Linux
+sudo mcp-server-prtg config show-api-key --config /etc/mcp-server-prtg/config.yaml
 ```
 
-Output example:
-```yaml
-  api_key: "abc123def456ghi789"
+### 3. Get the Client Configuration
+
+```bash
+# Windows
+& "C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config client --config "C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml"
+
+# Linux
+sudo mcp-server-prtg config client --config /etc/mcp-server-prtg/config.yaml
 ```
 
-### 3. Create Claude Desktop Config
+Or open `https://localhost:8443/admin/`, sign in, and copy the block from the **AI clients** tab.
+
+### 4. Create Claude Desktop Config
 
 **Windows:**
 ```powershell
@@ -413,7 +437,7 @@ mkdir -p ~/.config/Claude
 nano ~/.config/Claude/claude_desktop_config.json
 ```
 
-### 4. Paste Configuration
+### 5. Paste Configuration
 
 ```json
 {
@@ -421,23 +445,24 @@ nano ~/.config/Claude/claude_desktop_config.json
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "MCP_SERVER_API_KEY": "PASTE_YOUR_KEY_HERE",
-        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+        "MCP_PRTG_API_KEY": "PASTE_YOUR_KEY_HERE",
+        "NODE_EXTRA_CA_CERTS": "C:\\path\\to\\server.crt"
       }
     }
   }
 }
 ```
 
-Replace `PASTE_YOUR_KEY_HERE` with your MCP Server API key from step 2.
+Replace `PASTE_YOUR_KEY_HERE` with your MCP Server API key from step 2, and set `NODE_EXTRA_CA_CERTS` to the path of the copied `server.crt`.
 
-### 5. Test Configuration
+### 6. Test Configuration
 
 1. Save the file
 2. Quit Claude Desktop completely
@@ -451,7 +476,7 @@ Replace `PASTE_YOUR_KEY_HERE` with your MCP Server API key from step 2.
 
 ```json
 "env": {
-  "MCP_SERVER_API_KEY": "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
+  "MCP_PRTG_API_KEY": "5SIPLYZQND7TS4C4G32AVLNPS2XR6XWD64AOT7UYWE======"
 }
 ```
 
@@ -461,11 +486,11 @@ This is the PRTG API v2 token (from PRTG Core Server). It won't work!
 
 ```json
 "env": {
-  "MCP_SERVER_API_KEY": "abc123def456ghi789"
+  "MCP_PRTG_API_KEY": "abc123def456ghi789"
 }
 ```
 
-This is from `config.yaml` → `server.api_key`.
+This is the key printed by `config show-api-key`.
 
 ### ❌ Wrong: Connecting to PRTG Core Server
 
@@ -497,7 +522,8 @@ For issues or questions:
 
 ---
 
-**Last Updated**: 2025-11-03
+**Last Updated**: 2026-01-15
 **Protocol**: Streamable HTTP (MCP 2025-03-26)
 **Endpoint**: `/mcp`
 **Client**: `mcp-remote` (npm package)
+```

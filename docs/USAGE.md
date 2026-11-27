@@ -4,8 +4,8 @@ This guide covers how to use MCP Server PRTG with MCP Clients (like Claude Deskt
 
 ## Table of Contents
 
-- [MCP Client Setup](#claude-desktop-setup)
-- [Example Queries with LLM](#example-queries-with-claude)
+- [MCP Client Setup](#mcp-client-setup)
+- [Example Queries with LLM](#example-queries-with-llm)
 - [Direct API Usage](#direct-api-usage)
 - [Integration Examples](#integration-examples)
 - [Best Practices](#best-practices)
@@ -28,33 +28,34 @@ MCP Server PRTG uses **Streamable HTTP transport** (MCP 2025-03-26), which is na
 npx mcp-remote --version
 ```
 
-### Step 2: Get Your API Key
+### Step 2: Get Your API Key and Client Configuration
 
-Your API key is located in `config.yaml`:
+Print the decrypted MCP API key and the ready-to-paste client configurations:
 
 ```bash
-# Linux/macOS
-cat config.yaml | grep api_key
+# Windows
+"C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config show-api-key
+"C:\Program Files\Sensor Factory\MCP Server PRTG\mcp-server-prtg.exe" config client
 
-# Windows (PowerShell)
-Select-String -Path config.yaml -Pattern "api_key"
+# Linux
+sudo mcp-server-prtg config show-api-key
+sudo mcp-server-prtg config client
 ```
 
-Example output:
-```yaml
-api_key: "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-```
+Both commands find the installed configuration automatically (ProgramData on Windows, `/etc/mcp-server-prtg` on Linux). Use `--config <path>` to point to a specific file.
+
+Alternatively, open the administration page at `https://localhost:<port>/admin/` (8443 by default), sign in with the MCP API key, and use the **AI clients** tab to copy the ready-to-paste configuration for Claude Desktop, Claude Code, Cursor, or VS Code.
 
 ### Step 3: Configure MCP Client
 
-Edit MCP Client configuration file:
+The `config client` command prints configurations for:
 
-**Location (Claude Desktop):**
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+- **Claude Desktop**: uses `npx -y mcp-remote <url> --header "Authorization:Bearer ${MCP_PRTG_API_KEY}"` with environment variables `MCP_PRTG_API_KEY` and `NODE_EXTRA_CA_CERTS` (path to a copy of the server certificate)
+- **Claude Code**: `claude mcp add --transport http prtg <url> --header "Authorization: Bearer <key>"`
+- **Cursor**: `~/.cursor/mcp.json` with `url` and `headers`
+- **VS Code**: `.vscode/mcp.json` with `"type": "http"`, `url`, `headers`
 
-**Configuration:**
+**Example for Claude Desktop:**
 
 ```json
 {
@@ -62,75 +63,47 @@ Edit MCP Client configuration file:
     "prtg": {
       "command": "npx",
       "args": [
+        "-y",
         "mcp-remote",
         "https://localhost:8443/mcp",
         "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
+        "Authorization:Bearer ${MCP_PRTG_API_KEY}"
       ],
       "env": {
-        "MCP_SERVER_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+        "MCP_PRTG_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7",
+        "NODE_EXTRA_CA_CERTS": "C:\\path\\to\\server.crt"
       }
     }
   }
 }
 ```
 
-**For remote servers:**
+**For remote servers**, replace `localhost` with the server name or IP.
 
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://prtg-mcp.example.com:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
-      ],
-      "env": {
-        "MCP_SERVER_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-      }
-    }
-  }
-}
-```
+### Step 4: Trust the Server Certificate
 
-**For HTTP (development only):**
+The server uses a self-signed certificate (`certs/server.crt` next to `config.yaml`) that covers `localhost`, the machine name, and its IP addresses. Clients must trust this certificate instead of disabling verification:
 
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://localhost:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
-      ],
-      "env": {
-        "MCP_SERVER_API_KEY": "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-      }
-    }
-  }
-}
-```
+- Copy `server.crt` to each client computer.
+- **Claude Desktop / mcp-remote**: set `NODE_EXTRA_CA_CERTS` to the path of the copied certificate.
+- **Claude Code, Cursor, VS Code**: import the certificate into the computer's trusted root certificates:
+  - Windows: `certlm.msc` → Trusted Root Certification Authorities, or `Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root`
+  - macOS: Keychain Access, set to "Always Trust"
 
-**Note:** For production with self-signed certificates, add `NODE_TLS_REJECT_UNAUTHORIZED=0` to `env` (not recommended) or use trusted CA certificates.
+Do not use `NODE_TLS_REJECT_UNAUTHORIZED=0`; it exposes the API key.
 
-### Step 4: Restart MCP Client
+### Step 5: Restart MCP Client
 
 1. Quit MCP Client completely
 2. Restart MCP Client
 3. Open the MCP tools panel (hammer icon in the bottom-right corner)
-4. Verify that the PRTG tools are available (14 tools when `prtg.enabled: true`, 12 otherwise)
+4. Verify that the PRTG tools are available
 
 ### Verification
 
 In MCP Client, you should see these tools:
 
-**PostgreSQL-Based Tools (12):**
+**Database Tools:**
 - prtg_get_sensors
 - prtg_get_sensor_status
 - prtg_get_alerts
@@ -144,9 +117,11 @@ In MCP Client, you should see these tools:
 - prtg_get_statistics
 - prtg_query_sql (returns an error unless `allow_custom_queries: true`)
 
-**PRTG API v2 Tools (2, when `prtg.enabled: true`):**
+**Metrics Tools** (registered when the database holds channel history or the PRTG API is configured):
 - prtg_get_channel_current_values
 - prtg_get_sensor_timeseries
+
+These metrics tools read the database first by default. Each answer starts with a `Source:` line indicating whether the data comes from the database or the PRTG API. Use the optional `source` parameter (`auto`, `database`, or `prtg`) to control this.
 
 ## Example Queries with LLM
 
@@ -324,7 +299,7 @@ curl -H "Authorization: Bearer your-api-key" \
 Response:
 ```json
 {
-  "version": "1.2.2",
+  "version": "2.0.0",
   "transport": "streamable-http",
   "protocol": "2025-03-26",
   "uptime": "2h15m30s",
@@ -360,7 +335,7 @@ curl -X POST https://localhost:8443/mcp \
 ```bash
 curl -X POST https://localhost:8443/mcp \
   -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type": application/json" \
+  -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
     "id": 2,
@@ -413,13 +388,9 @@ curl -X POST https://localhost:8443/mcp \
   }'
 ```
 
-### Self-Signed Certificates
+### TLS Certificates
 
-For development with self-signed certificates, use the `-k` or `--insecure` flag:
-
-```bash
-curl -k https://localhost:8443/health
-```
+The server presents a self-signed certificate. Trust it on the client machine as described in [Step 4](#step-4-trust-the-server-certificate) instead of disabling certificate verification.
 
 ## Integration Examples
 
@@ -430,13 +401,13 @@ import requests
 import json
 
 class PRTGMCPClient:
-    def __init__(self, base_url, api_key, verify_ssl=True):
+    def __init__(self, base_url, api_key, ca_cert=None):
         self.base_url = base_url
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        self.verify_ssl = verify_ssl
+        self.ca_cert = ca_cert  # Path to server.crt for self-signed certificates
         self.request_id = 0
 
     def call_tool(self, tool_name, arguments):
@@ -456,7 +427,7 @@ class PRTGMCPClient:
             f"{self.base_url}/mcp",
             headers=self.headers,
             json=payload,
-            verify=self.verify_ssl
+            verify=self.ca_cert if self.ca_cert else True
         )
         response.raise_for_status()
         return response.json()
@@ -483,7 +454,7 @@ class PRTGMCPClient:
 client = PRTGMCPClient(
     base_url="https://localhost:8443",
     api_key="your-api-key",
-    verify_ssl=False  # For self-signed certs
+    ca_cert="/path/to/server.crt"  # Trust the server certificate
 )
 
 # Get all alerts
@@ -503,13 +474,14 @@ print(json.dumps(sensors, indent=2))
 # Configuration
 API_KEY="your-api-key"
 BASE_URL="https://localhost:8443"
+CA_CERT="/path/to/server.crt"  # Trust the server certificate
 
 # Function to call MCP tools
 call_tool() {
     local tool_name="$1"
     local arguments="$2"
 
-    curl -s -k -X POST "${BASE_URL}/mcp" \
+    curl -s --cacert "${CA_CERT}" -X POST "${BASE_URL}/mcp" \
         -H "Authorization: Bearer ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d "{
@@ -530,7 +502,7 @@ alert_count=$(echo "$alerts" | jq -r '.result.content[0].text' | grep -o 'Found 
 if [ "$alert_count" -gt 0 ]; then
     curl -X POST "https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
         -H "Content-Type: application/json" \
-        -d "{\"text\": \"⚠️ PRTG Alert: ${alert_count} sensors in alert state\"}"
+        -d "{\"text\": \"PRTG Alert: ${alert_count} sensors in alert state\"}"
 fi
 ```
 
@@ -539,12 +511,18 @@ fi
 ```javascript
 const axios = require('axios');
 const https = require('https');
+const fs = require('fs');
 
 class PRTGMCPClient {
-  constructor(baseUrl, apiKey, verifySSL = true) {
+  constructor(baseUrl, apiKey, caCertPath = null) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.requestId = 0;
+
+    const httpsAgent = new https.Agent({
+      ca: caCertPath ? fs.readFileSync(caCertPath) : undefined,
+      rejectUnauthorized: true
+    });
 
     this.client = axios.create({
       baseURL: baseUrl,
@@ -552,9 +530,7 @@ class PRTGMCPClient {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      httpsAgent: new https.Agent({
-        rejectUnauthorized: verifySSL
-      })
+      httpsAgent: httpsAgent
     });
   }
 
@@ -595,7 +571,7 @@ class PRTGMCPClient {
   const client = new PRTGMCPClient(
     'https://localhost:8443',
     'your-api-key',
-    false // Don't verify SSL for self-signed certs
+    '/path/to/server.crt'  // Trust the server certificate
   );
 
   try {
@@ -614,19 +590,8 @@ class PRTGMCPClient {
 $ApiKey = "your-api-key"
 $BaseUrl = "https://localhost:8443"
 
-# Ignore SSL certificate validation (for self-signed certs)
-add-type @"
-    using System.Net;
-    using System.Security.Cryptography.X509Certificates;
-    public class TrustAllCertsPolicy : ICertificatePolicy {
-        public bool CheckValidationResult(
-            ServicePoint srvPoint, X509Certificate certificate,
-            WebRequest request, int certificateProblem) {
-            return true;
-        }
-    }
-"@
-[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+# Import the server certificate into the trusted root store first:
+# Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root
 
 # Function to call MCP tools
 function Invoke-PRTGTool {
@@ -714,6 +679,7 @@ WARNING: **2 anomaly/anomalies detected**
 When you query historical data with `prtg_get_sensor_timeseries`, you'll see:
 
 ```
+Source: database
 # Time Series Data - Sensor 12345 (short)
 
 Total data points: 145
@@ -979,12 +945,11 @@ All error categories follow the same pedagogical format: clear title, explanatio
 
 2. **Use HTTPS in production:**
    - Always enable TLS for remote connections
-   - Use trusted certificates in production
-   - Only use `--insecure` in development
+   - Trust the server certificate on client machines instead of disabling verification
 
 3. **Implement rate limiting** in your integrations to avoid overwhelming the server
 
-4. **Use read-only database user** with minimal permissions
+4. **Use read-only database user** with minimal permissions (the target database is `prtg_data_exporter_collection`)
 
 ### Reliability
 
@@ -1036,7 +1001,7 @@ All error categories follow the same pedagogical format: clear title, explanatio
 1. Verify mcp-remote is accessible: `npx mcp-remote --version`
 2. Check MCP Client config file syntax (valid JSON)
 3. Ensure the URL is correct (include `/mcp` endpoint)
-4. Verify API key is correct
+4. Verify API key is correct (use `config show-api-key`)
 5. Restart MCP Client completely (quit and reopen)
 
 ### Connection Failed
@@ -1047,14 +1012,14 @@ All error categories follow the same pedagogical format: clear title, explanatio
 1. Verify server is running: `curl https://localhost:8443/health`
 2. Check firewall allows traffic on port 8443
 3. Verify the server URL matches your configuration (bind_address:port)
-4. For self-signed certs, add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env (not recommended for production)
+4. Trust the server certificate on the client machine (see [Step 4](#step-4-trust-the-server-certificate))
 
 ### Authentication Failed
 
 **Issue:** "Unauthorized: Missing or invalid Bearer token"
 
 **Solutions:**
-1. Verify API key in config.yaml matches your client configuration
+1. Verify API key matches your client configuration (use `config show-api-key`)
 2. Ensure "Bearer " prefix is included in Authorization header
 3. Check for extra spaces or line breaks in API key
 4. Hot-reload may have changed the API key - restart clients
@@ -1077,3 +1042,4 @@ All error categories follow the same pedagogical format: clear title, explanatio
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [GitHub Repository](https://github.com/senhub-io/mcp-server-prtg)
 - [MCP Protocol Documentation](https://modelcontextprotocol.io)
+```

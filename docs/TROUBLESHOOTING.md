@@ -5,11 +5,14 @@ Common issues and their solutions for MCP Server PRTG.
 ## Table of Contents
 
 - [Service Issues](#service-issues)
+- [Administration Page Issues](#administration-page-issues)
 - [Database Connection Issues](#database-connection-issues)
-- [MCP Client Integration Issues](#claude-desktop-integration-issues)
+- [MCP Client Integration Issues](#mcp-client-integration-issues)
 - [Connection Issues](#connection-issues)
 - [Authentication Issues](#authentication-issues)
 - [TLS/Certificate Issues](#tls-certificate-issues)
+- [PRTG API v2 Issues](#prtg-api-v2-issues)
+- [Data Exporter Coverage Issues](#data-exporter-coverage-issues)
 - [Error Handling and Validation](#error-handling-and-validation)
 - [Performance Issues](#performance-issues)
 - [Configuration Issues](#configuration-issues)
@@ -26,16 +29,18 @@ Service fails to start or exits immediately after starting.
 
 **Check service status:**
 ```bash
-./mcp-server-prtg status
+mcp-server-prtg status
 ```
 
 **Check logs:**
 ```bash
-# Linux/macOS
+# Linux
+cat /var/log/mcp-server-prtg/mcp-server-prtg.log
+# or, with the default relative path, from the configuration directory:
 cat logs/mcp-server-prtg.log
 
 # Windows (PowerShell)
-Get-Content logs/mcp-server-prtg.log -Tail 50
+Get-Content "C:\ProgramData\Sensor Factory\MCP Server PRTG\logs\mcp-server-prtg.log" -Tail 50
 ```
 
 #### Common Causes and Solutions
@@ -46,27 +51,21 @@ Error: `bind: address already in use` or `listen tcp :8443: bind: address alread
 
 Solution:
 ```bash
-# Linux/macOS - Find process using port 8443
+# Linux - Find process using port 8443
 sudo lsof -i :8443
 sudo netstat -tlnp | grep 8443
 
 # Windows (PowerShell)
 netstat -ano | findstr :8443
 
-# Kill the conflicting process or change port in config.yaml
-```
-
-Change port in `config.yaml`:
-```yaml
-server:
-  port: 8444  # Use different port
+# Kill the conflicting process or change the port in the admin page Settings tab or config.yaml
 ```
 
 **2. Database Connection Failed**
 
 Error: `failed to connect to database` or `pq: password authentication failed`
 
-Solution: See [Database Connection Issues](#database-connection-issues)
+Solution: See [Database Connection Issues](#database-connection-issues). Check that the database password is correct; if it was changed in the admin page or `config init`, restart the service.
 
 **3. Missing Configuration File**
 
@@ -74,11 +73,12 @@ Error: `failed to load configuration: failed to read config file`
 
 Solution:
 ```bash
-# Check if config.yaml exists
-ls -la config.yaml
+# Check if config.yaml exists at the expected location
+# Windows: C:\ProgramData\Sensor Factory\MCP Server PRTG\config.yaml
+# Linux: /etc/mcp-server-prtg/config.yaml
 
-# If missing, run install to regenerate
-./mcp-server-prtg install
+# If missing, create it:
+mcp-server-prtg config init --config <path>
 ```
 
 **4. Permission Denied**
@@ -87,10 +87,10 @@ Error: `permission denied` or `failed to create log directory`
 
 Solution:
 ```bash
-# Linux/macOS - Grant permissions
-sudo chown -R $USER:$USER .
-chmod 755 .
-chmod 600 config.yaml
+# Linux - Grant permissions
+sudo chown -R root:root /etc/mcp-server-prtg
+chmod 755 /etc/mcp-server-prtg
+chmod 600 /etc/mcp-server-prtg/config.yaml
 
 # Windows - Run as Administrator
 ```
@@ -99,23 +99,13 @@ chmod 600 config.yaml
 
 Error: `failed to load certificate` or `no such file or directory`
 
-Generated certificates live in a `certs` folder next to the configuration file (with the default `./config.yaml`, next to the binary). Run the commands below from the configuration file's directory.
-
-Solution:
-```bash
-# Check if certificate files exist
-ls -la certs/
-
-# If missing, regenerate by removing and reinstalling
-rm -rf certs/
-./mcp-server-prtg install
-```
+The self-signed certificate is regenerated automatically at start when missing. Delete the `certs` folder next to `config.yaml` and restart the service to regenerate it.
 
 **6. API Key Missing or Too Short**
 
 The server refuses to start if `server.api_key` is empty or shorter than 16 characters.
 
-Solution: set `server.api_key` in `config.yaml` to a value of at least 16 characters (for example a UUID, which is what the installer generates).
+Solution: set `server.api_key` in `config.yaml` to a value of at least 16 characters (for example a UUID, which is what the installer generates), or run `config init --api-key <key>`.
 
 ### Service Crashes or Stops Unexpectedly
 
@@ -133,16 +123,13 @@ eventvwr.msc
 
 **Enable debug logging:**
 
-Edit `config.yaml`:
+In the admin page Settings tab, or in `config.yaml`:
 ```yaml
 logging:
   level: debug
 ```
 
-Restart service:
-```bash
-./mcp-server-prtg restart
-```
+Then restart the service.
 
 #### Common Causes
 
@@ -160,21 +147,45 @@ Service doesn't respond to stop command or takes too long.
 
 **Force stop:**
 ```bash
-# Linux/macOS
+# Linux
+sudo systemctl stop mcp-server-prtg
+# or
 sudo killall mcp-server-prtg
 
 # Windows (PowerShell) - Find and kill process
 Get-Process mcp-server-prtg | Stop-Process -Force
 ```
 
-**Check for hung connections:**
-```bash
-# Linux/macOS
-netstat -an | grep 8443
+### Windows SmartScreen Warning
 
-# Windows (PowerShell)
-netstat -ano | findstr :8443
+SmartScreen may warn on beta pre-releases (`X.Y.Z-beta.N`), which are not signed. The production release 2.0.0 is code-signed (Authenticode, certificate "SENSOR FACTORY SAS" issued by Certum, RFC 3161 timestamp). Verify with:
+
+```powershell
+Get-AuthenticodeSignature mcp-server-prtg.exe
+# Status should be: Valid
 ```
+
+## Administration Page Issues
+
+### Admin Page Unreachable from Another Machine
+
+The administration page `https://localhost:<port>/admin/` is reachable from the server itself only (loopback). This is by design. Requests carrying proxy forwarding headers are refused. Open the page on the server, or use `config init` / `config client` from the command line.
+
+### Admin Page Unreachable Behind a Proxy
+
+If you place the server behind a reverse proxy, the admin page still only accepts direct loopback connections; proxy forwarding headers are refused. Access the admin page locally on the server.
+
+### Login Refused / Too Many Attempts
+
+Login failures are rate limited. After too many failed attempts, wait a few minutes before trying again with the correct MCP API key (get it with `config show-api-key`).
+
+### "Restarting" Then Sign In Again
+
+Sessions are kept in memory (8 hours, 30 minutes idle). After a restart the service asks to sign in again.
+
+### "Enter the Password Again" When Changing Settings
+
+In the Settings tab, a stored secret is only reused for the same database host/port/user without weakening the SSL mode, or for the same PRTG URL without turning off certificate verification. If you change the host, user, SSL mode or PRTG URL, type the password/token again.
 
 ## Database Connection Issues
 
@@ -187,11 +198,7 @@ Error: `failed to connect to database` or `connection refused`
 
 **Test database connectivity:**
 ```bash
-# Using psql
-psql -h localhost -p 5432 -U prtg_reader -d prtg_data_exporter
-
-# Using telnet
-telnet localhost 5432
+psql -h localhost -p 5432 -U mcp_prtg_reader -d prtg_data_exporter_collection
 ```
 
 #### Solutions
@@ -205,9 +212,6 @@ sudo systemctl status postgresql
 
 # Windows
 Get-Service postgresql*
-
-# macOS
-brew services list | grep postgresql
 ```
 
 Start PostgreSQL:
@@ -217,29 +221,20 @@ sudo systemctl start postgresql
 
 # Windows
 Start-Service postgresql-x64-14
-
-# macOS
-brew services start postgresql
 ```
 
 **2. Wrong Host or Port**
 
-Verify configuration in `config.yaml`:
+Verify configuration in the admin page Settings tab or `config.yaml`:
 ```yaml
 database:
-  host: "localhost"  # Try 127.0.0.1 if localhost doesn't work
+  host: "localhost"
   port: 5432
 ```
 
 **3. Database Doesn't Exist**
 
-Error: `pq: database "prtg_data_exporter" does not exist`
-
-Solution:
-```bash
-# Create database (or use PRTG Data Exporter)
-createdb -U postgres prtg_data_exporter
-```
+The target database is `prtg_data_exporter_collection` (the PRTG Data Exporter 2026.x target database), not `prtg_data_exporter`.
 
 **4. Firewall Blocking Connection**
 
@@ -255,57 +250,46 @@ sudo netstat -tlnp | grep 5432
 Edit PostgreSQL configuration:
 ```bash
 # postgresql.conf
-listen_addresses = '*'  # Or specific IP
+listen_addresses = '*'
 
 # pg_hba.conf - Add client IP
-host    prtg_data_exporter    prtg_reader    192.168.1.0/24    md5
+host    prtg_data_exporter_collection    mcp_prtg_reader    192.168.1.0/24    md5
 ```
 
 ### Authentication Failed
 
 #### Symptom
-Error: `pq: password authentication failed for user "prtg_reader"`
+Error: `pq: password authentication failed for user "mcp_prtg_reader"`
 
 #### Solutions
 
 **1. Wrong Password**
 
-Update password in `config.yaml`:
-```yaml
-database:
-  password: "correct_password_here"
-```
-
-Or use environment variable:
+Update the password in the admin page Settings tab or `config.yaml`, or use the environment variable:
 ```bash
 export PRTG_DB_PASSWORD="correct_password"
-./mcp-server-prtg run
 ```
 
-**2. User Doesn't Exist**
+**2. User Doesn't Exist or Lacks Rights**
 
-Create user:
+Create the recommended read-only role on the target database:
 ```sql
--- Connect as postgres superuser
-psql -U postgres
-
--- Create user
-CREATE USER prtg_reader WITH PASSWORD 'secure_password';
-GRANT CONNECT ON DATABASE prtg_data_exporter TO prtg_reader;
-GRANT USAGE ON SCHEMA public TO prtg_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO prtg_reader;
+CREATE ROLE mcp_prtg_reader LOGIN;
+\password mcp_prtg_reader
+GRANT CONNECT ON DATABASE prtg_data_exporter_collection TO mcp_prtg_reader;
+-- in the prtg_data_exporter_collection database:
+GRANT USAGE ON SCHEMA public TO mcp_prtg_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_prtg_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE prtg_data_exporter_user_td IN SCHEMA public GRANT SELECT ON TABLES TO mcp_prtg_reader;
 ```
 
 **3. pg_hba.conf Configuration**
 
 Check PostgreSQL client authentication:
 ```bash
-# Find pg_hba.conf
 psql -U postgres -c "SHOW hba_file;"
-
 # Edit pg_hba.conf - Add line
-host    prtg_data_exporter    prtg_reader    127.0.0.1/32    md5
-
+host    prtg_data_exporter_collection    mcp_prtg_reader    127.0.0.1/32    md5
 # Reload PostgreSQL
 sudo systemctl reload postgresql
 ```
@@ -345,107 +329,39 @@ database:
 ### MCP Client Doesn't See Tools
 
 #### Symptom
-MCP tools don't appear in MCP Client's tools panel.
+MCP tools don't appear in the MCP client's tools panel.
 
 #### Diagnosis
 
-**1. Check mcp-remote is accessible:**
+**1. Check the client configuration printed by:**
 ```bash
-npx mcp-remote --version
+mcp-server-prtg config client
 ```
 
-**2. Check MCP Client configuration:**
+**2. Check server is running:**
 ```bash
-# macOS (Claude Desktop)
-cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
-
-# Windows (PowerShell)
-Get-Content $env:APPDATA\Claude\claude_desktop_config.json
-
-# Linux
-cat ~/.config/Claude/claude_desktop_config.json
-```
-
-**3. Check server is running:**
-```bash
-curl https://localhost:8443/health
+curl -k https://localhost:8443/health
 ```
 
 #### Solutions
 
-**1. Verify Node.js and npm**
+**1. Use the printed configuration**
+
+`config client` prints ready-to-paste configurations for Claude Desktop (via `npx -y mcp-remote <url> --header "Authorization:Bearer ${MCP_PRTG_API_KEY}"` with `MCP_PRTG_API_KEY` and `NODE_EXTRA_CA_CERTS`), Claude Code, Cursor and VS Code.
+
+**2. Restart the MCP client completely**
+
+**3. Check the API key**
+
+Get the key with:
 ```bash
-node --version
-npm --version
-# mcp-remote will be automatically installed via npx
+mcp-server-prtg config show-api-key
 ```
-
-**2. Fix Configuration File**
-
-Ensure valid JSON syntax:
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://localhost:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
-      ],
-      "env": {
-        "MCP_SERVER_API_KEY": "your-api-key-here"
-      }
-    }
-  }
-}
-```
-
-**Common JSON errors:**
-- Missing commas between items
-- Trailing comma after last item (not allowed)
-- Wrong quotes (use `"` not `'`)
-- Missing closing braces
-
-**3. Restart MCP Client Completely**
-```bash
-# macOS - Quit completely (Claude Desktop)
-killall Claude
-
-# Windows - Task Manager
-# End all Claude.exe processes
-
-# Then restart MCP Client
-```
-
-**4. Check API Key**
-
-Get API key from config:
-```bash
-grep api_key config.yaml
-```
-
-Ensure it matches in `claude_desktop_config.json` (or your MCP client config).
 
 ### Tools Appear But Don't Work
 
 #### Symptom
 Tools are visible but return errors when used.
-
-#### Diagnosis
-
-Check MCP Client logs:
-```bash
-# macOS (Claude Desktop)
-cat ~/Library/Logs/Claude/mcp*.log
-
-# Windows
-Get-Content $env:APPDATA\Claude\logs\mcp*.log
-
-# Linux
-cat ~/.config/Claude/logs/mcp*.log
-```
 
 #### Solutions
 
@@ -453,34 +369,13 @@ cat ~/.config/Claude/logs/mcp*.log
 
 Error: `Unauthorized` or `401`
 
-Solution: Verify API key matches between `config.yaml` and `claude_desktop_config.json` (or your MCP client config)
+Verify the API key matches between the server and the client configuration.
 
 **2. Certificate Error (Self-Signed)**
 
 Error: `SSL certificate verify failed` or `certificate verification failed`
 
-Solution: Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to env (development only):
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://localhost:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
-      ],
-      "env": {
-        "MCP_SERVER_API_KEY": "your-api-key",
-        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
-      }
-    }
-  }
-}
-```
-
-**Note:** Not recommended for production. Use trusted certificates instead.
+Do NOT set `NODE_TLS_REJECT_UNAUTHORIZED=0`. Instead, trust the server certificate: copy `certs/server.crt` to the client computer and import it into the trusted root certificates (see [TLS/Certificate Issues](#tls-certificate-issues)).
 
 **3. Database Connection Error**
 
@@ -497,7 +392,7 @@ Error: `connection refused` or `unable to connect`
 
 **1. Verify Server is Running**
 ```bash
-./mcp-server-prtg status
+mcp-server-prtg status
 
 # Check if port is listening
 netstat -an | grep 8443
@@ -525,34 +420,18 @@ server:
 #### Symptom
 Streamable HTTP connection disconnects and reconnects repeatedly.
 
-#### Diagnosis
-
-Check logs for patterns:
-```bash
-tail -f logs/mcp-server-prtg.log
-```
-
 #### Solutions
 
 **1. Network Issues**
 - Check network stability
-- Increase TCP keepalive settings
 - Use wired connection instead of WiFi
 
 **2. Proxy or Firewall Interference**
 - Configure proxy to allow long-lived connections
-- Whitelist server IP/domain
 - Ensure proxies don't interfere with heartbeat mechanism (30s interval)
 
 **3. Resource Exhaustion**
 - Check server CPU/memory usage
-- Increase system resources
-
-**4. Heartbeat Issues**
-The server sends heartbeats every 30 seconds to keep connections alive. If heartbeats are being blocked:
-- Check proxy configuration
-- Verify firewall allows bidirectional traffic
-- Review network equipment (load balancers, firewalls) timeout settings
 
 ## Authentication Issues
 
@@ -565,14 +444,14 @@ Error: HTTP 401 with the body `Unauthorized`
 
 **1. Verify API Key**
 
-Get from config:
+Get from the server:
 ```bash
-grep api_key config.yaml
+mcp-server-prtg config show-api-key
 ```
 
 Test manually:
 ```bash
-curl -H "Authorization: Bearer your-api-key" \
+curl -k -H "Authorization: Bearer your-api-key" \
      https://localhost:8443/status
 ```
 
@@ -586,14 +465,11 @@ Authorization: Bearer your-api-key
 **NOT:**
 - `Authorization: your-api-key` (missing "Bearer")
 - `Authorization: Bearer: your-api-key` (extra colon)
-- `https://server:8443/mcp?token=your-api-key` (the `token` query parameter is no longer accepted; use the header)
+- `https://server:8443/mcp?token=your-api-key` (the `token` query parameter is not accepted; use the header)
 
 **3. API Key Changed**
 
-If config was hot-reloaded with new API key:
-- Update client configuration
-- Restart MCP Client
-- Reconnect clients
+If the API key was changed, update the client configuration and restart the MCP client.
 
 ### Too Many Requests (429) Errors
 
@@ -622,244 +498,106 @@ Or:
 Error: self signed certificate
 ```
 
-#### Solutions
+#### Solution: Trust the Server Certificate
 
-**Option 1: Disable Certificate Verification (Development Only)**
+The self-signed certificate (`certs/server.crt` next to `config.yaml`) covers `localhost`, the machine name and its IP addresses. Clients must trust it instead of disabling verification.
 
-Add `NODE_TLS_REJECT_UNAUTHORIZED=0` to environment variables:
+Copy `server.crt` to each client computer:
 
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://localhost:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
-      ],
-      "env": {
-        "MCP_SERVER_API_KEY": "your-api-key",
-        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
-      }
-    }
-  }
-}
-```
+- **Claude Desktop / mcp-remote:** set `NODE_EXTRA_CA_CERTS` to the path of a copy of the certificate.
+- **Claude Code, Cursor, VS Code:** import into the computer's trusted root certificates:
+  - **Windows:** `certlm.msc` → Trusted Root Certification Authorities, or `Import-Certificate -FilePath server.crt -CertStoreLocation Cert:\LocalMachine\Root`
+  - **macOS:** Keychain Access, "Always Trust"
+  - **Linux:** copy to `/usr/local/share/ca-certificates/` and run `sudo update-ca-certificates`
 
-**⚠️ WARNING:** This disables certificate validation. Only use for development with self-signed certificates. Never use in production.
+Do NOT set `NODE_TLS_REJECT_UNAUTHORIZED=0`: it exposes the API key.
 
-**Option 2: Use HTTP Instead of HTTPS (Development Only)**
+### Certificate Covers Wrong Names After Renaming the Server
 
-Disable TLS in server configuration:
+The certificate covers `localhost`, the machine name and its IP addresses. After renaming the server, delete the `certs` folder next to `config.yaml` and restart the service to regenerate the certificate.
 
-1. Edit `config.yaml`:
-```yaml
-server:
-  enable_tls: false  # Disable TLS
-  port: 8443
-```
+### Using a Company PKI Certificate
 
-2. Restart the server:
-```bash
-./mcp-server-prtg restart
-```
+Set `server.cert_file` and `server.key_file` to a certificate from your PKI and restart the service.
 
-3. Update MCP Client configuration to use `http://`:
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://localhost:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
-      ],
-      "env": {
-        "MCP_SERVER_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
-```
+### Disabling TLS (Development Only)
 
-**Note:** Even with HTTP, your API key authentication is still secure via the Bearer token.
+For development only: set `enable_tls: false` and use `http://` in the client configuration. All communication including API keys will be transmitted in plain text.
 
-**Option 3: Use Trusted CA Certificates (Production - Recommended)**
+## PRTG API v2 Issues
 
-For production environments, use certificates from a trusted Certificate Authority (e.g., Let's Encrypt):
+### PRTG API v2 Not Active
 
-```yaml
-server:
-  enable_tls: true
-  cert_file: "/etc/letsencrypt/live/domain.com/fullchain.pem"
-  key_file: "/etc/letsencrypt/live/domain.com/privkey.pem"
-```
+If PRTG API calls fail, check that the PRTG API v2 is activated on the PRTG core server (PRTG Application Server, ports 1616/1615 and 23580; default on new installs since 25.2.106, automatic on update to 26.4.126 when enough memory is free; otherwise Setup → Activate, then restart the core server).
 
-Then use HTTPS without disabling verification:
-```json
-{
-  "mcpServers": {
-    "prtg": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://your-domain.com:8443/mcp",
-        "--header",
-        "Authorization:Bearer ${MCP_SERVER_API_KEY}"
-      ],
-      "env": {
-        "MCP_SERVER_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
-```
+Use the **Test connection** button in the admin page Settings tab to verify the PRTG URL (including scheme and port, typically 1616) and token.
 
-**Option 3: Add Self-Signed Certificate to System Trust Store (Advanced)**
+## Data Exporter Coverage Issues
 
-You can configure your operating system to trust the self-signed certificate:
+### Stale Sensors
 
-**macOS:**
-```bash
-# Export server certificate
-openssl s_client -connect localhost:8443 -showcerts < /dev/null 2>/dev/null | \
-  openssl x509 -outform PEM > server.crt
+If a sensor's Data Exporter export is older than 24 hours, the metrics tools fall back to the PRTG API when configured; otherwise the answer states when the export stopped. Check the Data Exporter collection profiles in `prtg_get_statistics` (last/next collection, errors, paused flag).
 
-# Add to system keychain
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain server.crt
-```
+### Profile Flagged Paused
 
-**Linux:**
-```bash
-# Copy certificate to trusted store
-sudo cp certs/server.crt /usr/local/share/ca-certificates/mcp-server-prtg.crt
-sudo update-ca-certificates
-```
+Data Exporter sets a paused flag while throttling. `prtg_get_alerts` excludes paused sensors unless a status filter is given.
 
-**Windows:**
-```powershell
-# Import certificate to Trusted Root
-Import-Certificate -FilePath "certs\server.crt" -CertStoreLocation Cert:\LocalMachine\Root
-```
+### Export Lag
 
-After adding the certificate to the system trust store, restart your MCP Client.
-
-**Testing with curl:**
-
-```bash
-# HTTP (no SSL)
-curl http://localhost:8443/health
-
-# HTTPS with self-signed cert (bypass verification for testing)
-curl -k https://localhost:8443/health
-```
-
-### Certificate Expired
-
-#### Symptom
-Error: `certificate has expired`
-
-#### Solution
-
-**For self-signed certificates:**
-
-Regenerate certificates:
-```bash
-# Remove old certificates
-rm -rf certs/
-
-# Edit config to trigger regeneration
-# Change enable_tls to false, save, then back to true
-# Or manually regenerate:
-./mcp-server-prtg install  # Regenerates certificates
-```
-
-**For trusted certificates:**
-
-Renew certificate with your CA:
-```bash
-# Example with Let's Encrypt
-sudo certbot renew
-```
-
-### Wrong Host Name in Certificate
-
-#### Symptom
-Error: `certificate is valid for localhost, not for 192.168.1.100`
-
-#### Solution
-
-**Option 1: Use hostname in URL**
-```
-https://localhost:8443/mcp  # Instead of IP address
-```
-
-**Option 2: Generate certificate with correct SANs**
-
-Regenerate certificate with additional Subject Alternative Names including your server's IP or hostname.
+Check the channel-history coverage in `prtg_get_statistics` (up to date, stale, never fetched, without data, not tracked) and the collection profiles for errors.
 
 ## Error Handling and Validation
 
 ### Understanding Pedagogical Errors
 
-MCP Server PRTG uses pedagogical error messages designed to guide LLM users toward resolution. These errors are not bugs - they're helpful guidance.
+MCP Server PRTG uses pedagogical error messages designed to guide users toward resolution. These errors are not bugs - they're helpful guidance.
 
 #### Symptom
-LLM returns a message like:
+A message like:
 ```
-❌ **Invalid sensor_id**
+Invalid sensor_id
 
 The sensor_id parameter must be a positive integer corresponding to an existing PRTG sensor.
 
-💡 **How to resolve:**
-1. Search by name: `prtg_search search_term="sensor_name"`
-2. List alerts (with IDs): `prtg_get_alerts`
-3. Explore a device: `prtg_device_overview device_name="device_name"`
+How to resolve:
+1. Search by name: prtg_search search_term="sensor_name"
+2. List alerts (with IDs): prtg_get_alerts
+3. Explore a device: prtg_device_overview device_name="device_name"
 ```
 
 #### What This Means
-This is **working as designed**. The error message:
+This is working as designed. The error message:
 - Explains what went wrong in plain English
 - Provides numbered action items to resolve the issue
 - Includes concrete examples of correct usage
-
-#### What the LLM Should Do
-The LLM should:
-1. Read the suggestions
-2. Automatically try one of the recommended approaches
-3. Continue the conversation without human intervention
 
 #### Common Pedagogical Errors
 
 **ErrInvalidSensorID**
 - **Trigger**: sensor_id parameter is ≤0 or invalid
-- **Self-Resolution**: LLM uses prtg_search or prtg_get_alerts to discover valid IDs
+- **Self-Resolution**: use prtg_search or prtg_get_alerts to discover valid IDs
 
 **ErrDeviceNotFound**
 - **Trigger**: Device name doesn't match any devices
-- **Self-Resolution**: LLM uses prtg_search to find similarly named devices
+- **Self-Resolution**: use prtg_search to find similarly named devices
 
 **ErrEmptySearchTerm**
 - **Trigger**: search_term parameter is missing or empty
-- **Self-Resolution**: LLM prompts user or infers search term from context
+- **Self-Resolution**: provide a search term
 
 **ErrCustomQueriesDisabled**
 - **Trigger**: Attempting prtg_query_sql when allow_custom_queries=false
-- **Self-Resolution**: LLM uses predefined tools (prtg_get_sensors, prtg_get_alerts, etc.)
+- **Self-Resolution**: use predefined tools (prtg_get_sensors, prtg_get_alerts, etc.)
 
 ### Validation Errors vs. System Errors
 
-**Validation Errors** (Pedagogical):
+**Validation Errors (Pedagogical):**
 - Returned as tool output (not JSON-RPC errors)
-- Include ❌ emoji and 💡 suggestions
-- LLM can read and act on them
+- Include suggestions
+- Can be acted on directly
 - Examples: invalid parameters, missing fields, resource not found
 
-**System Errors** (Technical):
+**System Errors (Technical):**
 - Returned as JSON-RPC error responses
 - Indicate server/infrastructure issues
 - Require human intervention
@@ -868,10 +606,10 @@ The LLM should:
 #### When to Report Issues
 
 **DO NOT report as bugs:**
-- ❌ **Invalid sensor_id** - This is validation guidance
-- ❌ **Device not found** - This is search assistance
-- ❌ **Empty search term** - This is parameter validation
-- ❌ **Custom queries disabled** - This is security configuration
+- Invalid sensor_id - This is validation guidance
+- Device not found - This is search assistance
+- Empty search term - This is parameter validation
+- Custom queries disabled - This is security configuration
 
 **DO report as bugs:**
 - Database connection errors
@@ -880,118 +618,12 @@ The LLM should:
 - Timeouts or performance issues
 - Authentication failures (when credentials are correct)
 
-### Handling Specific Validation Scenarios
-
-#### Scenario: LLM Gets "Invalid sensor_id"
-
-**Expected Behavior:**
-1. LLM reads the pedagogical error
-2. LLM tries suggested action (e.g., prtg_search)
-3. LLM finds valid sensor ID
-4. LLM retries original query with correct ID
-
-**If LLM doesn't self-resolve:**
-- Check LLM configuration (context window, tool use enabled)
-- Verify LLM can read error message format
-- Try rephrasing the original query
-
-#### Scenario: LLM Gets "Device not found"
-
-**Expected Behavior:**
-1. LLM tries prtg_search with similar name
-2. LLM shows user matching devices
-3. User or LLM selects correct device
-4. Query succeeds
-
-**If device truly doesn't exist:**
-- Check PRTG Data Exporter is running
-- Verify device exists in PRTG web interface
-- Check database sync status
-
-#### Scenario: Custom Queries Disabled
-
-**Expected Behavior:**
-1. LLM reads that prtg_query_sql is disabled
-2. LLM uses predefined tool instead
-3. Query succeeds with alternate approach
-
-**To enable custom queries (not recommended in production):**
-```yaml
-# config.yaml
-server:
-  allow_custom_queries: true
-```
-
-Then restart:
-```bash
-./mcp-server-prtg restart
-```
-
-### Troubleshooting Error Handling
-
-#### LLM Doesn't Follow Suggestions
-
-**Diagnosis:**
-- Check if LLM can see error message content
-- Verify tool use is enabled in LLM client
-- Check LLM's context window isn't full
-
-**Solutions:**
-1. Rephrase query more explicitly
-2. Manually follow suggested actions
-3. Restart LLM client session
-
-#### Errors Don't Include Suggestions
-
-**Diagnosis:**
-- This indicates a system error, not validation error
-- Check server logs for details
-
-**Solutions:**
-```bash
-# Check recent logs
-tail -50 logs/mcp-server-prtg.log
-
-# Enable debug logging
-# Edit config.yaml
-logging:
-  level: debug
-
-# Restart server
-./mcp-server-prtg restart
-```
-
-#### Same Error Repeats
-
-**Diagnosis:**
-- LLM may be in a loop
-- Underlying issue may need resolution
-
-**Solutions:**
-1. Check if suggested tools are available
-2. Verify database has data (prtg_get_statistics)
-3. Try a different approach manually
-4. Restart LLM client session
-
 ## Performance Issues
 
 ### Slow Query Responses
 
 #### Symptom
 Queries take a long time to return results.
-
-#### Diagnosis
-
-Enable debug logging:
-```yaml
-logging:
-  level: debug
-```
-
-Check logs for query durations:
-```bash
-grep "query_duration_ms" logs/mcp-server-prtg.log
-```
 
 #### Solutions
 
@@ -1002,86 +634,43 @@ Use smaller limits:
 {
   "name": "prtg_get_sensors",
   "arguments": {
-    "limit": 50  // Instead of 1000
+    "limit": 50
   }
 }
 ```
 
 **2. Add More Specific Filters**
 
-Filter by device or sensor name:
-```json
-{
-  "name": "prtg_get_sensors",
-  "arguments": {
-    "device_name": "web-prod",
-    "limit": 100
-  }
-}
-```
+Filter by device or sensor name.
 
 **3. Database Performance**
 
 Check PostgreSQL performance:
 ```sql
--- Connect to database
-psql -U prtg_reader -d prtg_data_exporter
+psql -U mcp_prtg_reader -d prtg_data_exporter_collection
 
 -- Check slow queries
 SELECT pid, now() - pg_stat_activity.query_start AS duration, query
 FROM pg_stat_activity
 WHERE state = 'active'
 ORDER BY duration DESC;
-
--- Check table sizes
-SELECT schemaname, tablename, pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename))
-FROM pg_tables
-WHERE schemaname = 'public'
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 ```
 
-Add indexes if needed:
-```sql
--- Example indexes
-CREATE INDEX idx_sensor_device_id ON prtg_sensor(prtg_device_id);
-CREATE INDEX idx_sensor_status ON prtg_sensor(status);
-CREATE INDEX idx_sensor_name ON prtg_sensor(name);
-```
-
-**4. Increase Query Timeout**
-
-Currently hard-coded to 30 seconds (15 seconds for custom queries run through `prtg_query_sql`). If you need longer timeouts, you'll need to modify the source code.
+Database queries have a 30-second timeout (15 seconds for custom queries run through `prtg_query_sql`).
 
 ### High Memory Usage
 
-#### Symptom
-Server uses excessive memory or runs out of memory.
-
 #### Solutions
 
-**1. Reduce Connection Pool Size**
-
-This requires code modification. Default is 25 connections.
-
-**2. Limit Result Sets**
+**1. Limit Result Sets**
 
 Always use `limit` parameters to prevent large result sets.
 
-**3. Increase Server Memory**
+**2. Increase Server Memory**
 
-Add more RAM or adjust system limits:
-```bash
-# Linux - Check limits
-ulimit -a
-
-# Increase memory limit
-ulimit -v unlimited
-```
+Add more RAM or adjust system limits.
 
 ### High CPU Usage
-
-#### Symptom
-Server uses 100% CPU continuously.
 
 #### Solutions
 
@@ -1095,9 +684,12 @@ Failed database connections with retries can cause high CPU usage.
 
 **3. Restart Service**
 
-Sometimes a restart resolves temporary issues:
 ```bash
-./mcp-server-prtg restart
+# Linux
+sudo systemctl restart mcp-server-prtg
+
+# Windows
+Restart-Service mcp-server-prtg
 ```
 
 ## Configuration Issues
@@ -1111,13 +703,7 @@ Error: `yaml: unmarshal errors` or `failed to parse config file`
 
 **Validate YAML syntax:**
 ```bash
-# Online: https://www.yamllint.com/
-
-# Using Python
 python -c "import yaml; yaml.safe_load(open('config.yaml'))"
-
-# Using yq (if installed)
-yq eval config.yaml
 ```
 
 **Common YAML errors:**
@@ -1126,103 +712,36 @@ yq eval config.yaml
 - Unquoted special characters
 - Wrong data types
 
-**Example of common mistakes:**
-```yaml
-# ❌ Wrong - tabs instead of spaces
-server:
-	port: 8443
+### Changes Require Restart
 
-# ✅ Correct - spaces for indentation
-server:
-  port: 8443
-
-# ❌ Wrong - missing quotes around special characters
-api_key: a1b2c3:d4e5
-
-# ✅ Correct - quoted
-api_key: "a1b2c3:d4e5"
-
-# ❌ Wrong - string instead of integer
-port: "8443"
-
-# ✅ Correct - integer
-port: 8443
-```
-
-### Hot-Reload Not Working
-
-#### Symptom
-Changes to `config.yaml` don't take effect.
-
-#### Diagnosis
-
-Check logs for file watcher errors:
-```bash
-grep "watcher" logs/mcp-server-prtg.log
-```
-
-#### Solutions
-
-**1. File System Doesn't Support File Watching**
-
-Some network file systems (NFS, SMB) don't support inotify/FSEvents.
-
-Solution: Restart service manually after changes:
-```bash
-./mcp-server-prtg restart
-```
-
-**2. Config File Was Replaced (Not Modified)**
-
-If you delete and recreate the file, the watcher loses track.
-
-Solution: Always edit the file in-place instead of replacing it.
-
-**3. Changes Require Restart**
-
-Some settings can't be hot-reloaded:
-- `server.port`
-- `server.bind_address`
-- `server.enable_tls`
-
-Solution: Restart the service.
+Some settings require a restart: bind address, port, TLS settings and certificate files. Use **Save and restart** in the admin page, or restart the service.
 
 ## Logging and Diagnostics
 
 ### Enable Debug Logging
 
-**Temporary (until restart):**
-Edit `config.yaml`:
+In the admin page Settings tab, or in `config.yaml`:
 ```yaml
 logging:
   level: debug
 ```
 
-Hot-reload will apply changes immediately.
-
-**Permanent:**
-Keep debug level in config file.
+Then restart the service.
 
 ### Check Logs
 
 **View recent logs:**
 ```bash
-# Linux/macOS
-tail -f logs/mcp-server-prtg.log
+# Linux
+tail -f /var/log/mcp-server-prtg/mcp-server-prtg.log
 
 # Windows (PowerShell)
-Get-Content logs/mcp-server-prtg.log -Wait -Tail 50
+Get-Content "C:\ProgramData\Sensor Factory\MCP Server PRTG\logs\mcp-server-prtg.log" -Wait -Tail 50
 ```
 
 **Search logs:**
 ```bash
-# Find errors
 grep "error" logs/mcp-server-prtg.log
-
-# Find specific sensor ID
-grep "sensor_id.*12345" logs/mcp-server-prtg.log
-
-# Find authentication failures
 grep "Unauthorized" logs/mcp-server-prtg.log
 ```
 
@@ -1233,24 +752,13 @@ Log files grow too large or disk fills up.
 
 #### Solutions
 
-**1. Adjust Rotation Settings**
-
-In `config.yaml`:
+Adjust rotation settings in `config.yaml`:
 ```yaml
 logging:
-  max_size_mb: 10      # Rotate after 10 MB
-  max_backups: 5       # Keep 5 old files
-  max_age_days: 30     # Delete files older than 30 days
-  compress: true       # Compress old logs
-```
-
-**2. Manually Clean Old Logs**
-```bash
-# Remove old logs
-rm logs/*.log.gz
-
-# Remove all but current log
-ls logs/*.log | grep -v mcp-server-prtg.log | xargs rm
+  max_size_mb: 10
+  max_backups: 5
+  max_age_days: 30
+  compress: true
 ```
 
 ### Collect Diagnostic Information
@@ -1259,10 +767,10 @@ When reporting issues, collect:
 
 ```bash
 # 1. Version
-./mcp-server-prtg --version
+mcp-server-prtg --version
 
 # 2. Status
-./mcp-server-prtg status
+mcp-server-prtg status
 
 # 3. Configuration (REDACT PASSWORD and API KEY)
 cat config.yaml | grep -v password | grep -v api_key
@@ -1272,13 +780,12 @@ tail -n 100 logs/mcp-server-prtg.log
 
 # 5. System info
 uname -a
-go version
 
 # 6. Network status
 netstat -an | grep 8443
 
 # 7. Database connectivity
-psql -h localhost -U prtg_reader -d prtg_data_exporter -c "SELECT version();"
+psql -h localhost -U mcp_prtg_reader -d prtg_data_exporter_collection -c "SELECT version();"
 ```
 
 ## Getting Help
@@ -1299,10 +806,6 @@ If you can't resolve your issue:
    - Describe steps to reproduce
    - Include relevant log excerpts
    - Specify your environment (OS, version, etc.)
-
-4. **Community support:**
-   - Check GitHub Discussions
-   - Review closed issues for similar problems
 
 ## See Also
 

@@ -1,20 +1,16 @@
 # Continue.dev Configuration
 
-> ⚠️ **UNTESTED CONFIGURATION**
->
-> This configuration is based on official Continue.dev MCP documentation but has **not been tested** with MCP Server PRTG.
->
-> **Status**: Community contribution - feedback needed!
->
-> If you test this configuration successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues). Your experience will help improve this guide!
-
 Configure [Continue.dev](https://continue.dev/) to connect to your MCP Server PRTG instance.
 
 ## Prerequisites
 
 - MCP Server PRTG installed and running
 - Continue.dev extension installed in VS Code or JetBrains IDE
-- Server API key from `config.yaml`
+- Server API key (run `mcp-server-prtg config show-api-key` on the server, or copy it from the administration page at `https://localhost:<port>/admin/`)
+
+## Getting the Ready-to-Paste Configuration
+
+Run `mcp-server-prtg config client` on the server to print ready-to-paste configuration blocks for supported clients, or open the administration page (`https://localhost:<port>/admin/`), sign in with the API key, and use the **AI clients** tab to copy the configuration.
 
 ## Configuration Methods
 
@@ -31,6 +27,7 @@ Continue.dev supports two configuration approaches:
   "prtg": {
     "command": "npx",
     "args": [
+      "-y",
       "mcp-remote",
       "https://your-server:8443/mcp",
       "--header",
@@ -47,13 +44,14 @@ Continue.dev supports two configuration approaches:
   "prtg": {
     "command": "npx",
     "args": [
+      "-y",
       "mcp-remote",
       "https://your-server:8443/mcp",
       "--header",
-      "Authorization:Bearer ${PRTG_MCP_API_KEY}"
+      "Authorization:Bearer ${MCP_PRTG_API_KEY}"
     ],
     "env": {
-      "PRTG_MCP_API_KEY": "your-api-key-here"
+      "MCP_PRTG_API_KEY": "your-api-key-here"
     }
   }
 }
@@ -91,6 +89,7 @@ Continue.dev supports two configuration approaches:
   "prtg": {
     "command": "npx",
     "args": [
+      "-y",
       "mcp-remote",
       "https://localhost:8443/mcp",
       "--header",
@@ -107,13 +106,14 @@ Continue.dev supports two configuration approaches:
   "prtg": {
     "command": "npx",
     "args": [
+      "-y",
       "mcp-remote",
       "https://prtg-mcp.company.com:8443/mcp",
       "--header",
-      "Authorization:Bearer ${PRTG_MCP_API_KEY}"
+      "Authorization:Bearer ${MCP_PRTG_API_KEY}"
     ],
     "env": {
-      "PRTG_MCP_API_KEY": "production-api-key"
+      "MCP_PRTG_API_KEY": "production-api-key"
     }
   }
 }
@@ -121,26 +121,27 @@ Continue.dev supports two configuration approaches:
 
 ### Self-Signed Certificates
 
-If using self-signed TLS certificates:
+The server uses a self-signed certificate by default. Copy `server.crt` from the server's `certs` folder (next to `config.yaml`) to the client computer and trust it instead of disabling verification:
 
 ```json
 {
   "prtg": {
     "command": "npx",
     "args": [
+      "-y",
       "mcp-remote",
       "https://your-server:8443/mcp",
       "--header",
       "Authorization:Bearer YOUR_API_KEY"
     ],
     "env": {
-      "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      "NODE_EXTRA_CA_CERTS": "/path/to/server.crt"
     }
   }
 }
 ```
 
-⚠️ **Security Warning**: Only use `NODE_TLS_REJECT_UNAUTHORIZED=0` in development. Use proper certificates in production.
+Do not use `NODE_TLS_REJECT_UNAUTHORIZED=0`; it exposes the API key.
 
 ## Verification
 
@@ -170,7 +171,7 @@ Continue should use the `prtg_get_sensors` tool to query your PRTG data.
 
 Once connected, Continue.dev will have access to all MCP Server PRTG tools:
 
-**PostgreSQL-based tools (12):**
+**Database tools:**
 - `prtg_get_sensors` - Query sensors with filters
 - `prtg_get_sensor_status` - Detailed sensor status
 - `prtg_get_alerts` - Sensors in alert state (not Up)
@@ -181,11 +182,11 @@ Once connected, Continue.dev will have access to all MCP Server PRTG tools:
 - `prtg_get_groups` - List groups
 - `prtg_get_tags` - List tags
 - `prtg_get_business_processes` - Business process status
-- `prtg_get_statistics` - System statistics
+- `prtg_get_statistics` - System statistics and Data Exporter collection profiles
 - `prtg_query_sql` - Custom SQL queries (only if `allow_custom_queries: true`)
 
-**PRTG API v2 tools (2, when `prtg.enabled: true`):**
-- `prtg_get_channel_current_values` - Current channel values
+**Metrics tools (registered when the database holds channel history or the PRTG API is configured):**
+- `prtg_get_channel_current_values` - Current channel values, read from the database first; each answer starts with a `Source:` line
 - `prtg_get_sensor_timeseries` - Time series data for a predefined period (`live`, `short`, `medium`, `long`)
 
 ## Troubleshooting
@@ -193,7 +194,7 @@ Once connected, Continue.dev will have access to all MCP Server PRTG tools:
 ### MCP Server Not Appearing
 
 **Check:**
-1. JSON syntax is valid (use JSONLint.com)
+1. JSON syntax is valid
 2. File saved in correct location
 3. Continue.dev reloaded
 4. Server is running: `curl https://your-server:8443/health`
@@ -207,16 +208,16 @@ Once connected, Continue.dev will have access to all MCP Server PRTG tools:
 
 **Solutions:**
 1. Verify server URL is correct
-2. Check API key is valid (from `config.yaml`)
+2. Check API key is valid (run `config show-api-key`)
 3. Ensure firewall allows port 8443
-4. For self-signed certs, add `NODE_TLS_REJECT_UNAUTHORIZED=0`
+4. For self-signed certificates, set `NODE_EXTRA_CA_CERTS` to the path of the server certificate copy
 
 ### Authentication Failed
 
 **Error:** "Unauthorized"
 
 **Solutions:**
-1. Verify API key matches `config.yaml`
+1. Verify API key matches the one from `config show-api-key`
 2. Check Bearer token format: `Authorization:Bearer API_KEY` (no space after colon)
 3. Ensure no extra quotes around API key
 
@@ -225,7 +226,7 @@ Once connected, Continue.dev will have access to all MCP Server PRTG tools:
 **Check:**
 1. MCP server connection successful
 2. Database connection working (check server logs)
-3. PRTG API v2 configured (if using API tools)
+3. PRTG API v2 configured (if using API-dependent features)
 
 ## Example Usage
 
@@ -251,7 +252,7 @@ Continue will use `prtg_get_alerts` and analyze results.
 Continue: Show sensor 12345 data from the last 24 hours
 ```
 
-Continue will use `prtg_get_sensor_timeseries` with `time_type=short`.
+Continue will use `prtg_get_sensor_timeseries` with period `short`.
 
 ## Configuration Examples
 
@@ -264,13 +265,15 @@ Create `.continue/mcpServers/prtg.json` in your project:
   "prtg": {
     "command": "npx",
     "args": [
+      "-y",
       "mcp-remote",
       "https://dev-prtg.local:8443/mcp",
       "--header",
       "Authorization:Bearer ${DEV_PRTG_KEY}"
     ],
     "env": {
-      "DEV_PRTG_KEY": "dev-api-key"
+      "DEV_PRTG_KEY": "dev-api-key",
+      "NODE_EXTRA_CA_CERTS": "/path/to/server.crt"
     }
   }
 }
@@ -285,13 +288,15 @@ Create `~/.continue/mcpServers/prtg.json`:
   "prtg": {
     "command": "npx",
     "args": [
+      "-y",
       "mcp-remote",
       "https://prtg.company.com:8443/mcp",
       "--header",
       "Authorization:Bearer ${PRTG_API_KEY}"
     ],
     "env": {
-      "PRTG_API_KEY": "production-key"
+      "PRTG_API_KEY": "production-key",
+      "NODE_EXTRA_CA_CERTS": "/path/to/server.crt"
     }
   }
 }
@@ -302,7 +307,4 @@ Create `~/.continue/mcpServers/prtg.json`:
 - [Configuration Guide](CONFIGURATION.md) - MCP Server PRTG configuration
 - [Tools Reference](TOOLS.md) - Complete tools documentation
 - [Troubleshooting](TROUBLESHOOTING.md) - Common issues
-
-## Feedback
-
-This configuration is based on Continue.dev's MCP documentation. If you test it successfully (or encounter issues), please share feedback via [GitHub Issues](https://github.com/senhub-io/mcp-server-prtg/issues).
+```
